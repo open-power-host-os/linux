@@ -1158,9 +1158,6 @@ static void audit_log_execve_info(struct audit_context *context,
 	const char __user *p;
 	char *buf;
 
-	if (context->execve.mm != current->mm)
-		return; /* execve failed, no additional info */
-
 	p = (const char __user *)current->mm->arg_start;
 
 	audit_log_format(*ab, "argc=%d", context->execve.argc);
@@ -2131,7 +2128,6 @@ void __audit_bprm(struct linux_binprm *bprm)
 
 	context->type = AUDIT_EXECVE;
 	context->execve.argc = bprm->argc;
-	context->execve.mm = bprm->mm;
 }
 
 
