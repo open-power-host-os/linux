@@ -89,7 +89,7 @@ EXPORT_SYMBOL_GPL(kvmppc_find_tce_table);
  */
 long kvmppc_tce_validate(unsigned long tce)
 {
-	if (tce & ~(IOMMU_PAGE_MASK | TCE_PCI_WRITE | TCE_PCI_READ))
+	if (tce & ~(IOMMU_PAGE_MASK_4K | TCE_PCI_WRITE | TCE_PCI_READ))
 		return H_PARAMETER;
 
 	return H_SUCCESS;
@@ -256,7 +256,7 @@ static long kvmppc_rm_h_put_tce_iommu(struct kvm_vcpu *vcpu,
 		if (iommu_tce_clear_param_check(tbl, ioba, 0, 1))
 			return H_PARAMETER;
 
-		if (iommu_free_tces(tbl, ioba >> IOMMU_PAGE_SHIFT, 1, true))
+		if (iommu_free_tces(tbl, ioba >> IOMMU_PAGE_SHIFT_4K, 1, true))
 			return H_TOO_HARD;
 
 		return H_SUCCESS;
@@ -274,7 +274,7 @@ static long kvmppc_rm_h_put_tce_iommu(struct kvm_vcpu *vcpu,
 		return H_TOO_HARD;
 	}
 
-	ret = iommu_tce_build(tbl, ioba >> IOMMU_PAGE_SHIFT,
+	ret = iommu_tce_build(tbl, ioba >> IOMMU_PAGE_SHIFT_4K,
 			      &hpa, 1, true);
 
 	if (ret) {
@@ -300,7 +300,7 @@ static long kvmppc_rm_h_put_tce_indirect_iommu(struct kvm_vcpu *vcpu,
 	/* Check all TCEs */
 	for (i = 0; i < npages; ++i) {
 		if (iommu_tce_put_param_check(tbl, ioba +
-				(i << IOMMU_PAGE_SHIFT), tces[i]))
+				(i << IOMMU_PAGE_SHIFT_4K), tces[i]))
 			return H_PARAMETER;
 	}
 
@@ -320,7 +320,7 @@ static long kvmppc_rm_h_put_tce_indirect_iommu(struct kvm_vcpu *vcpu,
 	}
 
 	/* Put TCEs to the table */
-	ret = iommu_tce_build(tbl, (ioba >> IOMMU_PAGE_SHIFT),
+	ret = iommu_tce_build(tbl, (ioba >> IOMMU_PAGE_SHIFT_4K),
 			vcpu->arch.tce_tmp_hpas, npages, true);
 	if (ret == -EAGAIN) {
 		vcpu->arch.tce_rm_fail = TCERM_PUTTCE;
@@ -345,7 +345,7 @@ static long kvmppc_rm_h_stuff_tce_iommu(struct kvm_vcpu *vcpu,
 	if (iommu_tce_clear_param_check(tbl, ioba, tce_value, npages))
 		return H_PARAMETER;
 
-	if (iommu_free_tces(tbl, ioba >> IOMMU_PAGE_SHIFT, npages, true))
+	if (iommu_free_tces(tbl, ioba >> IOMMU_PAGE_SHIFT_4K, npages, true))
 		return H_TOO_HARD;
 
 	return H_SUCCESS;
@@ -409,10 +409,10 @@ long kvmppc_rm_h_put_tce_indirect(struct kvm_vcpu *vcpu,
 	if (npages > 512)
 		return H_PARAMETER;
 
-	if (tce_list & ~IOMMU_PAGE_MASK)
+	if (tce_list & ~IOMMU_PAGE_MASK_4K)
 		return H_PARAMETER;
 
-	if (tt && ((ioba + (npages << IOMMU_PAGE_SHIFT)) > tt->window_size))
+	if (tt && ((ioba + (npages << IOMMU_PAGE_SHIFT_4K)) > tt->window_size))
 		return H_PARAMETER;
 
 	tces = kvmppc_rm_gpa_to_hpa_and_get(vcpu, tce_list, &pg);
@@ -438,7 +438,7 @@ long kvmppc_rm_h_put_tce_indirect(struct kvm_vcpu *vcpu,
 	}
 
 	for (i = 0; i < npages; ++i)
-		kvmppc_tce_put(tt, ioba + (i << IOMMU_PAGE_SHIFT),
+		kvmppc_tce_put(tt, ioba + (i << IOMMU_PAGE_SHIFT_4K),
 				((unsigned long *)tces)[i]);
 
 put_page_exit:
@@ -470,14 +470,14 @@ long kvmppc_rm_h_stuff_tce(struct kvm_vcpu *vcpu,
 				tce_value, npages);
 
 	/* Emulated IO */
-	if ((ioba + (npages << IOMMU_PAGE_SHIFT)) > tt->window_size)
+	if ((ioba + (npages << IOMMU_PAGE_SHIFT_4K)) > tt->window_size)
 		return H_PARAMETER;
 
 	ret = kvmppc_tce_validate(tce_value);
 	if (ret || (tce_value & (TCE_PCI_WRITE | TCE_PCI_READ)))
 		return H_PARAMETER;
 
-	for (i = 0; i < npages; ++i, ioba += IOMMU_PAGE_SIZE)
+	for (i = 0; i < npages; ++i, ioba += IOMMU_PAGE_SIZE_4K)
 		kvmppc_tce_put(tt, ioba, tce_value);
 
 	return H_SUCCESS;
