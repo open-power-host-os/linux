@@ -520,7 +520,9 @@ struct kvm_vcpu_arch {
 	ulong pc;
 	ulong ctr;
 	ulong lr;
+#ifdef CONFIG_PPC_BOOK3S
 	ulong tar;
+#endif
 
 	ulong xer;
 	u32 cr;
