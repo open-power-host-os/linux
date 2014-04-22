@@ -454,6 +454,13 @@ int kvmppc_core_emulate_mtspr_pr(struct kvm_vcpu *vcpu, int sprn, ulong spr_val)
 	case SPRN_PMC4_GEKKO:
 	case SPRN_WPAR_GEKKO:
 	case SPRN_MSSSR0:
+#ifdef CONFIG_PPC_BOOK3S_64
+	case SPRN_MMCRS:
+	case SPRN_MMCRA:
+	case SPRN_MMCR0:
+	case SPRN_MMCR1:
+	case SPRN_MMCR2:
+#endif
 		break;
 	default:
 		if ((vcpu->arch.shared->msr & MSR_PR) || !sprn)
@@ -553,6 +560,13 @@ int kvmppc_core_emulate_mfspr_pr(struct kvm_vcpu *vcpu, int sprn, ulong *spr_val
 	case SPRN_PMC4_GEKKO:
 	case SPRN_WPAR_GEKKO:
 	case SPRN_MSSSR0:
+#ifdef CONFIG_PPC_BOOK3S_64
+	case SPRN_MMCRS:
+	case SPRN_MMCRA:
+	case SPRN_MMCR0:
+	case SPRN_MMCR1:
+	case SPRN_MMCR2:
+#endif
 		*spr_val = 0;
 		break;
 	default:
