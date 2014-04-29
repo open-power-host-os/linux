@@ -52,6 +52,7 @@
 
 static int kvmppc_handle_ext(struct kvm_vcpu *vcpu, unsigned int exit_nr,
 			     ulong msr);
+static void kvmppc_giveup_fac(struct kvm_vcpu *vcpu, ulong fac);
 
 /* Some compatibility defines */
 #ifdef CONFIG_PPC_BOOK3S_32
@@ -59,6 +60,11 @@ static int kvmppc_handle_ext(struct kvm_vcpu *vcpu, unsigned int exit_nr,
 #define MSR_USER64 MSR_USER
 #define HW_PAGE_SIZE PAGE_SIZE
 #endif
+
+static inline ulong kvmppc_get_msr(struct kvm_vcpu *vcpu)
+{
+	return vcpu->arch.shared->msr;
+}
 
 static void kvmppc_core_vcpu_load_pr(struct kvm_vcpu *vcpu, int cpu)
 {
@@ -110,6 +116,9 @@ void kvmppc_copy_to_svcpu(struct kvmppc_book3s_shadow_vcpu *svcpu,
 	svcpu->ctr = vcpu->arch.ctr;
 	svcpu->lr  = vcpu->arch.lr;
 	svcpu->pc  = vcpu->arch.pc;
+#ifdef CONFIG_PPC_BOOK3S_64
+	svcpu->shadow_fscr = vcpu->arch.shadow_fscr;
+#endif
 }
 
 /* Copy data touched by real-mode code from shadow vcpu back to vcpu */
@@ -139,6 +148,9 @@ void kvmppc_copy_from_svcpu(struct kvm_vcpu *vcpu,
 	vcpu->arch.fault_dar   = svcpu->fault_dar;
 	vcpu->arch.fault_dsisr = svcpu->fault_dsisr;
 	vcpu->arch.last_inst   = svcpu->last_inst;
+#ifdef CONFIG_PPC_BOOK3S_64
+	vcpu->arch.shadow_fscr = svcpu->shadow_fscr;
+#endif
 }
 
 static int kvmppc_core_check_requests_pr(struct kvm_vcpu *vcpu)
@@ -617,6 +629,17 @@ void kvmppc_giveup_ext(struct kvm_vcpu *vcpu, ulong msr)
 	kvmppc_recalc_shadow_msr(vcpu);
 }
 
+/* Give up facility (TAR / EBB / DSCR) */
+static void kvmppc_giveup_fac(struct kvm_vcpu *vcpu, ulong fac)
+{
+#ifdef CONFIG_PPC_BOOK3S_64
+	if (!(vcpu->arch.shadow_fscr & (1ULL << fac))) {
+		/* Facility not available to the guest, ignore giveup request*/
+		return;
+	}
+#endif
+}
+
 static int kvmppc_read_inst(struct kvm_vcpu *vcpu)
 {
 	ulong srr0 = kvmppc_get_pc(vcpu);
@@ -738,6 +761,50 @@ static void kvmppc_handle_lost_ext(struct kvm_vcpu *vcpu)
 #endif
 	current->thread.regs->msr |= lost_ext;
 }
+
+#ifdef CONFIG_PPC_BOOK3S_64
+
+static void kvmppc_trigger_fac_interrupt(struct kvm_vcpu *vcpu, ulong fac)
+{
+	/* Inject the Interrupt Cause field and trigger a guest interrupt */
+	vcpu->arch.fscr &= ~(0xffULL << 56);
+	vcpu->arch.fscr |= (fac << 56);
+	kvmppc_book3s_queue_irqprio(vcpu, BOOK3S_INTERRUPT_FAC_UNAVAIL);
+}
+
+static void kvmppc_emulate_fac(struct kvm_vcpu *vcpu, ulong fac)
+{
+	enum emulation_result er = EMULATE_FAIL;
+
+	if (!(kvmppc_get_msr(vcpu) & MSR_PR))
+		er = kvmppc_emulate_instruction(vcpu->run, vcpu);
+
+	if ((er != EMULATE_DONE) && (er != EMULATE_AGAIN)) {
+		/* Couldn't emulate, trigger interrupt in guest */
+		kvmppc_trigger_fac_interrupt(vcpu, fac);
+	}
+}
+
+/* Enable facilities (TAR, EBB, DSCR) for the guest */
+static int kvmppc_handle_fac(struct kvm_vcpu *vcpu, ulong fac)
+{
+	BUG_ON(!cpu_has_feature(CPU_FTR_ARCH_207S));
+
+	if (!(vcpu->arch.fscr & (1ULL << fac))) {
+		/* Facility not enabled by the guest */
+		kvmppc_trigger_fac_interrupt(vcpu, fac);
+		return RESUME_GUEST;
+	}
+
+	switch (fac) {
+	default:
+		kvmppc_emulate_fac(vcpu, fac);
+		break;
+	}
+
+	return RESUME_GUEST;
+}
+#endif
 
 int kvmppc_handle_exit_pr(struct kvm_run *run, struct kvm_vcpu *vcpu,
 			  unsigned int exit_nr)
@@ -1005,6 +1072,12 @@ program_interrupt:
 		}
 		r = RESUME_GUEST;
 		break;
+#ifdef CONFIG_PPC_BOOK3S_64
+	case BOOK3S_INTERRUPT_FAC_UNAVAIL:
+		kvmppc_handle_fac(vcpu, vcpu->arch.shadow_fscr >> 56);
+		r = RESUME_GUEST;
+		break;
+#endif
 	case BOOK3S_INTERRUPT_MACHINE_CHECK:
 	case BOOK3S_INTERRUPT_TRACE:
 		kvmppc_book3s_queue_irqprio(vcpu, exit_nr);
