@@ -761,6 +761,7 @@ struct kvm_ppc_smmu_info {
 #define KVM_CAP_PPC_FIXUP_HCALL 103
 #define KVM_CAP_PPC_ENABLE_HCALL 104
 #define KVM_CAP_CHECK_EXTENSION_VM 105
+#define KVM_CAP_SPAPR_TCE_VFIO 115
 
 #ifdef KVM_CAP_IRQ_ROUTING
 
