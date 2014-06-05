@@ -126,6 +126,8 @@ void kvmppc_copy_to_svcpu(struct kvmppc_book3s_shadow_vcpu *svcpu,
 	 */
 	vcpu->arch.entry_tb = get_tb();
 	vcpu->arch.entry_vtb = get_vtb();
+	if (cpu_has_feature(CPU_FTR_ARCH_207S))
+		vcpu->arch.entry_ic = mfspr(SPRN_IC);
 }
 
 /* Copy data touched by real-mode code from shadow vcpu back to vcpu */
@@ -164,6 +166,8 @@ void kvmppc_copy_from_svcpu(struct kvm_vcpu *vcpu,
 	vcpu->arch.purr += get_tb() - vcpu->arch.entry_tb;
 	vcpu->arch.spurr += get_tb() - vcpu->arch.entry_tb;
 	vcpu->arch.vtb += get_vtb() - vcpu->arch.entry_vtb;
+	if (cpu_has_feature(CPU_FTR_ARCH_207S))
+		vcpu->arch.ic += mfspr(SPRN_IC) - vcpu->arch.entry_ic;
 }
 
 static int kvmppc_core_check_requests_pr(struct kvm_vcpu *vcpu)
