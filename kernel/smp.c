@@ -174,11 +174,15 @@ void generic_smp_call_function_single_interrupt(void)
 {
 	struct call_single_queue *q = &__get_cpu_var(call_single_queue);
 	LIST_HEAD(list);
+	static bool warned;
 
 	/*
 	 * Shouldn't receive this interrupt on a cpu that is not yet online.
 	 */
-	WARN_ON_ONCE(!cpu_online(smp_processor_id()));
+	if (unlikely(!cpu_online(smp_processor_id()) && !warned)) {
+		warned = 1;
+		WARN(1, "IPI on offline CPU %d\n", smp_processor_id());
+	}
 
 	raw_spin_lock(&q->lock);
 	list_replace_init(&q->list, &list);
@@ -189,6 +193,10 @@ void generic_smp_call_function_single_interrupt(void)
 		unsigned int csd_flags;
 
 		csd = list_entry(list.next, struct call_single_data, list);
+
+		if (warned)
+			pr_warn("IPI callback %pS sent to offline CPU\n", csd->func);
+
 		list_del(&csd->list);
 
 		/*
