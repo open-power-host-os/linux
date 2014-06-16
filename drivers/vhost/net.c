@@ -18,6 +18,7 @@
 #include <linux/rcupdate.h>
 #include <linux/file.h>
 #include <linux/slab.h>
+#include <linux/swab.h>
 
 #include <linux/net.h>
 #include <linux/if_packet.h>
@@ -324,6 +325,14 @@ static void vhost_zerocopy_callback(struct ubuf_info *ubuf, bool success)
 		vhost_poll_queue(&vq->poll);
 }
 
+static void virtio_net_hdr_swap(struct virtio_net_hdr *hdr)
+{
+	hdr->hdr_len     = swab16(hdr->hdr_len);
+	hdr->gso_size    = swab16(hdr->gso_size);
+	hdr->csum_start  = swab16(hdr->csum_start);
+	hdr->csum_offset = swab16(hdr->csum_offset);
+}
+
 /* Expects to be always run from workqueue - which acts as
  * read-size critical section for our kind of RCU. */
 static void handle_tx(struct vhost_net *net)
@@ -341,7 +350,7 @@ static void handle_tx(struct vhost_net *net)
 		.msg_flags = MSG_DONTWAIT,
 	};
 	size_t len, total_len = 0;
-	int err;
+	int err, has_vnet_hdr;
 	size_t hdr_size;
 	struct socket *sock;
 	struct vhost_net_ubuf_ref *uninitialized_var(ubufs);
@@ -355,6 +364,7 @@ static void handle_tx(struct vhost_net *net)
 	mutex_lock(&vq->mutex);
 	vhost_disable_notify(&net->dev, vq);
 
+	has_vnet_hdr = vhost_has_feature(&net->dev, VHOST_NET_F_VIRTIO_NET_HDR);
 	hdr_size = nvq->vhost_hlen;
 	zcopy = nvq->ubufs;
 
@@ -405,6 +415,8 @@ static void handle_tx(struct vhost_net *net)
 			       iov_length(nvq->hdr, s), hdr_size);
 			break;
 		}
+		if (!has_vnet_hdr && vq->byteswap)
+			virtio_net_hdr_swap((void *) vq->iov[0].iov_base);
 		zcopy_used = zcopy && (len >= VHOST_GOODCOPY_LEN ||
 				       nvq->upend_idx != nvq->done_idx);
 
@@ -577,7 +589,7 @@ static void handle_rx(struct vhost_net *net)
 		.hdr.gso_type = VIRTIO_NET_HDR_GSO_NONE
 	};
 	size_t total_len = 0;
-	int err, mergeable;
+	int err, mergeable, has_vnet_hdr;
 	s16 headcount;
 	size_t vhost_hlen, sock_hlen;
 	size_t vhost_len, sock_len;
@@ -595,6 +607,7 @@ static void handle_rx(struct vhost_net *net)
 	vq_log = unlikely(vhost_has_feature(&net->dev, VHOST_F_LOG_ALL)) ?
 		vq->log : NULL;
 	mergeable = vhost_has_feature(&net->dev, VIRTIO_NET_F_MRG_RXBUF);
+	has_vnet_hdr = vhost_has_feature(&net->dev, VHOST_NET_F_VIRTIO_NET_HDR);
 
 	while ((sock_len = peek_head_len(sock->sk))) {
 		sock_len += sock_hlen;
@@ -645,6 +658,9 @@ static void handle_rx(struct vhost_net *net)
 			vhost_discard_vq_desc(vq, headcount);
 			continue;
 		}
+
+		if (!has_vnet_hdr && vq->byteswap)
+			virtio_net_hdr_swap((void *) vq->iov[0].iov_base);
 		if (unlikely(vhost_hlen) &&
 		    memcpy_toiovecend(nvq->hdr, (unsigned char *)&hdr, 0,
 				      vhost_hlen)) {
@@ -653,13 +669,18 @@ static void handle_rx(struct vhost_net *net)
 			break;
 		}
 		/* TODO: Should check and handle checksum. */
-		if (likely(mergeable) &&
-		    memcpy_toiovecend(nvq->hdr, (unsigned char *)&headcount,
-				      offsetof(typeof(hdr), num_buffers),
-				      sizeof hdr.num_buffers)) {
-			vq_err(vq, "Failed num_buffers write");
-			vhost_discard_vq_desc(vq, headcount);
-			break;
+		if (likely(mergeable)) {
+			__u16 tmp = headcount;
+
+			if (vq->byteswap)
+				tmp = swab16(headcount);
+			if (memcpy_toiovecend(nvq->hdr, (unsigned char *)&tmp,
+					offsetof(typeof(hdr), num_buffers),
+					      sizeof(hdr.num_buffers))) {
+				vq_err(vq, "Failed num_buffers write");
+				vhost_discard_vq_desc(vq, headcount);
+				break;
+			}
 		}
 		vhost_add_used_and_signal_n(&net->dev, vq, vq->heads,
 					    headcount);
