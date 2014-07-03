@@ -177,15 +177,21 @@ static void pnv_smp_cpu_kill_self(void)
 		power7_nap();
 		ppc64_runlatch_on();
 
+		/*
+		 * Clear the IPI that woke us up before checking for the
+		 * reason, so as to avoid a race where we wake up for
+		 * some other reason, find nothing and clear the interrupt
+		 * just as some other cpu is sending us an interrupt.
+		 */
+		icp_native_flush_interrupt();
+		local_paca->irq_happened &= PACA_IRQ_HARD_DIS;
+		smp_mb();
+
 		if (!cpu_core_split_required()) {
 			if (generic_check_cpu_restart(cpu))
 				break;
 			DBG("CPU%d Unexpected exit while offline !\n", cpu);
 		}
-
-		/* Clear the IPI that woke us up and go back to nap */
-		icp_native_flush_interrupt();
-		local_paca->irq_happened &= PACA_IRQ_HARD_DIS;
 	}
 	mtspr(SPRN_LPCR, mfspr(SPRN_LPCR) | LPCR_PECE1);
 	DBG("CPU%d coming online...\n", cpu);

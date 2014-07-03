@@ -389,7 +389,7 @@ static ssize_t show_subcores_per_core(struct device *dev,
 	return sprintf(buf, "%x\n", subcores_per_core);
 }
 
-static DEVICE_ATTR(subcores_per_core, 0600,
+static DEVICE_ATTR(subcores_per_core, 0644,
 		show_subcores_per_core, store_subcores_per_core);
 
 static int subcore_init(void)
