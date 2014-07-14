@@ -103,7 +103,7 @@ static int tce_iommu_enable(struct tce_container *container)
 	if (!tbl)
 		return -ENXIO;
 
-	ret = try_increment_locked_vm((tbl->it_size << IOMMU_PAGE_SHIFT_4K) >>
+	ret = try_increment_locked_vm((tbl->it_size << tbl->it_page_shift) >>
 			PAGE_SHIFT);
 	if (ret)
 		return ret;
@@ -134,7 +134,7 @@ static void tce_iommu_disable(struct tce_container *container)
 	if (!tbl)
 		return;
 
-	decrement_locked_vm((tbl->it_size << IOMMU_PAGE_SHIFT_4K) >>
+	decrement_locked_vm((tbl->it_size << tbl->it_page_shift) >>
 			PAGE_SHIFT);
 }
 
@@ -216,8 +216,8 @@ static long tce_iommu_ioctl(void *iommu_data,
 		if (info.argsz < minsz)
 			return -EINVAL;
 
-		info.dma32_window_start = tbl->it_offset << IOMMU_PAGE_SHIFT_4K;
-		info.dma32_window_size = tbl->it_size << IOMMU_PAGE_SHIFT_4K;
+		info.dma32_window_start = tbl->it_offset << tbl->it_page_shift;
+		info.dma32_window_size = tbl->it_size << tbl->it_page_shift;
 		info.flags = 0;
 
 		if (copy_to_user((void __user *)arg, &info, minsz))
@@ -270,17 +270,17 @@ static long tce_iommu_ioctl(void *iommu_data,
 		if (ret)
 			return ret;
 
-		for (i = 0; i < (param.size >> IOMMU_PAGE_SHIFT_4K); ++i) {
+		for (i = 0; i < (param.size >> tbl->it_page_shift); ++i) {
 			ret = iommu_put_tce_user_mode(tbl,
-					(param.iova >> IOMMU_PAGE_SHIFT_4K) + i,
+					(param.iova >> tbl->it_page_shift) + i,
 					tce);
 			if (ret)
 				break;
-			tce += IOMMU_PAGE_SIZE_4K;
+			tce += IOMMU_PAGE_SIZE(tbl);
 		}
 		if (ret)
 			iommu_clear_tces_and_put_pages(tbl,
-					param.iova >> IOMMU_PAGE_SHIFT_4K, i);
+					param.iova >> tbl->it_page_shift, i);
 
 		iommu_flush_tce(tbl);
 
@@ -321,13 +321,13 @@ static long tce_iommu_ioctl(void *iommu_data,
 		BUG_ON(!tbl->it_group);
 
 		ret = iommu_tce_clear_param_check(tbl, param.iova, 0,
-				param.size >> IOMMU_PAGE_SHIFT_4K);
+				param.size >> tbl->it_page_shift);
 		if (ret)
 			return ret;
 
 		ret = iommu_clear_tces_and_put_pages(tbl,
-				param.iova >> IOMMU_PAGE_SHIFT_4K,
-				param.size >> IOMMU_PAGE_SHIFT_4K);
+				param.iova >> tbl->it_page_shift,
+				param.size >> tbl->it_page_shift);
 		iommu_flush_tce(tbl);
 
 		return ret;
