@@ -221,6 +221,64 @@ static inline void set_pmspr(unsigned long sprn, unsigned long val)
 	BUG();
 }
 
+/*
+ * Use objects of this type to query/update
+ * pstates on a remote CPU via smp_call_function.
+ */
+struct powernv_smp_call_data {
+	unsigned int freq;
+	int pstate_id;
+};
+
+/*
+ * powernv_read_cpu_freq: Reads the current frequency on this CPU.
+ *
+ * Called via smp_call_function.
+ *
+ * Note: The caller of the smp_call_function should pass an argument of
+ * the type 'struct powernv_smp_call_data *' along with this function.
+ *
+ * The current frequency on this CPU will be returned via
+ * ((struct powernv_smp_call_data *)arg)->freq;
+ */
+static void powernv_read_cpu_freq(void *arg)
+{
+	unsigned long pmspr_val;
+	s8 local_pstate_id;
+	struct powernv_smp_call_data *freq_data = arg;
+
+	pmspr_val = get_pmspr(SPRN_PMSR);
+
+	/*
+	 * The local pstate id corresponds bits 48..55 in the PMSR.
+	 * Note: Watch out for the sign!
+	 */
+	local_pstate_id = (pmspr_val >> 48) & 0xff;
+	freq_data->pstate_id = local_pstate_id;
+	freq_data->freq = pstate_id_to_freq(freq_data->pstate_id);
+
+	pr_debug("cpu %d pmsr %016lX pstate_id %d frequency %d kHz\n",
+		raw_smp_processor_id(), pmspr_val, freq_data->pstate_id,
+		freq_data->freq);
+}
+
+/*
+ * powernv_cpufreq_get: Returns the CPU frequency as reported by the
+ * firmware for CPU 'cpu'. This value is reported through the sysfs
+ * file cpuinfo_cur_freq.
+ */
+unsigned int powernv_cpufreq_get(unsigned int cpu)
+{
+	struct powernv_smp_call_data freq_data;
+
+	smp_call_function_any(cpu_sibling_mask(cpu), powernv_read_cpu_freq,
+			&freq_data, 1);
+
+	return freq_data.freq;
+}
+
+
+
 static void set_pstate(void *pstate)
 {
 	unsigned long val;
@@ -325,6 +383,7 @@ static struct cpufreq_driver powernv_cpufreq_driver = {
 	.exit		= powernv_cpufreq_cpu_exit,
 	.name		= "powernv-cpufreq",
 	.flags		= CPUFREQ_CONST_LOOPS,
+	.get		= powernv_cpufreq_get,
 	.attr 		= powernv_cpu_freq_attr,
 };
 
