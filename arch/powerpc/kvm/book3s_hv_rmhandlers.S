@@ -200,8 +200,6 @@ kvmppc_primary_no_guest:
 	bge	kvm_novcpu_exit	/* another thread already exiting */
 	li	r3, NAPPING_NOVCPU
 	stb	r3, HSTATE_NAPPING(r13)
-	li	r3, 1
-	stb	r3, HSTATE_HWTHREAD_REQ(r13)
 
 	b	kvm_do_nap
 
@@ -318,27 +316,21 @@ kvm_start_guest:
 	stwcx.	r3, 0, r4
 	bne	51b
 
+/*
+ * At this point we have finished executing in the guest.
+ * We jump to power7_wakeup_loss, which will return to the caller
+ * of power7_nap in the powernv cpu offline loop.  The value we
+ * put in r3 becomes the return value for power7_nap.
+ */
 kvm_no_guest:
-	li	r0, KVM_HWTHREAD_IN_NAP
+	li	r0, KVM_HWTHREAD_IN_KERNEL
 	stb	r0, HSTATE_HWTHREAD_STATE(r13)
-kvm_do_nap:
-	/* Clear the runlatch bit before napping */
-	mfspr	r2, SPRN_CTRLF
-	clrrdi	r2, r2, 1
-	mtspr	SPRN_CTRLT, r2
-
 	li	r3, LPCR_PECE0
 	mfspr	r4, SPRN_LPCR
 	rlwimi	r4, r3, 0, LPCR_PECE0 | LPCR_PECE1
 	mtspr	SPRN_LPCR, r4
-	isync
-	std	r0, HSTATE_SCRATCH0(r13)
-	ptesync
-	ld	r0, HSTATE_SCRATCH0(r13)
-1:	cmpd	r0, r0
-	bne	1b
-	nap
-	b	.
+	li	r3, 0
+	b	.power7_wakeup_loss
 
 /******************************************************************************
  *                                                                            *
@@ -2263,6 +2255,7 @@ END_FTR_SECTION_IFCLR(CPU_FTR_ARCH_206)
 	 * occurs, with PECE1, PECE0 and PECEDP set in LPCR. Also clear the
 	 * runlatch bit before napping.
 	 */
+kvm_do_nap:
 	mfspr	r2, SPRN_CTRLF
 	clrrdi	r2, r2, 1
 	mtspr	SPRN_CTRLT, r2

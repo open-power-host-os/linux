@@ -139,6 +139,8 @@ BEGIN_FTR_SECTION
 1:
 #endif
 
+	/* Return SRR1 from power7_nap() et al. */
+	mfspr	r3,SPRN_SRR1
 	beq	cr1,2f
 	b	.power7_wakeup_noloss
 2:	b	.power7_wakeup_loss
