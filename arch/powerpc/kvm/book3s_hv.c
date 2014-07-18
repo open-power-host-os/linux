@@ -869,7 +869,8 @@ static int kvm_arch_vcpu_ioctl_set_sregs_hv(struct kvm_vcpu *vcpu,
 	return 0;
 }
 
-static void kvmppc_set_lpcr(struct kvm_vcpu *vcpu, u64 new_lpcr)
+static void kvmppc_set_lpcr(struct kvm_vcpu *vcpu, u64 new_lpcr,
+		bool preserve_top32)
 {
 	struct kvmppc_vcore *vc = vcpu->arch.vcore;
 	u64 mask;
@@ -904,6 +905,10 @@ static void kvmppc_set_lpcr(struct kvm_vcpu *vcpu, u64 new_lpcr)
 	mask = LPCR_DPFD | LPCR_ILE | LPCR_TC;
 	if (cpu_has_feature(CPU_FTR_ARCH_207S))
 		mask |= LPCR_AIL;
+
+	/* Broken 32bit version of 32bit LPCR must not clean top bits */
+	if (preserve_top32)
+		mask &= 0xFFFFFFFF;
 	vc->lpcr = (vc->lpcr & ~mask) | (new_lpcr & mask);
 	spin_unlock(&vc->lock);
 }
@@ -1038,6 +1043,7 @@ static int kvmppc_get_one_reg_hv(struct kvm_vcpu *vcpu, u64 id,
 		*val = get_reg_val(id, vcpu->arch.vcore->tb_offset);
 		break;
 	case KVM_REG_PPC_LPCR:
+	case KVM_REG_PPC_LPCR_64:
 		*val = get_reg_val(id, vcpu->arch.vcore->lpcr);
 		break;
 	case KVM_REG_PPC_PPR:
@@ -1264,7 +1270,10 @@ static int kvmppc_set_one_reg_hv(struct kvm_vcpu *vcpu, u64 id,
 			ALIGN(set_reg_val(id, *val), 1UL << 24);
 		break;
 	case KVM_REG_PPC_LPCR:
-		kvmppc_set_lpcr(vcpu, set_reg_val(id, *val));
+		kvmppc_set_lpcr(vcpu, set_reg_val(id, *val), true);
+		break;
+	case KVM_REG_PPC_LPCR_64:
+		kvmppc_set_lpcr(vcpu, set_reg_val(id, *val), false);
 		break;
 	case KVM_REG_PPC_PPR:
 		vcpu->arch.ppr = set_reg_val(id, *val);

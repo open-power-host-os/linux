@@ -386,6 +386,20 @@ struct zone {
 	int			compact_order_failed;
 #endif
 
+#ifdef CONFIG_CMA
+	unsigned long managed_cma_pages;
+	/*
+	 * Number of allocation attempt on each normal/cma type
+	 * without switching type. max_try_(normal/cma) maintain
+	 * pre-calculated counter and replenish nr_try_(normal/cma)
+	 * with each of them whenever both of them are 0.
+	 */
+	int nr_try_normal;
+	int nr_try_cma;
+	int max_try_normal;
+	int max_try_cma;
+#endif
+
 	ZONE_PADDING(_pad1_)
 
 	/* Fields commonly accessed by the page reclaim scanner */

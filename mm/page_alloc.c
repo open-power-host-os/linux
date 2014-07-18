@@ -769,7 +769,56 @@ void __meminit __free_pages_bootmem(struct page *page, unsigned int order)
 }
 
 #ifdef CONFIG_CMA
-/* Free whole pageblock and set it's migration type to MIGRATE_CMA. */
+void adjust_managed_cma_page_count(struct zone *zone, long count)
+{
+	unsigned long flags;
+	unsigned long total, cma, normal;
+
+	spin_lock_irqsave(&zone->lock, flags);
+	zone->managed_cma_pages += count;
+
+	total = zone->managed_pages;
+	cma = zone->managed_cma_pages;
+	normal = total - cma - high_wmark_pages(zone);
+
+	/* No cma pages, so do only normal allocation */
+	if (cma == 0) {
+		zone->max_try_normal = pageblock_nr_pages;
+		zone->max_try_cma = 0;
+		goto out;
+	}
+
+	/*
+	 * We want to consume cma pages with well balanced ratio so that
+	 * we have consumed enough cma pages before the reclaim. For this
+	 * purpose, we can use the ratio, normal : cma. And we doesn't
+	 * want to switch too frequently, because it prevent allocated pages
+	 * from beging successive and it is bad for some sorts of devices.
+	 * I choose pageblock_nr_pages for the minimum amount of successive
+	 * allocation because it is the size of a huge page and fragmentation
+	 * avoidance is implemented based on this size.
+	 *
+	 * To meet above criteria, I derive following equation.
+	 *
+	 * if (normal > cma) then; normal : cma = X : pageblock_nr_pages
+	 * else (normal <= cma) then; normal : cma = pageblock_nr_pages : X
+	 */
+	if (normal > cma) {
+		zone->max_try_normal = normal * pageblock_nr_pages / cma;
+		zone->max_try_cma = pageblock_nr_pages;
+	} else {
+		zone->max_try_normal = pageblock_nr_pages;
+		zone->max_try_cma = cma * pageblock_nr_pages / normal;
+	}
+
+out:
+	zone->nr_try_normal = zone->max_try_normal;
+	zone->nr_try_cma = zone->max_try_cma;
+
+	spin_unlock_irqrestore(&zone->lock, flags);
+}
+
+/* Free whole pageblock and set its migration type to MIGRATE_CMA. */
 void __init init_cma_reserved_pageblock(struct page *page)
 {
 	unsigned i = pageblock_nr_pages;
@@ -1092,6 +1141,44 @@ __rmqueue_fallback(struct zone *zone, int order, int start_migratetype)
 	return NULL;
 }
 
+#ifdef CONFIG_CMA
+static int __choose_rmqueue_migratetype(struct zone *zone, unsigned int order)
+{
+	if (zone->nr_try_normal > 0) {
+		zone->nr_try_normal -= 1 << order;
+		return MIGRATE_MOVABLE;
+	}
+
+	if (zone->nr_try_cma > 0) {
+		zone->nr_try_cma -= 1 << order;
+		return MIGRATE_CMA;
+	}
+
+	/* Reset counter */
+	zone->nr_try_normal = zone->max_try_normal;
+	zone->nr_try_cma = zone->max_try_cma;
+
+	zone->nr_try_normal -= 1 << order;
+	return MIGRATE_MOVABLE;
+}
+
+static inline int choose_rmqueue_migratetype(struct zone *zone,
+					unsigned int order, int migratetype)
+{
+	if (migratetype == MIGRATE_MOVABLE && zone->managed_cma_pages)
+		return __choose_rmqueue_migratetype(zone, order);
+
+	return migratetype;
+}
+
+#else
+static inline int choose_rmqueue_migratetype(struct zone *zone,
+					unsigned int order, int migratetype)
+{
+	return migratetype;
+}
+#endif
+
 /*
  * Do the hard work of removing an element from the buddy allocator.
  * Call me with the zone->lock already held.
@@ -1101,10 +1188,17 @@ static struct page *__rmqueue(struct zone *zone, unsigned int order,
 {
 	struct page *page;
 
-retry_reserve:
+	migratetype = choose_rmqueue_migratetype(zone, order, migratetype);
+
+retry:
 	page = __rmqueue_smallest(zone, order, migratetype);
 
 	if (unlikely(!page) && migratetype != MIGRATE_RESERVE) {
+		if (is_migrate_cma(migratetype)) {
+			migratetype = MIGRATE_MOVABLE;
+			goto retry;
+		}
+
 		page = __rmqueue_fallback(zone, order, migratetype);
 
 		/*
@@ -1114,7 +1208,7 @@ retry_reserve:
 		 */
 		if (!page) {
 			migratetype = MIGRATE_RESERVE;
-			goto retry_reserve;
+			goto retry;
 		}
 	}
 

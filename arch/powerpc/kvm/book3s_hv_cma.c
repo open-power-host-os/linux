@@ -133,6 +133,7 @@ struct page *kvm_alloc_cma(unsigned long nr_pages, unsigned long align_pages)
 			bitmap_set(cma->bitmap, pageno, nr_chunk);
 			page = pfn_to_page(pfn);
 			memset(pfn_to_kaddr(pfn), 0, nr_pages << PAGE_SHIFT);
+			adjust_managed_cma_page_count(page_zone(page), -nr_pages);
 			break;
 		} else if (ret != -EBUSY) {
 			break;
@@ -180,6 +181,7 @@ bool kvm_release_cma(struct page *pages, unsigned long nr_pages)
 		     (pfn - cma->base_pfn) >> (KVM_CMA_CHUNK_ORDER - PAGE_SHIFT),
 		     nr_chunk);
 	free_contig_range(pfn, nr_pages);
+	adjust_managed_cma_page_count(page_zone(pages), nr_pages);
 	mutex_unlock(&kvm_cma_mutex);
 
 	return true;
@@ -210,6 +212,8 @@ static int __init kvm_cma_activate_area(unsigned long base_pfn,
 		}
 		init_cma_reserved_pageblock(pfn_to_page(base_pfn));
 	} while (--i);
+	adjust_managed_cma_page_count(zone, count);
+
 	return 0;
 }
 
