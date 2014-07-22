@@ -1220,6 +1220,7 @@ struct eeh_pe *eeh_iommu_group_to_pe(struct iommu_group *group)
 
 	return edev->pe;
 }
+EXPORT_SYMBOL_GPL(eeh_iommu_group_to_pe);
 
 /**
  * eeh_pe_set_option - Set options for the indicated PE
