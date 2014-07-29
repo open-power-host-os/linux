@@ -937,6 +937,8 @@ extern void opal_msglog_init(void);
 
 extern int opal_machine_check(struct pt_regs *regs);
 extern bool opal_mce_check_early_recovery(struct pt_regs *regs);
+extern int opal_hmi_exception_early(struct pt_regs *regs);
+extern int opal_handle_hmi_exception(struct pt_regs *regs);
 
 extern void opal_shutdown(void);
 
