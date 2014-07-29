@@ -22,6 +22,16 @@ enum pnv_phb_model {
 #define PNV_IODA_PE_BUS		(1 << 1)	/* PE has primary PCI bus	*/
 #define PNV_IODA_PE_BUS_ALL	(1 << 2)	/* PE has subordinate buses	*/
 
+struct pnv_ioda_pe;
+typedef void (*pnv_invalidate_fn)(struct pnv_ioda_pe *pe,
+		struct iommu_table *tbl,
+		__be64 *startp, __be64 *endp, bool rm);
+
+struct pnv_iommu_table {
+	struct iommu_table	table;
+	struct pnv_ioda_pe	*pe;
+};
+
 /* Data associated with a PE, including IOMMU tracking etc.. */
 struct pnv_phb;
 struct pnv_ioda_pe {
@@ -49,9 +59,10 @@ struct pnv_ioda_pe {
 	unsigned int		dma_weight;
 
 	/* "Base" iommu table, ie, 4K TCEs, 32-bit DMA */
+	pnv_invalidate_fn	tce_invalidate;
 	int			tce32_seg;
 	int			tce32_segcount;
-	struct iommu_table	tce32_table;
+	struct pnv_iommu_table	tce32;
 	phys_addr_t		tce_inval_reg_phys;
 
 	/* 64-bit TCE bypass region */
