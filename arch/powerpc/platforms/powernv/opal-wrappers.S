@@ -139,3 +139,4 @@ OPAL_CALL(opal_sensor_read,			OPAL_SENSOR_READ);
 OPAL_CALL(opal_get_param,                       OPAL_GET_PARAM);
 OPAL_CALL(opal_set_param,                       OPAL_SET_PARAM);
 OPAL_CALL(opal_dump_resend_notification,	OPAL_DUMP_RESEND);
+OPAL_CALL(opal_handle_hmi,			OPAL_HANDLE_HMI);

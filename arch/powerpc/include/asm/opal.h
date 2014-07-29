@@ -176,6 +176,7 @@ extern int opal_enter_rtas(struct rtas_args *args,
 #define OPAL_SET_PARAM				90
 #define OPAL_DUMP_RESEND			91
 #define OPAL_DUMP_INFO2				94
+#define OPAL_HANDLE_HMI				98
 
 #ifndef __ASSEMBLY__
 
@@ -267,6 +268,7 @@ enum OpalMessageType {
 	OPAL_MSG_MEM_ERR,
 	OPAL_MSG_EPOW,
 	OPAL_MSG_SHUTDOWN,
+	OPAL_MSG_HMI_EVT,
 	OPAL_MSG_TYPE_MAX,
 };
 
@@ -532,6 +534,50 @@ struct OpalMemoryErrorData {
 			uint64_t	physical_address_end;
 		} dyn_dealloc;
 	} u;
+};
+
+/* HMI interrupt event */
+enum OpalHMI_Version {
+	OpalHMIEvt_V1 = 1,
+};
+
+enum OpalHMI_Severity {
+	OpalHMI_SEV_NO_ERROR = 0,
+	OpalHMI_SEV_WARNING = 1,
+	OpalHMI_SEV_ERROR_SYNC = 2,
+	OpalHMI_SEV_FATAL = 3,
+};
+
+enum OpalHMI_Disposition {
+	OpalHMI_DISPOSITION_RECOVERED = 0,
+	OpalHMI_DISPOSITION_NOT_RECOVERED = 1,
+};
+
+enum OpalHMI_ErrType {
+	OpalHMI_ERROR_MALFUNC_ALERT	= 0,
+	OpalHMI_ERROR_PROC_RECOV_DONE,
+	OpalHMI_ERROR_PROC_RECOV_DONE_AGAIN,
+	OpalHMI_ERROR_PROC_RECOV_MASKED,
+	OpalHMI_ERROR_TFAC,
+	OpalHMI_ERROR_TFMR_PARITY,
+	OpalHMI_ERROR_HA_OVERFLOW_WARN,
+	OpalHMI_ERROR_XSCOM_FAIL,
+	OpalHMI_ERROR_XSCOM_DONE,
+	OpalHMI_ERROR_SCOM_FIR,
+	OpalHMI_ERROR_DEBUG_TRIG_FIR,
+	OpalHMI_ERROR_HYP_RESOURCE,
+};
+
+struct OpalHMIEvent {
+	uint8_t		version;	/* 0x00 */
+	uint8_t		severity;	/* 0x01 */
+	uint8_t		type;		/* 0x02 */
+	uint8_t		disposition;	/* 0x03 */
+	uint8_t		reserved_1[4];	/* 0x04 */
+
+	__be64		hmer;
+	/* TFMR register. Valid only for TFAC and TFMR_PARITY error type. */
+	__be64		tfmr;
 };
 
 enum {
@@ -886,6 +932,7 @@ int64_t opal_set_param(uint64_t token, uint32_t param_id, uint64_t buffer,
 int64_t opal_sensor_read(uint32_t sensor_hndl, int token,
 		uint32_t *sensor_data);
 int64_t opal_invalid_call(void);
+int64_t opal_handle_hmi(void);
 
 /* Internal functions */
 extern int early_init_dt_scan_opal(unsigned long node, const char *uname, int depth, void *data);
