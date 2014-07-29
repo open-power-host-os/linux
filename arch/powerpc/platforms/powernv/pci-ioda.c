@@ -765,6 +765,24 @@ static void pnv_pci_ioda2_setup_bypass_pe(struct pnv_phb *phb,
 	pnv_pci_ioda2_set_bypass(pe, true);
 }
 
+static struct iommu_table *pnv_ioda2_iommu_get_table(
+		struct spapr_tce_iommu_group *data,
+		phys_addr_t addr)
+{
+	struct pnv_ioda_pe *pe = data->iommu_owner;
+
+	if (addr == TCE_DEFAULT_WINDOW)
+		return &pe->tce32.table;
+
+	if (pnv_pci_ioda_check_addr(&pe->tce64.table, addr))
+		return &pe->tce64.table;
+
+	if (pnv_pci_ioda_check_addr(&pe->tce32.table, addr))
+		return &pe->tce32.table;
+
+	return NULL;
+}
+
 static void pnv_ioda2_take_ownership(struct spapr_tce_iommu_group *data,
 				     bool enable)
 {
@@ -773,9 +791,148 @@ static void pnv_ioda2_take_ownership(struct spapr_tce_iommu_group *data,
 	pnv_pci_ioda2_set_bypass(pe, !enable);
 }
 
+static long pnv_pci_ioda2_ddw_query(struct spapr_tce_iommu_group *data,
+		__u32 *windows_available, __u32 *page_size_mask)
+{
+	struct pnv_ioda_pe *pe = data->iommu_owner;
+
+	if (pe->tce64_active) {
+		*page_size_mask = 0;
+		*windows_available = 0;
+	} else {
+		*page_size_mask =
+			DDW_PGSIZE_4K |
+			DDW_PGSIZE_64K |
+			DDW_PGSIZE_16M;
+		*windows_available = 1;
+	}
+
+	return 0;
+}
+
+static long pnv_pci_ioda2_ddw_create(struct spapr_tce_iommu_group *data,
+		__u32 page_shift, __u32 window_shift,
+		struct iommu_table **ptbl)
+{
+	struct pnv_ioda_pe *pe = data->iommu_owner;
+	struct pnv_phb *phb = pe->phb;
+	struct page *tce_mem = NULL;
+	void *addr;
+	long ret;
+	unsigned long tce_table_size =
+			(1ULL << (window_shift - page_shift)) * 8;
+	unsigned order;
+	struct iommu_table *tbl64 = &pe->tce64.table;
+
+	if ((page_shift != 12) && (page_shift != 16) && (page_shift != 24))
+		return -EINVAL;
+
+	if (window_shift > (memory_hotplug_max() >> page_shift))
+		return -EINVAL;
+
+	if (pe->tce64_active)
+		return -EBUSY;
+
+	tce_table_size = max(0x1000UL, tce_table_size);
+	order = get_order(tce_table_size);
+
+	pe_info(pe, "Setting up DDW at %llx..%llx ws=0x%x ps=0x%x table_size=0x%lx order=0x%x\n",
+			pe->tce_bypass_base,
+			pe->tce_bypass_base + (1ULL << window_shift) - 1,
+			window_shift, page_shift, tce_table_size, order);
+
+	tce_mem = alloc_pages_node(phb->hose->node, GFP_KERNEL, order);
+	if (!tce_mem) {
+		pe_err(pe, " Failed to allocate a DDW\n");
+		return -EFAULT;
+	}
+	addr = page_address(tce_mem);
+	memset(addr, 0, tce_table_size);
+
+	/* Configure HW */
+	ret = opal_pci_map_pe_dma_window(phb->opal_id,
+			pe->pe_number,
+			(pe->pe_number << 1) + 1, /* Window number */
+			1,
+			__pa(addr),
+			tce_table_size,
+			1 << page_shift);
+	if (ret) {
+		pe_err(pe, " Failed to configure 32-bit TCE table, err %ld\n",
+				ret);
+		return -EFAULT;
+	}
+
+	/* Setup linux iommu table */
+	pnv_pci_setup_iommu_table(tbl64, addr, tce_table_size,
+			pe->tce_bypass_base, page_shift);
+	pe->tce64.pe = pe;
+
+	/* Copy "invalidate" register address */
+	tbl64->it_index = pe->tce32.table.it_index;
+	tbl64->it_group = pe->tce32.table.it_group;
+	tbl64->it_type = TCE_PCI_SWINV_CREATE | TCE_PCI_SWINV_FREE |
+			TCE_PCI_SWINV_PAIR;
+	tbl64->it_map = (void *) 0xDEADBEEF; /* poison */
+	tbl64->it_ops = pe->tce32.table.it_ops;
+
+	*ptbl = tbl64;
+
+	pe->tce64_active = true;
+
+	return 0;
+}
+
+static long pnv_pci_ioda2_ddw_remove(struct spapr_tce_iommu_group *data,
+		struct iommu_table *tbl)
+{
+	struct pnv_ioda_pe *pe = data->iommu_owner;
+	struct pnv_phb *phb = pe->phb;
+	long ret;
+
+	/* Only additional 64bit window removal is supported */
+	if ((tbl != &pe->tce64.table) || !pe->tce64_active)
+		return -EFAULT;
+
+	pe_info(pe, "Removing huge 64bit DMA window\n");
+
+	iommu_clear_tces_and_put_pages(tbl, tbl->it_offset, tbl->it_size);
+
+	pe->tce64_active = false;
+
+	ret = opal_pci_map_pe_dma_window(phb->opal_id,
+			pe->pe_number,
+			(pe->pe_number << 1) + 1,
+			0/* levels */, 0/* table address */,
+			0/* table size */, 0/* page size */);
+	if (ret)
+		pe_warn(pe, "Unmapping failed, ret = %ld\n", ret);
+
+	free_pages(tbl->it_base, get_order(tbl->it_size << 3));
+	memset(&pe->tce64, 0, sizeof(pe->tce64));
+
+	return ret;
+}
+
+static long pnv_pci_ioda2_ddw_reset(struct spapr_tce_iommu_group *data)
+{
+	struct pnv_ioda_pe *pe = data->iommu_owner;
+
+	pe_info(pe, "Reset DMA windows\n");
+
+	if (!pe->tce64_active)
+		return 0;
+
+	return pnv_pci_ioda2_ddw_remove(data, &pe->tce64.table);
+}
+
 static struct spapr_tce_iommu_ops pnv_pci_ioda2_ops = {
-	.get_table = pnv_ioda1_iommu_get_table,
+	.get_table = pnv_ioda2_iommu_get_table,
 	.take_ownership = pnv_ioda2_take_ownership,
+	.query = pnv_pci_ioda2_ddw_query,
+	.create = pnv_pci_ioda2_ddw_create,
+	.remove = pnv_pci_ioda2_ddw_remove,
+	.reset = pnv_pci_ioda2_ddw_reset
 };
 
 static void pnv_pci_ioda2_setup_dma_pe(struct pnv_phb *phb,

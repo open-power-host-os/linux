@@ -60,6 +60,27 @@ struct spapr_tce_iommu_ops {
 			phys_addr_t addr);
 	void (*take_ownership)(struct spapr_tce_iommu_group *data,
 			bool enable);
+
+	/* Dynamic DMA window */
+	/* Page size flags for ibm,query-pe-dma-window */
+#define DDW_PGSIZE_4K       0x01
+#define DDW_PGSIZE_64K      0x02
+#define DDW_PGSIZE_16M      0x04
+#define DDW_PGSIZE_32M      0x08
+#define DDW_PGSIZE_64M      0x10
+#define DDW_PGSIZE_128M     0x20
+#define DDW_PGSIZE_256M     0x40
+#define DDW_PGSIZE_16G      0x80
+	long (*query)(struct spapr_tce_iommu_group *data,
+			__u32 *windows_available,
+			__u32 *page_size_mask);
+	long (*create)(struct spapr_tce_iommu_group *data,
+			__u32 page_shift,
+			__u32 window_shift,
+			struct iommu_table **ptbl);
+	long (*remove)(struct spapr_tce_iommu_group *data,
+			struct iommu_table *tbl);
+	long (*reset)(struct spapr_tce_iommu_group *data);
 };
 
 struct spapr_tce_iommu_group {

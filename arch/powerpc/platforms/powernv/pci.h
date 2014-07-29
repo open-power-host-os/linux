@@ -64,6 +64,8 @@ struct pnv_ioda_pe {
 	int			tce32_segcount;
 	struct pnv_iommu_table	tce32;
 	phys_addr_t		tce_inval_reg_phys;
+	bool			tce64_active;
+	struct pnv_iommu_table	tce64;
 
 	/* 64-bit TCE bypass region */
 	bool			tce_bypass_enabled;
