@@ -224,19 +224,36 @@ static long kvmppc_stt_npages(unsigned long window_size)
 		     * sizeof(u64), PAGE_SIZE) / PAGE_SIZE;
 }
 
+static long kvmppc_account_memlimit(long npages, bool inc)
+{
+	long stt_pages = ALIGN(sizeof(struct kvmppc_spapr_tce_table) +
+			(abs(npages) * sizeof(struct page *)), PAGE_SIZE);
+
+	npages += stt_pages;
+	if (inc)
+		return try_increment_locked_vm(npages);
+
+	decrement_locked_vm(npages);
+
+	return 0;
+}
+
 static void release_spapr_tce_table(struct kvmppc_spapr_tce_table *stt)
 {
 	struct kvm *kvm = stt->kvm;
 	int i;
+	long npages = kvmppc_stt_npages(stt->window_size);
 
 	mutex_lock(&kvm->lock);
 	list_del(&stt->list);
-	for (i = 0; i < kvmppc_stt_npages(stt->window_size); i++)
+	for (i = 0; i < npages; i++)
 		__free_page(stt->pages[i]);
 	kfree(stt);
 	mutex_unlock(&kvm->lock);
 
 	kvm_put_kvm(kvm);
+
+	kvmppc_account_memlimit(npages, false);
 }
 
 static int kvm_spapr_tce_fault(struct vm_area_struct *vma, struct vm_fault *vmf)
@@ -291,6 +308,9 @@ long kvm_vm_ioctl_create_spapr_tce(struct kvm *kvm,
 		return -EBUSY;
 
 	npages = kvmppc_stt_npages(args->window_size);
+	ret = kvmppc_account_memlimit(npages, true);
+	if (ret)
+		goto fail;
 
 	stt = kzalloc(sizeof(*stt) + npages * sizeof(struct page *),
 		      GFP_KERNEL);
