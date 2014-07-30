@@ -441,7 +441,8 @@ struct vfio_iommu_type1_dma_unmap {
  */
 struct vfio_iommu_spapr_tce_info {
 	__u32 argsz;
-	__u32 flags;			/* reserved for future use */
+	__u32 flags;
+#define VFIO_IOMMU_SPAPR_TCE_FLAG_DDW	1 /* Support dynamic windows */
 	__u32 dma32_window_start;	/* 32 bit window start (bytes) */
 	__u32 dma32_window_size;	/* 32 bit window size (bytes) */
 };
@@ -449,6 +450,7 @@ struct vfio_iommu_spapr_tce_info {
 #define VFIO_IOMMU_SPAPR_TCE_GET_INFO	_IO(VFIO_TYPE, VFIO_BASE + 12)
 
 /*
+<<<<<<< HEAD
  * EEH PE operation struct provides ways to:
  * - enable/disable EEH functionality;
  * - unfreeze IO/DMA for frozen PE;
@@ -478,6 +480,40 @@ struct vfio_eeh_pe_op {
 #define VFIO_EEH_PE_CONFIGURE		8	/* PE configuration          */
 
 #define VFIO_EEH_PE_OP			_IO(VFIO_TYPE, VFIO_BASE + 21)
+
+/*
+ * Dynamic DMA windows
+ */
+struct vfio_iommu_spapr_tce_query {
+	__u32 argsz;
+	/* out */
+	__u32 windows_available;
+	__u32 page_size_mask;
+};
+#define VFIO_IOMMU_SPAPR_TCE_QUERY	_IO(VFIO_TYPE, VFIO_BASE + 17)
+
+struct vfio_iommu_spapr_tce_create {
+	__u32 argsz;
+	/* in */
+	__u32 page_shift;
+	__u32 window_shift;
+	/* out */
+	__u64 start_addr;
+
+};
+#define VFIO_IOMMU_SPAPR_TCE_CREATE	_IO(VFIO_TYPE, VFIO_BASE + 18)
+
+struct vfio_iommu_spapr_tce_remove {
+	__u32 argsz;
+	/* in */
+	__u64 start_addr;
+};
+#define VFIO_IOMMU_SPAPR_TCE_REMOVE	_IO(VFIO_TYPE, VFIO_BASE + 19)
+
+struct vfio_iommu_spapr_tce_reset {
+	__u32 argsz;
+};
+#define VFIO_IOMMU_SPAPR_TCE_RESET	_IO(VFIO_TYPE, VFIO_BASE + 20)
 
 /* ***************************************************************** */
 

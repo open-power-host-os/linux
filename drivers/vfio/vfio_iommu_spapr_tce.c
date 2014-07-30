@@ -45,6 +45,7 @@ struct tce_container {
 	struct mutex lock;
 	struct iommu_group *grp;
 	bool enabled;
+	unsigned long start64;
 };
 
 
@@ -123,14 +124,31 @@ static void tce_iommu_disable(struct tce_container *container)
 
 	container->enabled = false;
 
-	if (!container->grp || !current->mm)
+	if (!container->grp)
 		return;
 
 	data = iommu_group_get_iommudata(container->grp);
 	if (!data || !data->iommu_owner || !data->ops->get_table)
 		return;
 
+	/* Try resetting, there might have been a 64bit window */
+	if (data->ops->reset)
+		data->ops->reset(data);
+
+	if (!current->mm)
+		return;
+
 	tbl = data->ops->get_table(data, TCE_DEFAULT_WINDOW);
+	if (!tbl)
+		return;
+
+	decrement_locked_vm((tbl->it_size << tbl->it_page_shift) >>
+			PAGE_SHIFT);
+
+	if (!container->start64)
+		return;
+
+	tbl = data->ops->get_table(data, container->start64);
 	if (!tbl)
 		return;
 
@@ -219,6 +237,8 @@ static long tce_iommu_ioctl(void *iommu_data,
 		info.dma32_window_start = tbl->it_offset << tbl->it_page_shift;
 		info.dma32_window_size = tbl->it_size << tbl->it_page_shift;
 		info.flags = 0;
+		if (data->ops->query && data->ops->create && data->ops->remove)
+			info.flags |= VFIO_IOMMU_SPAPR_TCE_FLAG_DDW;
 
 		if (copy_to_user((void __user *)arg, &info, minsz))
 			return -EFAULT;
@@ -351,6 +371,157 @@ static long tce_iommu_ioctl(void *iommu_data,
 
 		return vfio_spapr_iommu_eeh_ioctl(container->grp,
 						  cmd, arg);
+
+	case VFIO_IOMMU_SPAPR_TCE_QUERY: {
+		struct vfio_iommu_spapr_tce_query query;
+		struct spapr_tce_iommu_group *data;
+
+		if (WARN_ON(!container->grp))
+			return -ENXIO;
+
+		data = iommu_group_get_iommudata(container->grp);
+
+		minsz = offsetofend(struct vfio_iommu_spapr_tce_query,
+				page_size_mask);
+
+		if (copy_from_user(&query, (void __user *)arg, minsz))
+			return -EFAULT;
+
+		if (query.argsz < minsz)
+			return -EINVAL;
+
+		if (!data->ops->query || !data->iommu_owner)
+			return -ENOSYS;
+
+		ret = data->ops->query(data,
+				&query.windows_available,
+				&query.page_size_mask);
+
+		if (ret)
+			return ret;
+
+		if (copy_to_user((void __user *)arg, &query, minsz))
+			return -EFAULT;
+
+		return 0;
+	}
+	case VFIO_IOMMU_SPAPR_TCE_CREATE: {
+		struct vfio_iommu_spapr_tce_create create;
+		struct spapr_tce_iommu_group *data;
+		struct iommu_table *tbl;
+
+		if (WARN_ON(!container->grp))
+			return -ENXIO;
+
+		data = iommu_group_get_iommudata(container->grp);
+
+		minsz = offsetofend(struct vfio_iommu_spapr_tce_create,
+				start_addr);
+
+		if (copy_from_user(&create, (void __user *)arg, minsz))
+			return -EFAULT;
+
+		if (create.argsz < minsz)
+			return -EINVAL;
+
+		if (!data->ops->create || !data->iommu_owner)
+			return -ENOSYS;
+
+		BUG_ON(!data || !data->ops || !data->ops->remove);
+
+		ret = data->ops->create(data, create.page_shift,
+				create.window_shift, &tbl);
+		if (ret)
+			return ret;
+
+		ret = try_increment_locked_vm((tbl->it_size <<
+					tbl->it_page_shift) >> PAGE_SHIFT);
+		if (ret) {
+			data->ops->remove(data, tbl);
+			return ret;
+		}
+
+		create.start_addr = tbl->it_offset << tbl->it_page_shift;
+
+		if (copy_to_user((void __user *)arg, &create, minsz)) {
+			data->ops->remove(data, tbl);
+			decrement_locked_vm((tbl->it_size <<
+					tbl->it_page_shift) >> PAGE_SHIFT);
+			return -EFAULT;
+		}
+
+		return ret;
+	}
+	case VFIO_IOMMU_SPAPR_TCE_REMOVE: {
+		struct vfio_iommu_spapr_tce_remove remove;
+		struct spapr_tce_iommu_group *data;
+		struct iommu_table *tbl;
+
+		if (WARN_ON(!container->grp))
+			return -ENXIO;
+
+		data = iommu_group_get_iommudata(container->grp);
+
+		minsz = offsetofend(struct vfio_iommu_spapr_tce_remove,
+				start_addr);
+
+		if (copy_from_user(&remove, (void __user *)arg, minsz))
+			return -EFAULT;
+
+		if (remove.argsz < minsz)
+			return -EINVAL;
+
+		if (!data->ops->remove || !data->iommu_owner)
+			return -ENOSYS;
+
+		tbl = data->ops->get_table(data, remove.start_addr);
+		if (!tbl)
+			return -EINVAL;
+
+		ret = data->ops->remove(data, tbl);
+		if (ret)
+			return ret;
+
+		decrement_locked_vm((tbl->it_size << tbl->it_page_shift)
+				>> PAGE_SHIFT);
+		return 0;
+	}
+	case VFIO_IOMMU_SPAPR_TCE_RESET: {
+		struct vfio_iommu_spapr_tce_reset reset;
+		struct spapr_tce_iommu_group *data;
+
+		if (WARN_ON(!container->grp))
+			return -ENXIO;
+
+		data = iommu_group_get_iommudata(container->grp);
+
+		minsz = offsetofend(struct vfio_iommu_spapr_tce_reset, argsz);
+
+		if (copy_from_user(&reset, (void __user *)arg, minsz))
+			return -EFAULT;
+
+		if (reset.argsz < minsz)
+			return -EINVAL;
+
+		if (!data->ops->reset || !data->iommu_owner)
+			return -ENOSYS;
+
+		ret = data->ops->reset(data);
+		if (ret)
+			return ret;
+
+		if (container->start64) {
+			struct iommu_table *tbl;
+
+			tbl = data->ops->get_table(data, container->start64);
+			BUG_ON(!tbl);
+
+			decrement_locked_vm((tbl->it_size << tbl->it_page_shift)
+					>> PAGE_SHIFT);
+		}
+
+		return 0;
+	}
 	}
 
 	return -ENOTTY;
