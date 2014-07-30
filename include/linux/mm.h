@@ -1855,5 +1855,8 @@ void __init setup_nr_node_ids(void);
 static inline void setup_nr_node_ids(void) {}
 #endif
 
+extern long try_increment_locked_vm(long npages);
+extern void decrement_locked_vm(long npages);
+
 #endif /* __KERNEL__ */
 #endif /* _LINUX_MM_H */

@@ -589,3 +589,52 @@ void user_shm_unlock(size_t size, struct user_struct *user)
 	spin_unlock(&shmlock_user_lock);
 	free_uid(user);
 }
+
+/**
+ * try_increment_locked_vm() - checks if new locked_vm value is going to
+ * be less than RLIMIT_MEMLOCK and increments it by npages if it is.
+ *
+ * @npages: the number of pages to add to locked_vm.
+ *
+ * Returns 0 if succeeded or negative value if failed.
+ */
+long try_increment_locked_vm(long npages)
+{
+	long ret = 0, locked, lock_limit;
+
+	if (!current || !current->mm)
+		return -ESRCH; /* process exited */
+
+	down_write(&current->mm->mmap_sem);
+	locked = current->mm->locked_vm + npages;
+	lock_limit = rlimit(RLIMIT_MEMLOCK) >> PAGE_SHIFT;
+	if (locked > lock_limit && !capable(CAP_IPC_LOCK)) {
+		pr_warn("RLIMIT_MEMLOCK (%ld) exceeded\n",
+				rlimit(RLIMIT_MEMLOCK));
+		ret = -ENOMEM;
+	} else {
+		current->mm->locked_vm += npages;
+	}
+	up_write(&current->mm->mmap_sem);
+
+	return ret;
+}
+EXPORT_SYMBOL_GPL(try_increment_locked_vm);
+
+/**
+ * decrement_locked_vm() - decrements the current task's locked_vm counter.
+ *
+ * @npages: the number to decrement by.
+ */
+void decrement_locked_vm(long npages)
+{
+	if (!current || !current->mm)
+		return; /* process exited */
+
+	down_write(&current->mm->mmap_sem);
+	if (npages > current->mm->locked_vm)
+		npages = current->mm->locked_vm;
+	current->mm->locked_vm -= npages;
+	up_write(&current->mm->mmap_sem);
+}
+EXPORT_SYMBOL_GPL(decrement_locked_vm);
