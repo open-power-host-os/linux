@@ -877,24 +877,52 @@ void iommu_free_coherent(struct iommu_table *tbl, size_t size,
  */
 static void group_release(void *iommu_data)
 {
-	struct iommu_table *tbl = iommu_data;
-	tbl->it_group = NULL;
+	kfree(iommu_data);
 }
 
+static struct iommu_table *spapr_tce_get_default_table(
+		struct spapr_tce_iommu_group *data, phys_addr_t addr)
+{
+	struct iommu_table *tbl = data->iommu_owner;
+
+	if (addr == TCE_DEFAULT_WINDOW)
+		return tbl;
+
+	if ((addr >> tbl->it_page_shift) < tbl->it_size)
+		return tbl;
+
+	return NULL;
+}
+
+static struct spapr_tce_iommu_ops spapr_tce_default_ops = {
+	.get_table = spapr_tce_get_default_table
+};
+
 void iommu_register_group(struct iommu_table *tbl,
+		void *iommu_owner, struct spapr_tce_iommu_ops *ops,
 		int pci_domain_number, unsigned long pe_num)
 {
 	struct iommu_group *grp;
 	char *name;
+	struct spapr_tce_iommu_group *data;
+
+	data = kzalloc(sizeof(*data), GFP_KERNEL);
+	if (!data)
+		return;
+
+	data->iommu_owner = iommu_owner ? iommu_owner : tbl;
+	data->ops = ops ? ops : &spapr_tce_default_ops;
 
 	grp = iommu_group_alloc();
 	if (IS_ERR(grp)) {
 		pr_warn("powerpc iommu api: cannot create new group, err=%ld\n",
 				PTR_ERR(grp));
+		kfree(data);
 		return;
 	}
+
 	tbl->it_group = grp;
-	iommu_group_set_iommudata(grp, tbl, group_release);
+	iommu_group_set_iommudata(grp, data, group_release);
 	name = kasprintf(GFP_KERNEL, "domain%d-pe%lx",
 			pci_domain_number, pe_num);
 	if (!name)

@@ -43,7 +43,7 @@ static void tce_iommu_detach_group(void *iommu_data,
  */
 struct tce_container {
 	struct mutex lock;
-	struct iommu_table *tbl;
+	struct iommu_group *grp;
 	bool enabled;
 };
 
@@ -51,9 +51,14 @@ static int tce_iommu_enable(struct tce_container *container)
 {
 	int ret = 0;
 	unsigned long locked, lock_limit, npages;
-	struct iommu_table *tbl = container->tbl;
+	struct iommu_table *tbl;
+	struct spapr_tce_iommu_group *data;
 
-	if (!container->tbl)
+	if (!container->grp)
+		return -ENXIO;
+
+	data = iommu_group_get_iommudata(container->grp);
+	if (!data || !data->iommu_owner || !data->ops->get_table)
 		return -ENXIO;
 
 	if (!current->mm)
@@ -80,6 +85,10 @@ static int tce_iommu_enable(struct tce_container *container)
 	 * that would effectively kill the guest at random points, much better
 	 * enforcing the limit based on the max that the guest can map.
 	 */
+	tbl = data->ops->get_table(data, TCE_DEFAULT_WINDOW);
+	if (!tbl)
+		return -ENXIO;
+
 	down_write(&current->mm->mmap_sem);
 	npages = (tbl->it_size << IOMMU_PAGE_SHIFT_4K) >> PAGE_SHIFT;
 	locked = current->mm->locked_vm + npages;
@@ -89,7 +98,6 @@ static int tce_iommu_enable(struct tce_container *container)
 				rlimit(RLIMIT_MEMLOCK));
 		ret = -ENOMEM;
 	} else {
-
 		current->mm->locked_vm += npages;
 		container->enabled = true;
 	}
@@ -100,16 +108,27 @@ static int tce_iommu_enable(struct tce_container *container)
 
 static void tce_iommu_disable(struct tce_container *container)
 {
+	struct spapr_tce_iommu_group *data;
+	struct iommu_table *tbl;
+
 	if (!container->enabled)
 		return;
 
 	container->enabled = false;
 
-	if (!container->tbl || !current->mm)
+	if (!container->grp || !current->mm)
+		return;
+
+	data = iommu_group_get_iommudata(container->grp);
+	if (!data || !data->iommu_owner || !data->ops->get_table)
+		return;
+
+	tbl = data->ops->get_table(data, TCE_DEFAULT_WINDOW);
+	if (!tbl)
 		return;
 
 	down_write(&current->mm->mmap_sem);
-	current->mm->locked_vm -= (container->tbl->it_size <<
+	current->mm->locked_vm -= (tbl->it_size <<
 			IOMMU_PAGE_SHIFT_4K) >> PAGE_SHIFT;
 	up_write(&current->mm->mmap_sem);
 }
@@ -136,11 +155,11 @@ static void tce_iommu_release(void *iommu_data)
 {
 	struct tce_container *container = iommu_data;
 
-	WARN_ON(container->tbl && !container->tbl->it_group);
+	WARN_ON(container->grp);
 	tce_iommu_disable(container);
 
-	if (container->tbl && container->tbl->it_group)
-		tce_iommu_detach_group(iommu_data, container->tbl->it_group);
+	if (container->grp)
+		tce_iommu_detach_group(iommu_data, container->grp);
 
 	mutex_destroy(&container->lock);
 
@@ -169,8 +188,17 @@ static long tce_iommu_ioctl(void *iommu_data,
 
 	case VFIO_IOMMU_SPAPR_TCE_GET_INFO: {
 		struct vfio_iommu_spapr_tce_info info;
-		struct iommu_table *tbl = container->tbl;
+		struct iommu_table *tbl;
+		struct spapr_tce_iommu_group *data;
 
+		if (WARN_ON(!container->grp))
+			return -ENXIO;
+
+		data = iommu_group_get_iommudata(container->grp);
+		if (WARN_ON(!data || !data->iommu_owner || !data->ops))
+			return -ENXIO;
+
+		tbl = data->ops->get_table(data, TCE_DEFAULT_WINDOW);
 		if (WARN_ON(!tbl))
 			return -ENXIO;
 
@@ -194,13 +222,16 @@ static long tce_iommu_ioctl(void *iommu_data,
 	}
 	case VFIO_IOMMU_MAP_DMA: {
 		struct vfio_iommu_type1_dma_map param;
-		struct iommu_table *tbl = container->tbl;
+		struct iommu_table *tbl;
+		struct spapr_tce_iommu_group *data;
 		unsigned long tce, i;
 
-		if (!tbl)
+		if (WARN_ON(!container->grp))
 			return -ENXIO;
 
-		BUG_ON(!tbl->it_group);
+		data = iommu_group_get_iommudata(container->grp);
+		if (WARN_ON(!data || !data->iommu_owner || !data->ops))
+			return -ENXIO;
 
 		minsz = offsetofend(struct vfio_iommu_type1_dma_map, size);
 
@@ -225,6 +256,11 @@ static long tce_iommu_ioctl(void *iommu_data,
 		if (param.flags & VFIO_DMA_MAP_FLAG_WRITE)
 			tce |= TCE_PCI_WRITE;
 
+		tbl = data->ops->get_table(data, param.iova);
+		if (!tbl)
+			return -ENXIO;
+		BUG_ON(!tbl->it_group);
+
 		ret = iommu_tce_put_param_check(tbl, param.iova, tce);
 		if (ret)
 			return ret;
@@ -247,9 +283,14 @@ static long tce_iommu_ioctl(void *iommu_data,
 	}
 	case VFIO_IOMMU_UNMAP_DMA: {
 		struct vfio_iommu_type1_dma_unmap param;
-		struct iommu_table *tbl = container->tbl;
+		struct iommu_table *tbl;
+		struct spapr_tce_iommu_group *data;
 
-		if (WARN_ON(!tbl))
+		if (WARN_ON(!container->grp))
+			return -ENXIO;
+
+		data = iommu_group_get_iommudata(container->grp);
+		if (WARN_ON(!data || !data->iommu_owner || !data->ops))
 			return -ENXIO;
 
 		minsz = offsetofend(struct vfio_iommu_type1_dma_unmap,
@@ -267,6 +308,12 @@ static long tce_iommu_ioctl(void *iommu_data,
 
 		if (param.size & ~IOMMU_PAGE_MASK_4K)
 			return -EINVAL;
+
+		tbl = data->ops->get_table(data, param.iova);
+		if (WARN_ON(!tbl))
+			return -ENXIO;
+
+		BUG_ON(!tbl->it_group);
 
 		ret = iommu_tce_clear_param_check(tbl, param.iova, 0,
 				param.size >> IOMMU_PAGE_SHIFT_4K);
@@ -292,11 +339,12 @@ static long tce_iommu_ioctl(void *iommu_data,
 		tce_iommu_disable(container);
 		mutex_unlock(&container->lock);
 		return 0;
+
 	case VFIO_EEH_PE_OP:
-		if (!container->tbl || !container->tbl->it_group)
+		if (!container->grp)
 			return -ENODEV;
 
-		return vfio_spapr_iommu_eeh_ioctl(container->tbl->it_group,
+		return vfio_spapr_iommu_eeh_ioctl(container->grp,
 						  cmd, arg);
 	}
 
@@ -308,16 +356,16 @@ static int tce_iommu_attach_group(void *iommu_data,
 {
 	int ret;
 	struct tce_container *container = iommu_data;
-	struct iommu_table *tbl = iommu_group_get_iommudata(iommu_group);
+	struct iommu_table *tbl;
+	struct spapr_tce_iommu_group *data;
 
-	BUG_ON(!tbl);
 	mutex_lock(&container->lock);
 
 	/* pr_debug("tce_vfio: Attaching group #%u to iommu %p\n",
 			iommu_group_id(iommu_group), iommu_group); */
-	if (container->tbl) {
+	if (container->grp) {
 		pr_warn("tce_vfio: Only one group per IOMMU container is allowed, existing id=%d, attaching id=%d\n",
-				iommu_group_id(container->tbl->it_group),
+				iommu_group_id(container->grp),
 				iommu_group_id(iommu_group));
 		ret = -EBUSY;
 	} else if (container->enabled) {
@@ -325,9 +373,16 @@ static int tce_iommu_attach_group(void *iommu_data,
 				iommu_group_id(iommu_group));
 		ret = -EBUSY;
 	} else {
+		data = iommu_group_get_iommudata(iommu_group);
+		if (WARN_ON(!data || !data->iommu_owner || !data->ops))
+			return -ENXIO;
+
+		tbl = data->ops->get_table(data, TCE_DEFAULT_WINDOW);
+		BUG_ON(!tbl);
+
 		ret = iommu_take_ownership(tbl);
 		if (!ret)
-			container->tbl = tbl;
+			container->grp = iommu_group;
 	}
 
 	mutex_unlock(&container->lock);
@@ -339,24 +394,31 @@ static void tce_iommu_detach_group(void *iommu_data,
 		struct iommu_group *iommu_group)
 {
 	struct tce_container *container = iommu_data;
-	struct iommu_table *tbl = iommu_group_get_iommudata(iommu_group);
+	struct iommu_table *tbl;
+	struct spapr_tce_iommu_group *data;
 
-	BUG_ON(!tbl);
 	mutex_lock(&container->lock);
-	if (tbl != container->tbl) {
+	if (iommu_group != container->grp) {
 		pr_warn("tce_vfio: detaching group #%u, expected group is #%u\n",
 				iommu_group_id(iommu_group),
-				iommu_group_id(tbl->it_group));
+				iommu_group_id(container->grp));
 	} else {
 		if (container->enabled) {
 			pr_warn("tce_vfio: detaching group #%u from enabled container, forcing disable\n",
-					iommu_group_id(tbl->it_group));
+					iommu_group_id(container->grp));
 			tce_iommu_disable(container);
 		}
 
 		/* pr_debug("tce_vfio: detaching group #%u from iommu %p\n",
 				iommu_group_id(iommu_group), iommu_group); */
-		container->tbl = NULL;
+		container->grp = NULL;
+
+		data = iommu_group_get_iommudata(iommu_group);
+		BUG_ON(!data || !data->iommu_owner || !data->ops);
+
+		tbl = data->ops->get_table(data, TCE_DEFAULT_WINDOW);
+		BUG_ON(!tbl);
+
 		iommu_release_ownership(tbl);
 	}
 	mutex_unlock(&container->lock);

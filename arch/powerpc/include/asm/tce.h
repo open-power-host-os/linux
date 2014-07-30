@@ -50,5 +50,20 @@
 #define TCE_PCI_READ		0x1		/* read from PCI allowed */
 #define TCE_VB_WRITE		0x1		/* write from VB allowed */
 
+struct spapr_tce_iommu_group;
+
+#define TCE_DEFAULT_WINDOW	~(0ULL)
+
+struct spapr_tce_iommu_ops {
+	struct iommu_table *(*get_table)(
+			struct spapr_tce_iommu_group *data,
+			phys_addr_t addr);
+};
+
+struct spapr_tce_iommu_group {
+	void *iommu_owner;
+	struct spapr_tce_iommu_ops *ops;
+};
+
 #endif /* __KERNEL__ */
 #endif /* _ASM_POWERPC_TCE_H */

@@ -89,6 +89,7 @@ static void pnv_pci_p5ioc2_dma_dev_setup(struct pnv_phb *phb,
 	if (phb->p5ioc2.iommu_table.it_map == NULL) {
 		iommu_init_table(&phb->p5ioc2.iommu_table, phb->hose->node);
 		iommu_register_group(&phb->p5ioc2.iommu_table,
+				NULL, NULL,
 				pci_domain_nr(phb->hose->bus), phb->opal_id);
 	}
 

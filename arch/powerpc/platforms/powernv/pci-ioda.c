@@ -23,6 +23,7 @@
 #include <linux/io.h>
 #include <linux/msi.h>
 #include <linux/memblock.h>
+#include <linux/iommu.h>
 
 #include <asm/sections.h>
 #include <asm/io.h>
@@ -592,6 +593,34 @@ static void pnv_pci_ioda2_tce_invalidate(struct pnv_ioda_pe *pe,
 	}
 }
 
+static bool pnv_pci_ioda_check_addr(struct iommu_table *tbl, __u64 start_addr)
+{
+	unsigned long entry = start_addr >> tbl->it_page_shift;
+	unsigned long start = tbl->it_offset;
+	unsigned long end = start + tbl->it_size;
+
+	return (start <= entry) && (entry < end);
+}
+
+static struct iommu_table *pnv_ioda1_iommu_get_table(
+		struct spapr_tce_iommu_group *data,
+		phys_addr_t addr)
+{
+	struct pnv_ioda_pe *pe = data->iommu_owner;
+
+	if (addr == TCE_DEFAULT_WINDOW)
+		return &pe->tce32.table;
+
+	if (pnv_pci_ioda_check_addr(&pe->tce32.table, addr))
+		return &pe->tce32.table;
+
+	return NULL;
+}
+
+static struct spapr_tce_iommu_ops pnv_pci_ioda1_ops = {
+	.get_table = pnv_ioda1_iommu_get_table,
+};
+
 static void pnv_pci_ioda_setup_dma_pe(struct pnv_phb *phb,
 				      struct pnv_ioda_pe *pe, unsigned int base,
 				      unsigned int segs)
@@ -670,7 +699,8 @@ static void pnv_pci_ioda_setup_dma_pe(struct pnv_phb *phb,
 			       TCE_PCI_SWINV_PAIR;
 	}
 	iommu_init_table(tbl, phb->hose->node);
-	iommu_register_group(tbl, pci_domain_nr(pe->pbus), pe->pe_number);
+	iommu_register_group(tbl, pe, &pnv_pci_ioda1_ops,
+			pci_domain_nr(pe->pbus), pe->pe_number);
 
 	if (pe->pdev)
 		set_iommu_table_base_and_group(&pe->pdev->dev, tbl);
@@ -740,6 +770,10 @@ static void pnv_pci_ioda2_setup_bypass_pe(struct pnv_phb *phb,
 	pnv_pci_ioda2_set_bypass(&pe->tce32.table, true);
 }
 
+static struct spapr_tce_iommu_ops pnv_pci_ioda2_ops = {
+	.get_table = pnv_ioda1_iommu_get_table,
+};
+
 static void pnv_pci_ioda2_setup_dma_pe(struct pnv_phb *phb,
 				       struct pnv_ioda_pe *pe)
 {
@@ -805,7 +839,8 @@ static void pnv_pci_ioda2_setup_dma_pe(struct pnv_phb *phb,
 		tbl->it_type = TCE_PCI_SWINV_CREATE | TCE_PCI_SWINV_FREE;
 	}
 	iommu_init_table(tbl, phb->hose->node);
-	iommu_register_group(tbl, pci_domain_nr(pe->pbus), pe->pe_number);
+	iommu_register_group(tbl, pe, &pnv_pci_ioda2_ops,
+			pci_domain_nr(pe->pbus), pe->pe_number);
 
 	if (pe->pdev)
 		set_iommu_table_base_and_group(&pe->pdev->dev, tbl);

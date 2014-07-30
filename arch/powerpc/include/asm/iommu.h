@@ -109,13 +109,19 @@ extern void iommu_free_table(struct iommu_table *tbl, const char *node_name);
  */
 extern struct iommu_table *iommu_init_table(struct iommu_table * tbl,
 					    int nid);
+
+struct spapr_tce_iommu_ops;
 #ifdef CONFIG_IOMMU_API
 extern void iommu_register_group(struct iommu_table *tbl,
+				 void *iommu_owner,
+				 struct spapr_tce_iommu_ops *ops,
 				 int pci_domain_number, unsigned long pe_num);
 extern int iommu_add_device(struct device *dev);
 extern void iommu_del_device(struct device *dev);
 #else
 static inline void iommu_register_group(struct iommu_table *tbl,
+					void *iommu_owner,
+					struct spapr_tce_iommu_ops *ops,
 					int pci_domain_number,
 					unsigned long pe_num)
 {
