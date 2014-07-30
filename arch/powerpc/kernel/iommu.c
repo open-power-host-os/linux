@@ -1156,21 +1156,20 @@ EXPORT_SYMBOL_GPL(iommu_put_tce_user_mode);
 int iommu_take_ownership(struct iommu_table *tbl)
 {
 	unsigned long flags, i, sz = (tbl->it_size + 7) >> 3;
-	int ret = 0;
+	int ret = 0, bit0 = 0;
 
 	spin_lock_irqsave(&tbl->large_pool.lock, flags);
 	for (i = 0; i < tbl->nr_pools; i++)
 		spin_lock(&tbl->pools[i].lock);
 
 	if (tbl->it_offset == 0)
-		clear_bit(0, tbl->it_map);
+		bit0 = test_and_clear_bit(0, tbl->it_map);
 
 	if (!bitmap_empty(tbl->it_map, tbl->it_size)) {
 		pr_err("iommu_tce: it_map is not empty");
 		ret = -EBUSY;
-		if (tbl->it_offset == 0)
-			clear_bit(1, tbl->it_map);
-
+		if (bit0)
+			set_bit(0, tbl->it_map);
 	} else {
 		memset(tbl->it_map, 0xff, sz);
 	}
@@ -1180,9 +1179,9 @@ int iommu_take_ownership(struct iommu_table *tbl)
 	spin_unlock_irqrestore(&tbl->large_pool.lock, flags);
 
 	if (!ret)
-		iommu_free_tces(tbl, tbl->it_offset, tbl->it_size, false);
-
-	return 0;
+		iommu_clear_tces_and_put_pages(tbl, tbl->it_offset,
+				tbl->it_size);
+	return ret;
 }
 EXPORT_SYMBOL_GPL(iommu_take_ownership);
 
@@ -1190,7 +1189,7 @@ void iommu_release_ownership(struct iommu_table *tbl)
 {
 	unsigned long flags, i, sz = (tbl->it_size + 7) >> 3;
 
-	iommu_free_tces(tbl, tbl->it_offset, tbl->it_size, false);
+	iommu_clear_tces_and_put_pages(tbl, tbl->it_offset, tbl->it_size);
 
 	spin_lock_irqsave(&tbl->large_pool.lock, flags);
 	for (i = 0; i < tbl->nr_pools; i++)
