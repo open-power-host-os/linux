@@ -786,6 +786,10 @@ extern struct kobject *opal_kobj;
 /* /ibm,opal */
 extern struct device_node *opal_node;
 
+/* Flags used for idle state discovery from the device tree */
+#define IDLE_INST_NAP	0x00010000 /* nap instruction can be used */
+#define IDLE_INST_SLEEP	0x00020000 /* sleep instruction can be used */
+
 /* API functions */
 int64_t opal_console_write(int64_t term_number, int64_t *length,
 			   const uint8_t *buffer);

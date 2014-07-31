@@ -228,6 +228,7 @@ static void __init pnv_setup_machdep_rtas(void)
 }
 #endif /* CONFIG_PPC_POWERNV_RTAS */
 
+/* PowerNV idle routines */
 void powernv_idle(void)
 {
 	/* Hook to cpuidle framework if available, else
@@ -237,6 +238,52 @@ void powernv_idle(void)
 		power7_idle();
 	}
 }
+
+static unsigned int supported_cpuidle_states = 0;
+
+unsigned int pnv_get_supported_cpuidle_states(void)
+{
+	return supported_cpuidle_states;
+}
+
+static int __init pnv_probe_idle_states(void)
+{
+	struct device_node *power_mgt;
+	struct property *prop;
+	int dt_idle_states;
+	u32 *flags;
+	int i;
+
+	if (!firmware_has_feature(FW_FEATURE_OPALv3))
+		return 0;
+
+	power_mgt = of_find_node_by_path("/ibm,opal/power-mgt");
+	if (!power_mgt) {
+		pr_warn("opal: PowerMgmt Node not found\n");
+		return 0;
+	}
+
+	prop = of_find_property(power_mgt, "ibm,cpu-idle-state-flags", NULL);
+	if (!prop) {
+		pr_warn("DT-PowerMgmt: missing ibm,cpu-idle-state-flags\n");
+		return 0;
+	}
+
+	dt_idle_states = prop->length / sizeof(u32);
+	flags = (u32 *) prop->value;
+
+	for (i = 0; i < dt_idle_states; i++) {
+		if (flags[i] & IDLE_INST_NAP)
+			supported_cpuidle_states |= IDLE_USE_NAP;
+
+		if (flags[i] & IDLE_INST_SLEEP)
+			supported_cpuidle_states |= IDLE_USE_SLEEP;
+	}
+
+	return 0;
+}
+
+__initcall(pnv_probe_idle_states);
 
 static int __init pnv_probe(void)
 {
