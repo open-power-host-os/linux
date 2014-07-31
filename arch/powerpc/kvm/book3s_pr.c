@@ -1010,11 +1010,6 @@ program_interrupt:
 		kvmppc_book3s_queue_irqprio(vcpu, exit_nr);
 		r = RESUME_GUEST;
 		break;
-	case BOOK3S_INTERRUPT_FAC_UNAVAIL:
-	case BOOK3S_INTERRUPT_H_FAC_UNAVAIL:
-		kvmppc_core_queue_program(vcpu, SRR1_PROGILL);
-		r = RESUME_GUEST;
-		break;
 	default:
 	{
 		ulong shadow_srr1 = vcpu->arch.shadow_srr1;
