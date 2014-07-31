@@ -41,6 +41,7 @@
  */
 static struct cpufreq_driver *cpufreq_driver;
 static DEFINE_PER_CPU(struct cpufreq_policy *, cpufreq_cpu_data);
+static LIST_HEAD(cpufreq_policy_list);
 #ifdef CONFIG_HOTPLUG_CPU
 /* This one keeps track of the previously set governor of a removed CPU */
 static DEFINE_PER_CPU(char[CPUFREQ_NAME_LEN], cpufreq_cpu_governor);
@@ -910,6 +911,7 @@ static int cpufreq_add_dev(struct device *dev, struct subsys_interface *sif)
 	policy->cpu = cpu;
 	policy->governor = CPUFREQ_DEFAULT_GOVERNOR;
 	cpumask_copy(policy->cpus, cpumask_of(cpu));
+	INIT_LIST_HEAD(&policy->policy_list);
 
 	/* Initially set CPU itself as the policy_cpu */
 	per_cpu(cpufreq_policy_cpu, cpu) = cpu;
@@ -953,6 +955,10 @@ static int cpufreq_add_dev(struct device *dev, struct subsys_interface *sif)
 	ret = cpufreq_add_dev_interface(cpu, policy, dev);
 	if (ret)
 		goto err_out_unregister;
+
+	write_lock_irqsave(&cpufreq_driver_lock, flags);
+	list_add(&policy->policy_list, &cpufreq_policy_list);
+	write_unlock_irqrestore(&cpufreq_driver_lock, flags);
 
 	kobject_uevent(&policy->kobj, KOBJ_ADD);
 	module_put(cpufreq_driver->owner);
@@ -1097,6 +1103,10 @@ static int __cpufreq_remove_dev(struct device *dev, struct subsys_interface *sif
 
 		if (cpufreq_driver->exit)
 			cpufreq_driver->exit(data);
+
+		write_lock_irqsave(&cpufreq_driver_lock, flags);
+		list_del(&data->policy_list);
+		write_unlock_irqrestore(&cpufreq_driver_lock, flags);
 
 		free_cpumask_var(data->related_cpus);
 		free_cpumask_var(data->cpus);
