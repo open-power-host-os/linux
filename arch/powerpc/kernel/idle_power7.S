@@ -133,7 +133,7 @@ _GLOBAL(power7_forced_nap)
 	b	power7_powersave_common
 	/* No return */
 
-_GLOBAL(power7_sleep)
+_GLOBAL(__power7_sleep)
 	li	r3,1
 	li	r4,1
 	b	power7_powersave_common

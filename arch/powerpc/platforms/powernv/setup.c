@@ -35,8 +35,19 @@
 #include <asm/rtas.h>
 #include <asm/opal.h>
 #include <asm/kexec.h>
+#include <asm/cputhreads.h>
 
 #include "powernv.h"
+
+/* Per-cpu structures to keep track of cpus of a core that
+ * are in idle states >= fastsleep so as to call opal for
+ * sleep setup when the entire core is ready to go to fastsleep.
+ *
+ * We need sometihng similar to a per-core lock. For now we
+ * achieve this by taking the lock of the primary thread in the core.
+ */
+static DEFINE_PER_CPU(spinlock_t, fastsleep_override_lock);
+static DEFINE_PER_CPU(int, fastsleep_cnt);
 
 static void __init pnv_setup_arch(void)
 {
@@ -200,34 +211,6 @@ static void pnv_kexec_cpu_down(int crash_shutdown, int secondary)
 }
 #endif /* CONFIG_KEXEC */
 
-static void __init pnv_setup_machdep_opal(void)
-{
-	ppc_md.get_boot_time = opal_get_boot_time;
-	ppc_md.get_rtc_time = opal_get_rtc_time;
-	ppc_md.set_rtc_time = opal_set_rtc_time;
-	ppc_md.restart = pnv_restart;
-	ppc_md.power_off = pnv_power_off;
-	ppc_md.halt = pnv_halt;
-	ppc_md.machine_check_exception = opal_machine_check;
-	ppc_md.mce_check_early_recovery = opal_mce_check_early_recovery;
-	ppc_md.hmi_exception_early = opal_hmi_exception_early;
-	ppc_md.handle_hmi_exception = opal_handle_hmi_exception;
-}
-
-#ifdef CONFIG_PPC_POWERNV_RTAS
-static void __init pnv_setup_machdep_rtas(void)
-{
-	if (rtas_token("get-time-of-day") != RTAS_UNKNOWN_SERVICE) {
-		ppc_md.get_boot_time = rtas_get_boot_time;
-		ppc_md.get_rtc_time = rtas_get_rtc_time;
-		ppc_md.set_rtc_time = rtas_set_rtc_time;
-	}
-	ppc_md.restart = rtas_restart;
-	ppc_md.power_off = rtas_power_off;
-	ppc_md.halt = rtas_halt;
-}
-#endif /* CONFIG_PPC_POWERNV_RTAS */
-
 /* PowerNV idle routines */
 void powernv_idle(void)
 {
@@ -240,6 +223,7 @@ void powernv_idle(void)
 }
 
 static unsigned int supported_cpuidle_states = 0;
+static int need_fastsleep_workaround = 0;
 
 unsigned int pnv_get_supported_cpuidle_states(void)
 {
@@ -278,12 +262,90 @@ static int __init pnv_probe_idle_states(void)
 
 		if (flags[i] & IDLE_INST_SLEEP)
 			supported_cpuidle_states |= IDLE_USE_SLEEP;
+
+		if (flags[i] & IDLE_INST_SLEEP_ER1) {
+			supported_cpuidle_states |= IDLE_USE_SLEEP;
+			need_fastsleep_workaround = 1;
+		}
 	}
 
 	return 0;
 }
 
 __initcall(pnv_probe_idle_states);
+
+static void pnv_setup_idle(void)
+{
+	int cpu;
+	for_each_possible_cpu(cpu) {
+		spin_lock_init(&per_cpu(fastsleep_override_lock, cpu));
+		per_cpu(fastsleep_cnt, cpu) = threads_per_core;
+       }
+}
+
+static void pnv_apply_fastsleep_workaround(bool enter_fastsleep, int primary_thread)
+{
+	if (enter_fastsleep) {
+		spin_lock(&per_cpu(fastsleep_override_lock, primary_thread));
+		if (--(per_cpu(fastsleep_cnt, primary_thread)) == 0)
+			opal_config_idle_state(1,1);
+	        spin_unlock(&per_cpu(fastsleep_override_lock, primary_thread));
+	} else {
+		spin_lock(&per_cpu(fastsleep_override_lock, primary_thread));
+		if ((per_cpu(fastsleep_cnt, primary_thread)) == 0)
+			opal_config_idle_state(1,0);
+	 	per_cpu(fastsleep_cnt, primary_thread)++;
+		spin_unlock(&per_cpu(fastsleep_override_lock, primary_thread));
+	}
+}
+
+static unsigned long pnv_power7_sleep(void)
+{
+	int cpu, primary_thread;
+	unsigned long srr1;
+
+	cpu = smp_processor_id();
+	primary_thread = cpu_first_thread_sibling(cpu);
+
+	if (need_fastsleep_workaround) {
+               pnv_apply_fastsleep_workaround(1, primary_thread);
+	       srr1 = __power7_sleep();
+               pnv_apply_fastsleep_workaround(0, primary_thread);
+	} else {
+		srr1 = __power7_sleep();
+	}
+	return srr1;
+}
+
+static void __init pnv_setup_machdep_opal(void)
+{
+	ppc_md.get_boot_time = opal_get_boot_time;
+	ppc_md.get_rtc_time = opal_get_rtc_time;
+	ppc_md.set_rtc_time = opal_set_rtc_time;
+	ppc_md.restart = pnv_restart;
+	ppc_md.power_off = pnv_power_off;
+	ppc_md.halt = pnv_halt;
+	ppc_md.machine_check_exception = opal_machine_check;
+	ppc_md.mce_check_early_recovery = opal_mce_check_early_recovery;
+	ppc_md.hmi_exception_early = opal_hmi_exception_early;
+	ppc_md.handle_hmi_exception = opal_handle_hmi_exception;
+	ppc_md.setup_idle = pnv_setup_idle;
+	ppc_md.power7_sleep = pnv_power7_sleep;
+}
+
+#ifdef CONFIG_PPC_POWERNV_RTAS
+static void __init pnv_setup_machdep_rtas(void)
+{
+	if (rtas_token("get-time-of-day") != RTAS_UNKNOWN_SERVICE) {
+		ppc_md.get_boot_time = rtas_get_boot_time;
+		ppc_md.get_rtc_time = rtas_get_rtc_time;
+		ppc_md.set_rtc_time = rtas_set_rtc_time;
+	}
+	ppc_md.restart = rtas_restart;
+	ppc_md.power_off = rtas_power_off;
+	ppc_md.halt = rtas_halt;
+}
+#endif /* CONFIG_PPC_POWERNV_RTAS */
 
 static int __init pnv_probe(void)
 {
