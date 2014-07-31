@@ -24,6 +24,7 @@
 #include <linux/delay.h>
 #include <linux/of_platform.h>
 #include <linux/sysfs.h>
+#include <linux/reboot.h>
 
 #include <asm/cputhreads.h>
 #include <asm/topology.h>
@@ -327,6 +328,7 @@ static int powernv_cpufreq_cpu_init(struct cpufreq_policy *policy)
 		pr_debug("%d: %d\n", i, powernv_freqs[i].frequency);
 
 	policy->cur = powernv_freqs[0].frequency;
+	policy->suspend_freq = pstate_id_to_freq(powernv_pstate_info.nominal);
 	cpufreq_frequency_table_get_attr(powernv_freqs, policy->cpu);
 	return cpufreq_frequency_table_cpuinfo(policy, powernv_freqs);
 }
@@ -341,6 +343,17 @@ static int powernv_cpufreq_verify(struct cpufreq_policy *policy)
 {
 	return cpufreq_frequency_table_verify(policy, powernv_freqs);
 }
+
+static int powernv_cpufreq_reboot_notifier(struct notifier_block *nb,
+                                unsigned long action, void *unused)
+{
+	cpufreq_suspend();
+	return NOTIFY_DONE;
+}
+
+static struct notifier_block powernv_cpufreq_reboot_nb = {
+	.notifier_call = powernv_cpufreq_reboot_notifier,
+};
 
 static int powernv_cpufreq_target(struct cpufreq_policy *policy,
 			      unsigned int target_freq,
@@ -385,6 +398,7 @@ static struct cpufreq_driver powernv_cpufreq_driver = {
 	.flags		= CPUFREQ_CONST_LOOPS,
 	.get		= powernv_cpufreq_get,
 	.attr 		= powernv_cpu_freq_attr,
+	.suspend        = cpufreq_generic_suspend,
 };
 
 static int __init powernv_cpufreq_init(void)
@@ -400,12 +414,14 @@ static int __init powernv_cpufreq_init(void)
 		return rc;
 	}
 
+	register_reboot_notifier(&powernv_cpufreq_reboot_nb);
 	rc = cpufreq_register_driver(&powernv_cpufreq_driver);
 	return rc;
 }
 
 static void __exit powernv_cpufreq_exit(void)
 {
+	unregister_reboot_notifier(&powernv_cpufreq_reboot_nb);
 	cpufreq_unregister_driver(&powernv_cpufreq_driver);
 }
 
