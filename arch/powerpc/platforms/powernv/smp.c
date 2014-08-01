@@ -179,8 +179,10 @@ static void pnv_smp_cpu_kill_self(void)
 	mtspr(SPRN_LPCR, mfspr(SPRN_LPCR) & ~(u64)LPCR_PECE1);
 	while (!generic_check_cpu_restart(cpu)) {
 		ppc64_runlatch_off();
-		/* If sleep is supported, go to sleep, instead of nap */
-		if (idle_states & IDLE_USE_SLEEP)
+		/* Go to deepest supported idle state */
+		if (idle_states & IDLE_USE_WINKLE)
+			srr1 = power7_winkle();
+		else if (idle_states & IDLE_USE_SLEEP)
 			srr1 = power7_sleep();
 		else
 			srr1 = power7_nap();
