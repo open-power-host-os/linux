@@ -968,23 +968,8 @@ static int kvmppc_get_one_reg_hv(struct kvm_vcpu *vcpu, u64 id,
 	case KVM_REG_PPC_IAMR:
 		*val = get_reg_val(id, vcpu->arch.iamr);
 		break;
-	case KVM_REG_PPC_FSCR:
-		*val = get_reg_val(id, vcpu->arch.fscr);
-		break;
 	case KVM_REG_PPC_PSPB:
 		*val = get_reg_val(id, vcpu->arch.pspb);
-		break;
-	case KVM_REG_PPC_EBBHR:
-		*val = get_reg_val(id, vcpu->arch.ebbhr);
-		break;
-	case KVM_REG_PPC_EBBRR:
-		*val = get_reg_val(id, vcpu->arch.ebbrr);
-		break;
-	case KVM_REG_PPC_BESCR:
-		*val = get_reg_val(id, vcpu->arch.bescr);
-		break;
-	case KVM_REG_PPC_TAR:
-		*val = get_reg_val(id, vcpu->arch.tar);
 		break;
 	case KVM_REG_PPC_DPDES:
 		*val = get_reg_val(id, vcpu->arch.vcore->dpdes);
@@ -997,12 +982,6 @@ static int kvmppc_get_one_reg_hv(struct kvm_vcpu *vcpu, u64 id,
 		break;
 	case KVM_REG_PPC_CIABR:
 		*val = get_reg_val(id, vcpu->arch.ciabr);
-		break;
-	case KVM_REG_PPC_IC:
-		*val = get_reg_val(id, vcpu->arch.ic);
-		break;
-	case KVM_REG_PPC_VTB:
-		*val = get_reg_val(id, vcpu->arch.vtb);
 		break;
 	case KVM_REG_PPC_CSIGR:
 		*val = get_reg_val(id, vcpu->arch.csigr);
@@ -1181,23 +1160,8 @@ static int kvmppc_set_one_reg_hv(struct kvm_vcpu *vcpu, u64 id,
 	case KVM_REG_PPC_IAMR:
 		vcpu->arch.iamr = set_reg_val(id, *val);
 		break;
-	case KVM_REG_PPC_FSCR:
-		vcpu->arch.fscr = set_reg_val(id, *val);
-		break;
 	case KVM_REG_PPC_PSPB:
 		vcpu->arch.pspb = set_reg_val(id, *val);
-		break;
-	case KVM_REG_PPC_EBBHR:
-		vcpu->arch.ebbhr = set_reg_val(id, *val);
-		break;
-	case KVM_REG_PPC_EBBRR:
-		vcpu->arch.ebbrr = set_reg_val(id, *val);
-		break;
-	case KVM_REG_PPC_BESCR:
-		vcpu->arch.bescr = set_reg_val(id, *val);
-		break;
-	case KVM_REG_PPC_TAR:
-		vcpu->arch.tar = set_reg_val(id, *val);
 		break;
 	case KVM_REG_PPC_DPDES:
 		vcpu->arch.vcore->dpdes = set_reg_val(id, *val);
@@ -1213,12 +1177,6 @@ static int kvmppc_set_one_reg_hv(struct kvm_vcpu *vcpu, u64 id,
 		/* Don't allow setting breakpoints in hypervisor code */
 		if ((vcpu->arch.ciabr & CIABR_PRIV) == CIABR_PRIV_HYPER)
 			vcpu->arch.ciabr &= ~CIABR_PRIV;	/* disable */
-		break;
-	case KVM_REG_PPC_IC:
-		vcpu->arch.ic = set_reg_val(id, *val);
-		break;
-	case KVM_REG_PPC_VTB:
-		vcpu->arch.vtb = set_reg_val(id, *val);
 		break;
 	case KVM_REG_PPC_CSIGR:
 		vcpu->arch.csigr = set_reg_val(id, *val);

@@ -143,6 +143,7 @@ static int kvmppc_book3s_vec2irqprio(unsigned int vec)
 	case 0xd00: prio = BOOK3S_IRQPRIO_DEBUG;		break;
 	case 0xf20: prio = BOOK3S_IRQPRIO_ALTIVEC;		break;
 	case 0xf40: prio = BOOK3S_IRQPRIO_VSX;			break;
+	case 0xf60: prio = BOOK3S_IRQPRIO_FAC_UNAVAIL;		break;
 	default:    prio = BOOK3S_IRQPRIO_MAX;			break;
 	}
 
@@ -272,6 +273,9 @@ int kvmppc_book3s_irqprio_deliver(struct kvm_vcpu *vcpu, unsigned int priority)
 		break;
 	case BOOK3S_IRQPRIO_PERFORMANCE_MONITOR:
 		vec = BOOK3S_INTERRUPT_PERFMON;
+		break;
+	case BOOK3S_IRQPRIO_FAC_UNAVAIL:
+		vec = BOOK3S_INTERRUPT_FAC_UNAVAIL;
 		break;
 	default:
 		deliver = 0;
@@ -625,6 +629,27 @@ int kvm_vcpu_ioctl_get_one_reg(struct kvm_vcpu *vcpu, struct kvm_one_reg *reg)
 			val = get_reg_val(reg->id, kvmppc_xics_get_icp(vcpu));
 			break;
 #endif /* CONFIG_KVM_XICS */
+		case KVM_REG_PPC_FSCR:
+			val = get_reg_val(reg->id, vcpu->arch.fscr);
+			break;
+		case KVM_REG_PPC_TAR:
+			val = get_reg_val(reg->id, vcpu->arch.tar);
+			break;
+		case KVM_REG_PPC_EBBHR:
+			val = get_reg_val(reg->id, vcpu->arch.ebbhr);
+			break;
+		case KVM_REG_PPC_EBBRR:
+			val = get_reg_val(reg->id, vcpu->arch.ebbrr);
+			break;
+		case KVM_REG_PPC_BESCR:
+			val = get_reg_val(reg->id, vcpu->arch.bescr);
+			break;
+		case KVM_REG_PPC_VTB:
+			val = get_reg_val(reg->id, vcpu->arch.vtb);
+			break;
+		case KVM_REG_PPC_IC:
+			val = get_reg_val(reg->id, vcpu->arch.ic);
+			break;
 		default:
 			r = -EINVAL;
 			break;
@@ -714,6 +739,27 @@ int kvm_vcpu_ioctl_set_one_reg(struct kvm_vcpu *vcpu, struct kvm_one_reg *reg)
 						set_reg_val(reg->id, val));
 			break;
 #endif /* CONFIG_KVM_XICS */
+		case KVM_REG_PPC_FSCR:
+			vcpu->arch.fscr = set_reg_val(reg->id, val);
+			break;
+		case KVM_REG_PPC_TAR:
+			vcpu->arch.tar = set_reg_val(reg->id, val);
+			break;
+		case KVM_REG_PPC_EBBHR:
+			vcpu->arch.ebbhr = set_reg_val(reg->id, val);
+			break;
+		case KVM_REG_PPC_EBBRR:
+			vcpu->arch.ebbrr = set_reg_val(reg->id, val);
+			break;
+		case KVM_REG_PPC_BESCR:
+			vcpu->arch.bescr = set_reg_val(reg->id, val);
+			break;
+		case KVM_REG_PPC_VTB:
+			vcpu->arch.vtb = set_reg_val(reg->id, val);
+			break;
+		case KVM_REG_PPC_IC:
+			vcpu->arch.ic = set_reg_val(reg->id, val);
+			break;
 		default:
 			r = -EINVAL;
 			break;

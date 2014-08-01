@@ -422,12 +422,6 @@ int kvmppc_core_emulate_mtspr_pr(struct kvm_vcpu *vcpu, int sprn, ulong spr_val)
 		    (mfmsr() & MSR_HV))
 			vcpu->arch.hflags |= BOOK3S_HFLAG_DCBZ32;
 		break;
-	case SPRN_PURR:
-		to_book3s(vcpu)->purr_offset = spr_val - get_tb();
-		break;
-	case SPRN_SPURR:
-		to_book3s(vcpu)->spurr_offset = spr_val - get_tb();
-		break;
 	case SPRN_GQR0:
 	case SPRN_GQR1:
 	case SPRN_GQR2:
@@ -438,6 +432,31 @@ int kvmppc_core_emulate_mtspr_pr(struct kvm_vcpu *vcpu, int sprn, ulong spr_val)
 	case SPRN_GQR7:
 		to_book3s(vcpu)->gqr[sprn - SPRN_GQR0] = spr_val;
 		break;
+	case SPRN_FSCR:
+		vcpu->arch.fscr = spr_val;
+		break;
+#ifdef CONFIG_PPC_BOOK3S_64
+	case SPRN_BESCR:
+		vcpu->arch.bescr = spr_val;
+		break;
+	case SPRN_EBBHR:
+		vcpu->arch.ebbhr = spr_val;
+		break;
+	case SPRN_EBBRR:
+		vcpu->arch.ebbrr = spr_val;
+		break;
+#ifdef CONFIG_PPC_TRANSACTIONAL_MEM
+	case SPRN_TFHAR:
+		vcpu->arch.tfhar = spr_val;
+		break;
+	case SPRN_TEXASR:
+		vcpu->arch.texasr = spr_val;
+		break;
+	case SPRN_TFIAR:
+		vcpu->arch.tfiar = spr_val;
+		break;
+#endif
+#endif
 	case SPRN_ICTC:
 	case SPRN_THRM1:
 	case SPRN_THRM2:
@@ -454,6 +473,13 @@ int kvmppc_core_emulate_mtspr_pr(struct kvm_vcpu *vcpu, int sprn, ulong spr_val)
 	case SPRN_PMC4_GEKKO:
 	case SPRN_WPAR_GEKKO:
 	case SPRN_MSSSR0:
+#ifdef CONFIG_PPC_BOOK3S_64
+	case SPRN_MMCRS:
+	case SPRN_MMCRA:
+	case SPRN_MMCR0:
+	case SPRN_MMCR1:
+	case SPRN_MMCR2:
+#endif
 		break;
 	default:
 		if ((vcpu->arch.shared->msr & MSR_PR) || !sprn)
@@ -524,10 +550,22 @@ int kvmppc_core_emulate_mfspr_pr(struct kvm_vcpu *vcpu, int sprn, ulong *spr_val
 		*spr_val = 0;
 		break;
 	case SPRN_PURR:
-		*spr_val = get_tb() + to_book3s(vcpu)->purr_offset;
+		/*
+		 * On exit we would have updated purr
+		 */
+		*spr_val = vcpu->arch.purr;
 		break;
 	case SPRN_SPURR:
-		*spr_val = get_tb() + to_book3s(vcpu)->purr_offset;
+		/*
+		 * On exit we would have updated spurr
+		 */
+		*spr_val = vcpu->arch.spurr;
+		break;
+	case SPRN_VTB:
+		*spr_val = vcpu->arch.vtb;
+		break;
+	case SPRN_IC:
+		*spr_val = vcpu->arch.ic;
 		break;
 	case SPRN_GQR0:
 	case SPRN_GQR1:
@@ -539,6 +577,31 @@ int kvmppc_core_emulate_mfspr_pr(struct kvm_vcpu *vcpu, int sprn, ulong *spr_val
 	case SPRN_GQR7:
 		*spr_val = to_book3s(vcpu)->gqr[sprn - SPRN_GQR0];
 		break;
+	case SPRN_FSCR:
+		*spr_val = vcpu->arch.fscr;
+		break;
+#ifdef CONFIG_PPC_BOOK3S_64
+	case SPRN_BESCR:
+		*spr_val = vcpu->arch.bescr;
+		break;
+	case SPRN_EBBHR:
+		*spr_val = vcpu->arch.ebbhr;
+		break;
+	case SPRN_EBBRR:
+		*spr_val = vcpu->arch.ebbrr;
+		break;
+#ifdef CONFIG_PPC_TRANSACTIONAL_MEM
+	case SPRN_TFHAR:
+		*spr_val = vcpu->arch.tfhar;
+		break;
+	case SPRN_TEXASR:
+		*spr_val = vcpu->arch.texasr;
+		break;
+	case SPRN_TFIAR:
+		*spr_val = vcpu->arch.tfiar;
+		break;
+#endif
+#endif
 	case SPRN_THRM1:
 	case SPRN_THRM2:
 	case SPRN_THRM3:
@@ -553,6 +616,14 @@ int kvmppc_core_emulate_mfspr_pr(struct kvm_vcpu *vcpu, int sprn, ulong *spr_val
 	case SPRN_PMC4_GEKKO:
 	case SPRN_WPAR_GEKKO:
 	case SPRN_MSSSR0:
+#ifdef CONFIG_PPC_BOOK3S_64
+	case SPRN_MMCRS:
+	case SPRN_MMCRA:
+	case SPRN_MMCR0:
+	case SPRN_MMCR1:
+	case SPRN_MMCR2:
+	case SPRN_TIR:
+#endif
 		*spr_val = 0;
 		break;
 	default:

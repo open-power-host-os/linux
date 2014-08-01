@@ -520,7 +520,9 @@ struct kvm_vcpu_arch {
 	ulong pc;
 	ulong ctr;
 	ulong lr;
+#ifdef CONFIG_PPC_BOOK3S
 	ulong tar;
+#endif
 
 	ulong xer;
 	u32 cr;
@@ -546,6 +548,7 @@ struct kvm_vcpu_arch {
 	ulong ppr;
 	ulong pspb;
 	ulong fscr;
+	ulong shadow_fscr;
 	ulong ebbhr;
 	ulong ebbrr;
 	ulong bescr;
@@ -571,8 +574,10 @@ struct kvm_vcpu_arch {
 #ifdef CONFIG_BOOKE
 	u32 decar;
 #endif
-	u32 tbl;
-	u32 tbu;
+	/* Time base value when we entered the guest */
+	u64 entry_tb;
+	u64 entry_vtb;
+	u64 entry_ic;
 	u32 tcr;
 	ulong tsr; /* we need to perform set/clr_bits() which requires ulong */
 	u32 ivor[64];
