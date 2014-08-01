@@ -322,11 +322,11 @@ static dma_addr_t iommu_alloc(struct device *dev, struct iommu_table *tbl,
 	ret = entry << tbl->it_page_shift;	/* Set the return dma address */
 
 	/* Put the TCEs in the HW table */
-	build_fail = ppc_md.tce_build(tbl, entry, npages,
+	build_fail = tbl->it_ops->set(tbl, entry, npages,
 				      (unsigned long)page &
 				      IOMMU_PAGE_MASK(tbl), direction, attrs);
 
-	/* ppc_md.tce_build() only returns non-zero for transient errors.
+	/* tbl->it_ops->set() only returns non-zero for transient errors.
 	 * Clean up the table bitmap in this case and return
 	 * DMA_ERROR_CODE. For all other errors the functionality is
 	 * not altered.
@@ -337,8 +337,8 @@ static dma_addr_t iommu_alloc(struct device *dev, struct iommu_table *tbl,
 	}
 
 	/* Flush/invalidate TLB caches if necessary */
-	if (ppc_md.tce_flush)
-		ppc_md.tce_flush(tbl);
+	if (tbl->it_ops->flush)
+		tbl->it_ops->flush(tbl);
 
 	/* Make sure updates are seen by hardware */
 	mb();
@@ -408,7 +408,7 @@ static void __iommu_free(struct iommu_table *tbl, dma_addr_t dma_addr,
 	if (!iommu_free_check(tbl, dma_addr, npages))
 		return;
 
-	ppc_md.tce_free(tbl, entry, npages);
+	tbl->it_ops->clear(tbl, entry, npages);
 
 	spin_lock_irqsave(&(pool->lock), flags);
 	bitmap_clear(tbl->it_map, free_entry, npages);
@@ -424,8 +424,8 @@ static void iommu_free(struct iommu_table *tbl, dma_addr_t dma_addr,
 	 * not do an mb() here on purpose, it is not needed on any of
 	 * the current platforms.
 	 */
-	if (ppc_md.tce_flush)
-		ppc_md.tce_flush(tbl);
+	if (tbl->it_ops->flush)
+		tbl->it_ops->flush(tbl);
 }
 
 int iommu_map_sg(struct device *dev, struct iommu_table *tbl,
@@ -495,7 +495,7 @@ int iommu_map_sg(struct device *dev, struct iommu_table *tbl,
 			    npages, entry, dma_addr);
 
 		/* Insert into HW table */
-		build_fail = ppc_md.tce_build(tbl, entry, npages,
+		build_fail = tbl->it_ops->set(tbl, entry, npages,
 					      vaddr & IOMMU_PAGE_MASK(tbl),
 					      direction, attrs);
 		if(unlikely(build_fail))
@@ -534,8 +534,8 @@ int iommu_map_sg(struct device *dev, struct iommu_table *tbl,
 	}
 
 	/* Flush/invalidate TLB caches if necessary */
-	if (ppc_md.tce_flush)
-		ppc_md.tce_flush(tbl);
+	if (tbl->it_ops->flush)
+		tbl->it_ops->flush(tbl);
 
 	DBG("mapped %d elements:\n", outcount);
 
@@ -600,8 +600,8 @@ void iommu_unmap_sg(struct iommu_table *tbl, struct scatterlist *sglist,
 	 * do not do an mb() here, the affected platforms do not need it
 	 * when freeing.
 	 */
-	if (ppc_md.tce_flush)
-		ppc_md.tce_flush(tbl);
+	if (tbl->it_ops->flush)
+		tbl->it_ops->flush(tbl);
 }
 
 static void iommu_table_clear(struct iommu_table *tbl)
@@ -613,17 +613,17 @@ static void iommu_table_clear(struct iommu_table *tbl)
 	 */
 	if (!is_kdump_kernel() || is_fadump_active()) {
 		/* Clear the table in case firmware left allocations in it */
-		ppc_md.tce_free(tbl, tbl->it_offset, tbl->it_size);
+		tbl->it_ops->clear(tbl, tbl->it_offset, tbl->it_size);
 		return;
 	}
 
 #ifdef CONFIG_CRASH_DUMP
-	if (ppc_md.tce_get) {
+	if (tbl->it_ops->get) {
 		unsigned long index, tceval, tcecount = 0;
 
 		/* Reserve the existing mappings left by the first kernel. */
 		for (index = 0; index < tbl->it_size; index++) {
-			tceval = ppc_md.tce_get(tbl, index + tbl->it_offset);
+			tceval = tbl->it_ops->get(tbl, index + tbl->it_offset);
 			/*
 			 * Freed TCE entry contains 0x7fffffffffffffff on JS20
 			 */
@@ -649,13 +649,17 @@ static void iommu_table_clear(struct iommu_table *tbl)
  * Build a iommu_table structure.  This contains a bit map which
  * is used to manage allocation of the tce space.
  */
-struct iommu_table *iommu_init_table(struct iommu_table *tbl, int nid)
+struct iommu_table *iommu_init_table(struct iommu_table *tbl, int nid,
+		struct iommu_table_ops *ops)
 {
 	unsigned long sz;
 	static int welcomed = 0;
 	struct page *page;
 	unsigned int i;
 	struct iommu_pool *p;
+
+	BUG_ON(!ops);
+	tbl->it_ops = ops;
 
 	/* number of bytes needed for the bitmap */
 	sz = BITS_TO_LONGS(tbl->it_size) * sizeof(unsigned long);
@@ -946,8 +950,8 @@ static enum dma_data_direction iommu_tce_direction(unsigned long tce)
 void iommu_flush_tce(struct iommu_table *tbl)
 {
 	/* Flush/invalidate TLB caches if necessary */
-	if (ppc_md.tce_flush)
-		ppc_md.tce_flush(tbl);
+	if (tbl->it_ops->flush)
+		tbl->it_ops->flush(tbl);
 
 	/* Make sure updates are seen by hardware */
 	mb();
@@ -958,7 +962,7 @@ int iommu_tce_clear_param_check(struct iommu_table *tbl,
 		unsigned long ioba, unsigned long tce_value,
 		unsigned long npages)
 {
-	/* ppc_md.tce_free() does not support any value but 0 */
+	/* tbl->it_ops->clear() does not support any value but 0 */
 	if (tce_value)
 		return -EINVAL;
 
@@ -1011,13 +1015,13 @@ int iommu_free_tces(struct iommu_table *tbl, unsigned long entry,
 {
 	int i, ret = 0, to_free = 0;
 
-	if (rm && !ppc_md.tce_free_rm)
+	if (rm && !tbl->it_ops->clear_rm)
 		return -EAGAIN;
 
 	arch_spin_lock(&tbl->it_rm_lock);
 
 	for (i = 0; i < npages; ++i) {
-		unsigned long oldtce = ppc_md.tce_get(tbl, entry + i);
+		unsigned long oldtce = tbl->it_ops->get(tbl, entry + i);
 		if (!(oldtce & (TCE_PCI_WRITE | TCE_PCI_READ)))
 			continue;
 
@@ -1055,14 +1059,14 @@ int iommu_free_tces(struct iommu_table *tbl, unsigned long entry,
 
 	if (to_free) {
 		if (rm)
-			ppc_md.tce_free_rm(tbl, entry, to_free);
+			tbl->it_ops->clear_rm(tbl, entry, to_free);
 		else
-			ppc_md.tce_free(tbl, entry, to_free);
+			tbl->it_ops->clear(tbl, entry, to_free);
 
-		if (rm && ppc_md.tce_flush_rm)
-			ppc_md.tce_flush_rm(tbl);
-		else if (!rm && ppc_md.tce_flush)
-			ppc_md.tce_flush(tbl);
+		if (rm && tbl->it_ops->flush_rm)
+			tbl->it_ops->flush_rm(tbl);
+		else if (!rm && tbl->it_ops->flush)
+			tbl->it_ops->flush(tbl);
 	}
 	arch_spin_unlock(&tbl->it_rm_lock);
 
@@ -1078,13 +1082,13 @@ int iommu_tce_build(struct iommu_table *tbl, unsigned long entry,
 {
 	int i, ret = 0;
 
-	if (rm && !ppc_md.tce_build_rm)
+	if (rm && !tbl->it_ops->set_rm)
 		return -EAGAIN;
 
 	arch_spin_lock(&tbl->it_rm_lock);
 
 	for (i = 0; i < npages; ++i) {
-		if (ppc_md.tce_get(tbl, entry + i) &
+		if (tbl->it_ops->get(tbl, entry + i) &
 				(TCE_PCI_WRITE | TCE_PCI_READ)) {
 			arch_spin_unlock(&tbl->it_rm_lock);
 			return -EBUSY;
@@ -1096,19 +1100,19 @@ int iommu_tce_build(struct iommu_table *tbl, unsigned long entry,
 		enum dma_data_direction dir = iommu_tce_direction(hva);
 
 		if (rm)
-			ret = ppc_md.tce_build_rm(tbl, entry + i, 1,
+			ret = tbl->it_ops->set_rm(tbl, entry + i, 1,
 					hva, dir, NULL);
 		else
-			ret = ppc_md.tce_build(tbl, entry + i, 1,
+			ret = tbl->it_ops->set(tbl, entry + i, 1,
 					hva, dir, NULL);
 		if (ret)
 			break;
 	}
 
-	if (rm && ppc_md.tce_flush_rm)
-		ppc_md.tce_flush_rm(tbl);
-	else if (!rm && ppc_md.tce_flush)
-		ppc_md.tce_flush(tbl);
+	if (rm && tbl->it_ops->flush_rm)
+		tbl->it_ops->flush_rm(tbl);
+	else if (!rm && tbl->it_ops->flush)
+		tbl->it_ops->flush(tbl);
 
 	arch_spin_unlock(&tbl->it_rm_lock);
 

@@ -43,6 +43,34 @@
 extern int iommu_is_off;
 extern int iommu_force_on;
 
+struct iommu_table_ops {
+	int (*set)(struct iommu_table *tbl,
+			long index, long npages,
+			unsigned long uaddr,
+			enum dma_data_direction direction,
+			struct dma_attrs *attrs);
+	void (*clear)(struct iommu_table *tbl,
+			long index, long npages);
+	unsigned long (*get)(struct iommu_table *tbl, long index);
+	void (*flush)(struct iommu_table *tbl);
+
+	/* _rm versions are for real mode use only */
+	int (*set_rm)(struct iommu_table *tbl,
+			long index,
+			long npages,
+			unsigned long uaddr,
+			enum dma_data_direction direction,
+			struct dma_attrs *attrs);
+	void (*clear_rm)(struct iommu_table *tbl,
+			long index,
+			long npages);
+	void (*flush_rm)(struct iommu_table *tbl);
+};
+
+/* These are used by VIO */
+extern struct iommu_table_ops iommu_table_lpar_multi_ops;
+extern struct iommu_table_ops iommu_table_pseries_ops;
+
 /*
  * IOMAP_MAX_ORDER defines the largest contiguous block
  * of dma space we can get.  IOMAP_MAX_ORDER = 13
@@ -78,6 +106,7 @@ struct iommu_table {
 	struct iommu_group *it_group;
 	arch_spinlock_t it_rm_lock;
 #endif
+	struct iommu_table_ops *it_ops;
 };
 
 /* Pure 2^n version of get_order */
@@ -107,7 +136,8 @@ extern void iommu_free_table(struct iommu_table *tbl, const char *node_name);
  * structure
  */
 extern struct iommu_table *iommu_init_table(struct iommu_table * tbl,
-					    int nid);
+					    int nid,
+					    struct iommu_table_ops *ops);
 
 struct spapr_tce_iommu_ops;
 #ifdef CONFIG_IOMMU_API

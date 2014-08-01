@@ -465,6 +465,11 @@ static inline u32 cell_iommu_get_ioid(struct device_node *np)
 	return *ioid;
 }
 
+static struct iommu_table_ops cell_iommu_ops = {
+	.set = tce_build_cell,
+	.clear = tce_free_cell
+};
+
 static struct iommu_window * __init
 cell_iommu_setup_window(struct cbe_iommu *iommu, struct device_node *np,
 			unsigned long offset, unsigned long size,
@@ -492,7 +497,7 @@ cell_iommu_setup_window(struct cbe_iommu *iommu, struct device_node *np,
 		(offset >> window->table.it_page_shift) + pte_offset;
 	window->table.it_size = size >> window->table.it_page_shift;
 
-	iommu_init_table(&window->table, iommu->nid);
+	iommu_init_table(&window->table, iommu->nid, &cell_iommu_ops);
 
 	pr_debug("\tioid      %d\n", window->ioid);
 	pr_debug("\tblocksize %ld\n", window->table.it_blocksize);
@@ -1199,8 +1204,6 @@ static int __init cell_iommu_init(void)
 	/* Setup various ppc_md. callbacks */
 	ppc_md.pci_dma_dev_setup = cell_pci_dma_dev_setup;
 	ppc_md.dma_get_required_mask = cell_dma_get_required_mask;
-	ppc_md.tce_build = tce_build_cell;
-	ppc_md.tce_free = tce_free_cell;
 
 	if (!iommu_fixed_disabled && cell_iommu_fixed_mapping_init() == 0)
 		goto bail;

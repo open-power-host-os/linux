@@ -286,6 +286,12 @@ static int __init dart_init(struct device_node *dart_node)
 	return 0;
 }
 
+static struct iommu_table_ops iommu_dart_ops = {
+	.set = dart_build,
+	.clear = dart_free,
+	.flush = dart_flush,
+};
+
 static void iommu_table_dart_setup(void)
 {
 	iommu_table_dart.it_busno = 0;
@@ -297,7 +303,7 @@ static void iommu_table_dart_setup(void)
 	iommu_table_dart.it_base = (unsigned long)dart_vbase;
 	iommu_table_dart.it_index = 0;
 	iommu_table_dart.it_blocksize = 1;
-	iommu_init_table(&iommu_table_dart, -1);
+	iommu_init_table(&iommu_table_dart, -1, &iommu_dart_ops);
 
 	/* Reserve the last page of the DART to avoid possible prefetch
 	 * past the DART mapped area
@@ -384,11 +390,6 @@ void __init iommu_init_early_dart(void)
 	/* Initialize the DART HW */
 	if (dart_init(dn) != 0)
 		goto bail;
-
-	/* Setup low level TCE operations for the core IOMMU code */
-	ppc_md.tce_build = dart_build;
-	ppc_md.tce_free  = dart_free;
-	ppc_md.tce_flush = dart_flush;
 
 	/* Setup bypass if supported */
 	if (dart_is_u4)
