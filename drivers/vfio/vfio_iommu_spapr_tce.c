@@ -47,6 +47,14 @@ struct tce_container {
 	bool enabled;
 };
 
+
+static void tce_iommu_take_ownership_notify(struct spapr_tce_iommu_group *data,
+		bool enable)
+{
+	if (data && data->ops && data->ops->take_ownership)
+		data->ops->take_ownership(data, enable);
+}
+
 static int tce_iommu_enable(struct tce_container *container)
 {
 	int ret = 0;
@@ -383,6 +391,12 @@ static int tce_iommu_attach_group(void *iommu_data,
 		ret = iommu_take_ownership(tbl);
 		if (!ret)
 			container->grp = iommu_group;
+		/*
+		 * Disable iommu bypass, otherwise the user can DMA to all of
+		 * our physical memory via the bypass window instead of just
+		 * the pages that has been explicitly mapped into the iommu
+		 */
+		tce_iommu_take_ownership_notify(data, true);
 	}
 
 	mutex_unlock(&container->lock);
@@ -420,6 +434,9 @@ static void tce_iommu_detach_group(void *iommu_data,
 		BUG_ON(!tbl);
 
 		iommu_release_ownership(tbl);
+
+		/* Kernel owns the device now, we can restore bypass */
+		tce_iommu_take_ownership_notify(data, false);
 	}
 	mutex_unlock(&container->lock);
 }

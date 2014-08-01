@@ -78,7 +78,6 @@ struct iommu_table {
 	struct iommu_group *it_group;
 	arch_spinlock_t it_rm_lock;
 #endif
-	void (*set_bypass)(struct iommu_table *tbl, bool enable);
 };
 
 /* Pure 2^n version of get_order */

@@ -1182,9 +1182,6 @@ int iommu_take_ownership(struct iommu_table *tbl)
 	if (!ret)
 		iommu_free_tces(tbl, tbl->it_offset, tbl->it_size, false);
 
-	if (tbl->set_bypass)
-		tbl->set_bypass(tbl, false);
-
 	return 0;
 }
 EXPORT_SYMBOL_GPL(iommu_take_ownership);
@@ -1208,9 +1205,6 @@ void iommu_release_ownership(struct iommu_table *tbl)
 	for (i = 0; i < tbl->nr_pools; i++)
 		spin_unlock(&tbl->pools[i].lock);
 	spin_unlock_irqrestore(&tbl->large_pool.lock, flags);
-
-	if (tbl->set_bypass)
-		tbl->set_bypass(tbl, true);
 }
 EXPORT_SYMBOL_GPL(iommu_release_ownership);
 

@@ -716,10 +716,8 @@ static void pnv_pci_ioda_setup_dma_pe(struct pnv_phb *phb,
 		__free_pages(tce_mem, get_order(TCE32_TABLE_SIZE * segs));
 }
 
-static void pnv_pci_ioda2_set_bypass(struct iommu_table *tbl, bool enable)
+static void pnv_pci_ioda2_set_bypass(struct pnv_ioda_pe *pe, bool enable)
 {
-	struct pnv_ioda_pe *pe = container_of(tbl, struct pnv_ioda_pe,
-					      tce32.table);
 	uint16_t window_id = (pe->pe_number << 1 ) + 1;
 	int64_t rc;
 
@@ -747,7 +745,7 @@ static void pnv_pci_ioda2_set_bypass(struct iommu_table *tbl, bool enable)
 		 * host side.
 		 */
 		if (pe->pdev)
-			set_iommu_table_base(&pe->pdev->dev, tbl);
+			set_iommu_table_base(&pe->pdev->dev, &pe->tce32.table);
 		else
 			pnv_ioda_setup_bus_dma(pe, pe->pbus, false);
 	}
@@ -763,15 +761,21 @@ static void pnv_pci_ioda2_setup_bypass_pe(struct pnv_phb *phb,
 	/* TVE #1 is selected by PCI address bit 59 */
 	pe->tce_bypass_base = 1ull << 59;
 
-	/* Install set_bypass callback for VFIO */
-	pe->tce32.table.set_bypass = pnv_pci_ioda2_set_bypass;
-
 	/* Enable bypass by default */
-	pnv_pci_ioda2_set_bypass(&pe->tce32.table, true);
+	pnv_pci_ioda2_set_bypass(pe, true);
+}
+
+static void pnv_ioda2_take_ownership(struct spapr_tce_iommu_group *data,
+				     bool enable)
+{
+	struct pnv_ioda_pe *pe = data->iommu_owner;
+
+	pnv_pci_ioda2_set_bypass(pe, !enable);
 }
 
 static struct spapr_tce_iommu_ops pnv_pci_ioda2_ops = {
 	.get_table = pnv_ioda1_iommu_get_table,
+	.take_ownership = pnv_ioda2_take_ownership,
 };
 
 static void pnv_pci_ioda2_setup_dma_pe(struct pnv_phb *phb,

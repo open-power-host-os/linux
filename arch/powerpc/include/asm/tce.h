@@ -58,6 +58,8 @@ struct spapr_tce_iommu_ops {
 	struct iommu_table *(*get_table)(
 			struct spapr_tce_iommu_group *data,
 			phys_addr_t addr);
+	void (*take_ownership)(struct spapr_tce_iommu_group *data,
+			bool enable);
 };
 
 struct spapr_tce_iommu_group {
