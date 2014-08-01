@@ -178,6 +178,7 @@ extern int opal_enter_rtas(struct rtas_args *args,
 #define OPAL_DUMP_INFO2				94
 #define OPAL_HANDLE_HMI				98
 #define OPAL_CONFIG_IDLE_STATE			99
+#define OPAL_SLW_SET_REG			100
 #define OPAL_REGISTER_DUMP_REGION		101
 #define OPAL_UNREGISTER_DUMP_REGION		102
 
@@ -907,6 +908,7 @@ int64_t opal_pci_next_error(uint64_t phb_id, uint64_t *first_frozen_pe,
 int64_t opal_pci_poll(uint64_t phb_id);
 int64_t opal_return_cpu(void);
 int64_t opal_resync_timebase(void);
+int64_t opal_slw_set_reg(uint64_t cpu_pir, uint64_t sprn, uint64_t val);
 int64_t opal_config_idle_state(uint64_t state, uint64_t enter);
 
 int64_t opal_check_token(uint64_t token);
