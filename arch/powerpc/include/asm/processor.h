@@ -438,6 +438,8 @@ extern unsigned long power7_nap(void);
 extern unsigned long power7_forced_nap(void);
 extern unsigned long power7_sleep(void);
 extern unsigned long __power7_sleep(void);
+extern unsigned long power7_winkle(void);
+extern unsigned long __power7_winkle(void);
 #ifdef CONFIG_CPU_IDLE_POWERPC_BOOK3S
 extern void update_smt_snooze_delay(int cpu, int residency);
 #else

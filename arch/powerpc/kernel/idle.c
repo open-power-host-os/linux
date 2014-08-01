@@ -98,6 +98,16 @@ unsigned long power7_sleep(void)
 	return ret;
 }
 
+unsigned long power7_winkle(void)
+{
+	unsigned long ret;
+	if (ppc_md.power7_winkle)
+		ret = ppc_md.power7_winkle();
+	else
+		ret = __power7_winkle();
+	return ret;
+}
+
 int powersave_nap;
 
 

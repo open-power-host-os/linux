@@ -146,8 +146,8 @@ BEGIN_FTR_SECTION
 	b	.power7_wakeup_noloss
 2:	b	.power7_wakeup_loss
 
-	/* Fast Sleep wakeup on PowerNV */
-8:	b 	.power7_wakeup_tb_loss
+	/* Winkle / Fast Sleep wakeup on PowerNV */
+8:	b 	.power7_wakeup_hv_state_loss
 
 9:
 END_FTR_SECTION_IFSET(CPU_FTR_HVMODE | CPU_FTR_ARCH_206)

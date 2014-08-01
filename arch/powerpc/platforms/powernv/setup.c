@@ -317,6 +317,29 @@ static unsigned long pnv_power7_sleep(void)
 	return srr1;
 }
 
+/*
+ * We need to keep track of offline cpus also for calling
+ * fastsleep workaround appropriately
+ */
+static unsigned long pnv_power7_winkle(void)
+{
+	int cpu, primary_thread;
+	unsigned long srr1;
+
+	cpu = smp_processor_id();
+	primary_thread = cpu_first_thread_sibling(cpu);
+
+	if (need_fastsleep_workaround) {
+		pnv_apply_fastsleep_workaround(1, primary_thread);
+		srr1 = __power7_winkle();
+		pnv_apply_fastsleep_workaround(0, primary_thread);
+	} else {
+			srr1 = __power7_winkle();
+	}
+	return srr1;
+}
+
+
 static void __init pnv_setup_machdep_opal(void)
 {
 	ppc_md.get_boot_time = opal_get_boot_time;
@@ -331,6 +354,7 @@ static void __init pnv_setup_machdep_opal(void)
 	ppc_md.handle_hmi_exception = opal_handle_hmi_exception;
 	ppc_md.setup_idle = pnv_setup_idle;
 	ppc_md.power7_sleep = pnv_power7_sleep;
+	ppc_md.power7_winkle = pnv_power7_winkle;
 }
 
 #ifdef CONFIG_PPC_POWERNV_RTAS
