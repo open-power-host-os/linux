@@ -230,6 +230,64 @@ unsigned int pnv_get_supported_cpuidle_states(void)
 	return supported_cpuidle_states;
 }
 
+int pnv_save_sprs_for_winkle(void)
+{
+	int cpu;
+	int rc;
+
+	/*
+	* hid0, hid1, hid4, hid5, hmeer and lpcr values are symmetric accross
+	* all cpus at boot. Get these reg values of current cpu and use the
+	* same accross all cpus.
+	*/
+	uint64_t lpcr_val = mfspr(SPRN_LPCR);
+	uint64_t hid0_val = mfspr(SPRN_HID0);
+	uint64_t hid1_val = mfspr(SPRN_HID1);
+	uint64_t hid4_val = mfspr(SPRN_HID4);
+	uint64_t hid5_val = mfspr(SPRN_HID5);
+	uint64_t hmeer_val = mfspr(SPRN_HMEER);
+	for_each_possible_cpu(cpu) {
+		uint64_t pir = get_hard_smp_processor_id(cpu);
+		uint64_t local_paca_ptr = (uint64_t)&paca[cpu];
+
+		rc = opal_slw_set_reg(pir, SPRN_HSPRG0, local_paca_ptr);
+		if (rc != 0)
+			return rc;
+
+		rc = opal_slw_set_reg(pir, SPRN_LPCR, lpcr_val);
+		if (rc != 0)
+			return rc;
+
+		/* HIDs are per core registers */
+		if (cpu_thread_in_core(cpu) == 0) {
+
+			rc = opal_slw_set_reg(pir, SPRN_HMEER, hmeer_val);
+			if (rc != 0)
+				return rc;
+
+			rc = opal_slw_set_reg(pir, SPRN_HID0, hid0_val);
+			if (rc != 0)
+				return rc;
+
+			rc = opal_slw_set_reg(pir, SPRN_HID1, hid1_val);
+			if (rc != 0)
+				return rc;
+
+			rc = opal_slw_set_reg(pir, SPRN_HID4, hid4_val);
+			if (rc != 0)
+				return rc;
+
+			rc = opal_slw_set_reg(pir, SPRN_HID5, hid5_val);
+			if (rc != 0)
+				return rc;
+
+		}
+
+	}
+
+	return 0;
+
+}
 static int __init pnv_probe_idle_states(void)
 {
 	struct device_node *power_mgt;
@@ -267,6 +325,21 @@ static int __init pnv_probe_idle_states(void)
 			supported_cpuidle_states |= IDLE_USE_SLEEP;
 			need_fastsleep_workaround = 1;
 		}
+
+		if (flags[i] & IDLE_INST_WINKLE) {
+			/*
+			 * If winkle is supported, save HSPRG0, HIDs and LPCR
+			 * contents via OPAL. Enable winkle only if this
+			 * succeeds.
+			 */
+			int opal_ret_val = pnv_save_sprs_for_winkle();
+			if (!opal_ret_val)
+				supported_cpuidle_states |= IDLE_USE_WINKLE;
+			else
+				pr_warn("opal: opal_slw_set_reg failed with rc=%d, disabling winkle\n",
+						opal_ret_val);
+		}
+
 	}
 
 	return 0;

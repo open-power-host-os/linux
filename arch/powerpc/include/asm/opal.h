@@ -794,6 +794,7 @@ extern struct device_node *opal_node;
 #define IDLE_INST_NAP		0x00010000 /* nap instruction can be used */
 #define IDLE_INST_SLEEP		0x00020000 /* sleep instruction can be used */
 #define IDLE_INST_SLEEP_ER1	0x00080000 /* Use sleep instruction with work around*/
+#define IDLE_INST_WINKLE       0x00040000 /* winkle instruction can be used */
 
 /* API functions */
 int64_t opal_console_write(int64_t term_number, int64_t *length,
