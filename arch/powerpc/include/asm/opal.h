@@ -178,6 +178,8 @@ extern int opal_enter_rtas(struct rtas_args *args,
 #define OPAL_DUMP_INFO2				94
 #define OPAL_HANDLE_HMI				98
 #define OPAL_CONFIG_IDLE_STATE			99
+#define OPAL_REGISTER_DUMP_REGION		101
+#define OPAL_UNREGISTER_DUMP_REGION		102
 
 #ifndef __ASSEMBLY__
 
@@ -939,6 +941,8 @@ int64_t opal_set_param(uint64_t token, uint32_t param_id, uint64_t buffer,
 		size_t length);
 int64_t opal_sensor_read(uint32_t sensor_hndl, int token,
 		uint32_t *sensor_data);
+int64_t opal_register_dump_region(uint32_t id, uint64_t start, uint64_t end);
+int64_t opal_unregister_dump_region(uint32_t id);
 int64_t opal_invalid_call(void);
 int64_t opal_handle_hmi(void);
 
@@ -998,6 +1002,13 @@ extern int opal_handle_hmi_exception(struct pt_regs *regs);
 extern void opal_shutdown(void);
 
 extern void opal_lpc_init(void);
+
+/*
+ * Dump region ID range usable by the OS
+ */
+#define OPAL_DUMP_REGION_HOST_START		0x80
+#define OPAL_DUMP_REGION_LOG_BUF		0x80
+#define OPAL_DUMP_REGION_HOST_END		0xFF
 
 #endif /* __ASSEMBLY__ */
 
