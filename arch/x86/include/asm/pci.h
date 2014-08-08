@@ -155,7 +155,6 @@ void default_restore_msi_irqs(struct pci_dev *dev, int irq);
 
 /* generic pci stuff */
 #include <asm-generic/pci.h>
-#define PCIBIOS_MAX_MEM_32 0xffffffff
 
 #ifdef CONFIG_NUMA
 /* Returns the node based on pci bus */
