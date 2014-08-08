@@ -19,18 +19,6 @@
 
 #define VIRTFN_ID_LEN	16
 
-static inline u8 virtfn_bus(struct pci_dev *dev, int id)
-{
-	return dev->bus->number + ((dev->devfn + dev->sriov->offset +
-				    dev->sriov->stride * id) >> 8);
-}
-
-static inline u8 virtfn_devfn(struct pci_dev *dev, int id)
-{
-	return (dev->devfn + dev->sriov->offset +
-		dev->sriov->stride * id) & 0xff;
-}
-
 static struct pci_bus *virtfn_add_bus(struct pci_bus *bus, int busnr)
 {
 	struct pci_bus *child;
@@ -81,13 +69,13 @@ static int virtfn_add(struct pci_dev *dev, int id, int reset)
 		return -ENOMEM;
 
 	mutex_lock(&iov->dev->sriov->lock);
-	virtfn->bus = virtfn_add_bus(dev->bus, virtfn_bus(dev, id));
+	virtfn->bus = virtfn_add_bus(dev->bus, pci_iov_virtfn_bus(dev, id));
 	if (!virtfn->bus) {
 		kfree(virtfn);
 		mutex_unlock(&iov->dev->sriov->lock);
 		return -ENOMEM;
 	}
-	virtfn->devfn = virtfn_devfn(dev, id);
+	virtfn->devfn = pci_iov_virtfn_devfn(dev, id);
 	virtfn->vendor = dev->vendor;
 	pci_read_config_word(dev, iov->pos + PCI_SRIOV_VF_DID, &virtfn->device);
 	pci_setup_device(virtfn);
@@ -134,7 +122,7 @@ failed1:
 	pci_dev_put(dev);
 	mutex_lock(&iov->dev->sriov->lock);
 	pci_stop_and_remove_bus_device(virtfn);
-	virtfn_remove_bus(dev->bus, virtfn_bus(dev, id));
+	virtfn_remove_bus(dev->bus, pci_iov_virtfn_bus(dev, id));
 	mutex_unlock(&iov->dev->sriov->lock);
 
 	return rc;
@@ -147,11 +135,11 @@ static void virtfn_remove(struct pci_dev *dev, int id, int reset)
 	struct pci_dev *virtfn;
 	struct pci_sriov *iov = dev->sriov;
 
-	bus = pci_find_bus(pci_domain_nr(dev->bus), virtfn_bus(dev, id));
+	bus = pci_find_bus(pci_domain_nr(dev->bus), pci_iov_virtfn_bus(dev, id));
 	if (!bus)
 		return;
 
-	virtfn = pci_get_slot(bus, virtfn_devfn(dev, id));
+	virtfn = pci_get_slot(bus, pci_iov_virtfn_devfn(dev, id));
 	if (!virtfn)
 		return;
 
@@ -174,7 +162,7 @@ static void virtfn_remove(struct pci_dev *dev, int id, int reset)
 
 	mutex_lock(&iov->dev->sriov->lock);
 	pci_stop_and_remove_bus_device(virtfn);
-	virtfn_remove_bus(dev->bus, virtfn_bus(dev, id));
+	virtfn_remove_bus(dev->bus, pci_iov_virtfn_bus(dev, id));
 	mutex_unlock(&iov->dev->sriov->lock);
 
 	pci_dev_put(dev);
@@ -318,7 +306,7 @@ static int sriov_enable(struct pci_dev *dev, int nr_virtfn)
 	iov->offset = offset;
 	iov->stride = stride;
 
-	if (virtfn_bus(dev, nr_virtfn - 1) > dev->bus->busn_res.end) {
+	if (pci_iov_virtfn_bus(dev, nr_virtfn - 1) > dev->bus->busn_res.end) {
 		dev_err(&dev->dev, "SR-IOV: bus number out of range\n");
 		return -ENOMEM;
 	}
@@ -622,7 +610,7 @@ resource_size_t pci_sriov_resource_alignment(struct pci_dev *dev, int resno)
 	if (!reg)
 		return 0;
 
-	 __pci_read_base(dev, type, &tmp, reg);
+	__pci_read_base(dev, type, &tmp, reg);
 	return resource_alignment(&tmp);
 }
 
@@ -652,7 +640,7 @@ int pci_iov_bus_range(struct pci_bus *bus)
 	list_for_each_entry(dev, &bus->devices, bus_list) {
 		if (!dev->is_physfn)
 			continue;
-		busnr = virtfn_bus(dev, dev->sriov->total_VFs - 1);
+		busnr = pci_iov_virtfn_bus(dev, dev->sriov->total_VFs - 1);
 		if (busnr > max)
 			max = busnr;
 	}
