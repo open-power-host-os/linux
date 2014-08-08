@@ -380,6 +380,26 @@ static int powernv_eeh_next_error(struct eeh_pe **pe)
 	return -EEXIST;
 }
 
+static int powernv_eeh_cfg_read(struct device_node *dn,
+				int where, int size, u32 *val)
+{
+	struct pci_dn *pdn = PCI_DN(dn);
+
+	if (!pdn)
+		return PCIBIOS_DEVICE_NOT_FOUND;
+	return pnv_pci_cfg_read(pdn, where, size, val);
+}
+
+static int powernv_eeh_cfg_write(struct device_node *dn,
+				 int where, int size, u32 val)
+{
+	struct pci_dn *pdn = PCI_DN(dn);
+
+	if (!pdn)
+		return PCIBIOS_DEVICE_NOT_FOUND;
+	return pnv_pci_cfg_write(pdn, where, size, val);
+}
+
 static int powernv_eeh_restore_config(struct device_node *dn)
 {
 	struct eeh_dev *edev = of_node_to_eeh_dev(dn);
@@ -414,8 +434,8 @@ static struct eeh_ops powernv_eeh_ops = {
 	.wait_state             = powernv_eeh_wait_state,
 	.get_log                = powernv_eeh_get_log,
 	.configure_bridge       = powernv_eeh_configure_bridge,
-	.read_config            = pnv_pci_cfg_read,
-	.write_config           = pnv_pci_cfg_write,
+	.read_config            = powernv_eeh_cfg_read,
+	.write_config           = powernv_eeh_cfg_write,
 	.next_error		= powernv_eeh_next_error,
 	.restore_config		= powernv_eeh_restore_config
 };
