@@ -243,5 +243,8 @@ extern void pnv_pci_ioda_tce_invalidate(struct iommu_table *tbl,
 					u64 *startp, u64 *endp, bool rm);
 extern void pnv_pci_reset_secondary_bus(struct pci_dev *dev);
 extern int ioda_eeh_phb_reset(struct pci_controller *hose, int option);
+#ifdef CONFIG_PCI_IOV
+resource_size_t pnv_pci_sriov_resource_size(struct pci_dev *pdev, int resno);
+#endif
 
 #endif /* __POWERNV_PCI_H */

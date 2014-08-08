@@ -1692,6 +1692,60 @@ static void pnv_pci_init_ioda_msis(struct pnv_phb *phb)
 static void pnv_pci_init_ioda_msis(struct pnv_phb *phb) { }
 #endif /* CONFIG_PCI_MSI */
 
+#ifdef CONFIG_PCI_IOV
+static void pnv_pci_ioda_fixup_iov_resources(struct pci_dev *pdev)
+{
+	struct pci_controller *hose;
+	struct pnv_phb *phb;
+	struct resource *res;
+	int i;
+	resource_size_t size;
+	struct pci_dn *pdn;
+
+	if (!pdev->is_physfn || pdev->is_added)
+		return;
+
+	hose = pci_bus_to_host(pdev->bus);
+	phb = hose->private_data;
+
+	pdn = pci_get_pdn(pdev);
+	pdn->vfs = 0;
+
+	for (i = PCI_IOV_RESOURCES; i <= PCI_IOV_RESOURCE_END; i++) {
+		res = &pdev->resource[i];
+		if (!res->flags || res->parent)
+			continue;
+		if (!pnv_pci_is_mem_pref_64(res->flags)) {
+			dev_warn(&pdev->dev, " non M64 IOV BAR %pR on %s\n",
+				 res, pci_name(pdev));
+			continue;
+		}
+
+		dev_dbg(&pdev->dev, "PowerNV: Fixing VF BAR[%d] %pR to\n",
+				i, res);
+		size = pnv_pci_sriov_resource_size(pdev, i);
+		res->end = res->start + size * phb->ioda.total_pe - 1;
+		dev_dbg(&pdev->dev, "                       %pR\n", res);
+	}
+	pdn->vfs = phb->ioda.total_pe;
+}
+
+static void pnv_pci_ioda_fixup_sriov(struct pci_bus *bus)
+{
+	struct pci_dev *pdev;
+	struct pci_bus *b;
+
+	list_for_each_entry(pdev, &bus->devices, bus_list) {
+		b = pdev->subordinate;
+
+		if (b)
+			pnv_pci_ioda_fixup_sriov(b);
+
+		pnv_pci_ioda_fixup_iov_resources(pdev);
+	}
+}
+#endif /* CONFIG_PCI_IOV */
+
 /*
  * This function is supposed to be called on basis of PE from top
  * to bottom style. So the the I/O or MMIO segment assigned to
@@ -1867,6 +1921,40 @@ static resource_size_t pnv_pci_window_alignment(struct pci_bus *bus,
 
 	return phb->ioda.io_segsize;
 }
+
+/*
+ * Allocate firmware data for VF, which doesn't have corresponding
+ * device node. So we have to extend device's archdata.
+ */
+#ifdef CONFIG_PCI_IOV
+static resource_size_t pnv_pcibios_sriov_resource_size(struct pci_dev *pdev, int resno)
+{
+	struct pci_dn *pdn = pci_get_pdn(pdev);
+	resource_size_t size = 0;
+
+	if (!pdn->vfs)
+		return size;
+
+	size = resource_size(pdev->resource + resno);
+	do_div(size, pdn->vfs);
+
+	return size;
+}
+
+resource_size_t pnv_pci_sriov_resource_size(struct pci_dev *pdev, int resno)
+{
+	resource_size_t size;
+
+	size = pnv_pcibios_sriov_resource_size(pdev, resno);
+	if (size != 0)
+		return size;
+
+	size = resource_size(pdev->resource + resno);
+	do_div(size, pci_sriov_get_totalvfs(pdev));
+
+	return size;
+}
+#endif /* CONFIG_PCI_IOV */
 
 /* Prevent enabling devices for which we couldn't properly
  * assign a PE
@@ -2073,6 +2161,9 @@ void __init pnv_pci_init_ioda_phb(struct device_node *np,
 	ppc_md.pcibios_enable_device_hook = pnv_pci_enable_device_hook;
 	ppc_md.pcibios_window_alignment = pnv_pci_window_alignment;
 	ppc_md.pcibios_reset_secondary_bus = pnv_pci_reset_secondary_bus;
+#ifdef CONFIG_PCI_IOV
+	ppc_md.pcibios_fixup_sriov = pnv_pci_ioda_fixup_sriov;
+#endif /* CONFIG_PCI_IOV */
 	pci_add_flags(PCI_REASSIGN_ALL_RSRC);
 
 	/* Reset IODA tables to a clean state */
