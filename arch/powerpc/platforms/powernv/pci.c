@@ -21,6 +21,7 @@
 #include <linux/io.h>
 #include <linux/msi.h>
 #include <linux/iommu.h>
+#include <uapi/linux/pci_regs.h>
 
 #include <asm/sections.h>
 #include <asm/io.h>
@@ -922,3 +923,20 @@ static int __init tce_iommu_bus_notifier_init(void)
 }
 
 subsys_initcall_sync(tce_iommu_bus_notifier_init);
+
+static void pnv_sriov_final_fixup(struct pci_dev *dev)
+{
+	struct resource *res;
+	int i;
+
+	if (!dev->is_physfn)
+		return;
+
+	for (i = 0; i < PCI_SRIOV_NUM_BARS; i++) {
+		res = dev->resource + PCI_IOV_RESOURCES + i;
+		if (!res->flags)
+			continue;
+		res->flags |= IORESOURCE_ARCH;
+	}
+}
+DECLARE_PCI_FIXUP_FINAL(PCI_ANY_ID, PCI_ANY_ID, pnv_sriov_final_fixup);
