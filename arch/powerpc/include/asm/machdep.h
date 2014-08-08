@@ -211,7 +211,10 @@ struct machdep_calls {
 
 	/* Called when pci_enable_device() is called. Returns 0 to
 	 * allow assignment/enabling of the device. */
-	int  (*pcibios_enable_device_hook)(struct pci_dev *);
+	int (*pcibios_enable_device_hook)(struct pci_dev *);
+
+	/* Called when pci_disable_device() is called. */
+	void (*pcibios_disable_device_hook)(struct pci_dev *);
 
 	/* Called after scan and before resource survey */
 	void (*pcibios_fixup_phb)(struct pci_controller *hose);
