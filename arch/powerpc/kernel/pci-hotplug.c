@@ -30,6 +30,9 @@
 void pcibios_release_device(struct pci_dev *dev)
 {
 	eeh_remove_device(dev);
+
+	/* Release firmware data */
+	remove_dev_pci_info(dev);
 }
 
 /**
