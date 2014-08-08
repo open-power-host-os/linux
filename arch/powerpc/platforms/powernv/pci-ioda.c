@@ -1954,6 +1954,23 @@ resource_size_t pnv_pci_sriov_resource_size(struct pci_dev *pdev, int resno)
 
 	return size;
 }
+
+static resource_size_t pnv_pcibios_sriov_resource_alignment(struct pci_dev *pdev,
+							    int resno,
+							    resource_size_t align)
+{
+	struct pci_dn *pdn = pci_get_pdn(pdev);
+	resource_size_t iov_align;
+
+	iov_align = resource_size(&pdev->resource[resno]);
+	if (iov_align)
+		return iov_align;
+
+	if (pdn->vfs)
+		return pdn->vfs * align;
+
+	return align;
+}
 #endif /* CONFIG_PCI_IOV */
 
 /* Prevent enabling devices for which we couldn't properly
@@ -2163,6 +2180,7 @@ void __init pnv_pci_init_ioda_phb(struct device_node *np,
 	ppc_md.pcibios_reset_secondary_bus = pnv_pci_reset_secondary_bus;
 #ifdef CONFIG_PCI_IOV
 	ppc_md.pcibios_fixup_sriov = pnv_pci_ioda_fixup_sriov;
+	ppc_md.pcibios_sriov_resource_alignment = pnv_pcibios_sriov_resource_alignment;
 #endif /* CONFIG_PCI_IOV */
 	pci_add_flags(PCI_REASSIGN_ALL_RSRC);
 

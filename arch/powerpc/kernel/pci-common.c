@@ -140,6 +140,20 @@ void pcibios_reset_secondary_bus(struct pci_dev *dev)
 	ssleep(1);
 }
 
+#ifdef CONFIG_PCI_IOV
+resource_size_t pcibios_sriov_resource_alignment(struct pci_dev *pdev,
+						 int resno,
+						 resource_size_t align)
+{
+	if (ppc_md.pcibios_sriov_resource_alignment)
+		return ppc_md.pcibios_sriov_resource_alignment(pdev,
+							       resno,
+							       align);
+
+	return 0;
+}
+#endif /* CONFIG_PCI_IOV */
+
 static resource_size_t pcibios_io_size(const struct pci_controller *hose)
 {
 #ifdef CONFIG_PPC64
