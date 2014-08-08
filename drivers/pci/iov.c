@@ -63,6 +63,9 @@ static int virtfn_add(struct pci_dev *dev, int id, int reset)
 	struct pci_dev *virtfn;
 	struct resource *res;
 	struct pci_sriov *iov = dev->sriov;
+	struct resource tmp;
+	enum pci_bar_type type;
+	int reg;
 
 	virtfn = alloc_pci_dev();
 	if (!virtfn)
@@ -89,12 +92,29 @@ static int virtfn_add(struct pci_dev *dev, int id, int reset)
 			continue;
 		virtfn->resource[i].name = pci_name(virtfn);
 		virtfn->resource[i].flags = res->flags;
-		size = resource_size(res);
-		do_div(size, iov->total_VFs);
+		/* When res has IORESOURCE_ARCH, retrieve the IOV BAR size
+		 * from hardware directly.
+		 */
+		if (res->flags & IORESOURCE_ARCH) {
+			reg = pci_iov_resource_bar(dev, i + PCI_IOV_RESOURCES, &type);
+			__pci_read_base(dev, type, &tmp, reg);
+			size = resource_size(&tmp);
+			/* When __pci_read_base fails, flags is set to 0.
+			 * In this case, reset size to 0, which means the VF
+			 * will not be enabled.
+			 */
+			if (!tmp.flags)
+				size = 0;
+		} else {
+			size = resource_size(res);
+			do_div(size, iov->total_VFs);
+		}
 		virtfn->resource[i].start = res->start + size * id;
 		virtfn->resource[i].end = virtfn->resource[i].start + size - 1;
-		rc = request_resource(res, &virtfn->resource[i]);
-		BUG_ON(rc);
+		if (resource_size(&virtfn->resource[i])) {
+			rc = request_resource(res, &virtfn->resource[i]);
+			BUG_ON(rc);
+		}
 	}
 
 	if (reset)
