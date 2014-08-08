@@ -14,6 +14,7 @@
 #include <linux/kernel.h>
 #include <linux/pci.h>
 #include <linux/crash_dump.h>
+#include <linux/pci_regs.h>
 #include <linux/debugfs.h>
 #include <linux/delay.h>
 #include <linux/string.h>
@@ -730,6 +731,36 @@ static unsigned int pnv_ioda_dma_weight(struct pci_dev *dev)
 	/* Default */
 	return 10;
 }
+
+#ifdef CONFIG_PCI_IOV
+static void pnv_pci_vf_resource_shift(struct pci_dev *dev, int offset)
+{
+	struct pci_dn *pdn = pci_get_pdn(dev);
+	int i;
+	struct resource *res;
+	resource_size_t size;
+
+	if (!dev->is_physfn)
+		return;
+
+	for (i = 0; i < PCI_SRIOV_NUM_BARS; i++) {
+		res = dev->resource + PCI_IOV_RESOURCES + i;
+		if (!res->flags || !res->parent)
+			continue;
+
+		if (!pnv_pci_is_mem_pref_64(res->flags))
+			continue;
+
+		dev_info(&dev->dev, "PowerNV: Shifting VF BAR %pR to\n", res);
+		size = pnv_pci_sriov_resource_size(dev, PCI_IOV_RESOURCES + i);
+		res->start += size*offset;
+
+		dev_info(&dev->dev, "                         %pR\n", res);
+		pci_update_resource(dev, PCI_IOV_RESOURCES + i);
+	}
+	pdn->vfs -= offset;
+}
+#endif /* CONFIG_PCI_IOV */
 
 #if 0
 static struct pnv_ioda_pe *pnv_ioda_setup_dev_PE(struct pci_dev *dev)
