@@ -123,20 +123,17 @@ DEFINE_SIMPLE_ATTRIBUTE(ioda_eeh_inbB_dbgfs_ops, ioda_eeh_inbB_dbgfs_get,
 			ioda_eeh_inbB_dbgfs_set, "0x%llx\n");
 #endif /* CONFIG_DEBUG_FS */
 
-static void ioda_eeh_phb_diag(struct pci_controller *hose)
+static void ioda_eeh_phb_diag(struct eeh_pe *pe)
 {
-	struct pnv_phb *phb = hose->private_data;
+	struct pnv_phb *phb = pe->phb->private_data;
 	long rc;
 
-	rc = opal_pci_get_phb_diag_data2(phb->opal_id, phb->diag.blob,
+	rc = opal_pci_get_phb_diag_data2(phb->opal_id, pe->data,
 					 PNV_PCI_DIAG_BUF_SIZE);
-	if (rc != OPAL_SUCCESS) {
+	if (rc != OPAL_SUCCESS)
 		pr_warn("%s: Failed to get diag-data for PHB#%x (%ld)\n",
-			__func__, hose->global_number, rc);
-		return;
-	}
+			__func__, pe->phb->global_number, rc);
 
-	pnv_pci_dump_phb_diag_data(hose, phb->diag.blob);
 }
 
 /**
@@ -282,7 +279,7 @@ static int ioda_eeh_get_phb_state(struct eeh_pe *pe)
 			  EEH_STATE_DMA_ENABLED);
 	} else if (!(pe->state & EEH_PE_ISOLATED)) {
 		eeh_pe_state_mark(pe, EEH_PE_ISOLATED);
-		ioda_eeh_phb_diag(phb->hose);
+		ioda_eeh_phb_diag(pe);
 	}
 
 	return result;
@@ -380,7 +377,7 @@ static int ioda_eeh_get_pe_state(struct eeh_pe *pe)
 			phb->freeze_pe(phb, pe->addr);
 
 		eeh_pe_state_mark(pe, EEH_PE_ISOLATED);
-		ioda_eeh_phb_diag(phb->hose);
+		ioda_eeh_phb_diag(pe);
 	}
 
 	return result;
@@ -624,16 +621,19 @@ static int ioda_eeh_reset(struct eeh_pe *pe, int option)
 
 /**
  * ioda_eeh_get_log - Retrieve error log
- * @pe: EEH PE
- * @severity: Severity level of the log
- * @drv_log: buffer to store the log
- * @len: space of the log buffer
+ * @pe: frozen PE
+ * @severity: permanent or temporary error
+ * @drv_log: device driver log
+ * @len: length of device driver log
  *
- * The function is used to retrieve error log from P7IOC.
+ * Retrieve error log, which contains log from device driver
+ * and firmware.
  */
-static int ioda_eeh_get_log(struct eeh_pe *pe, int severity,
-			    char *drv_log, unsigned long len)
+int ioda_eeh_get_log(struct eeh_pe *pe, int severity,
+		     char *drv_log, unsigned long len)
 {
+	pnv_pci_dump_phb_diag_data(pe->phb, pe->data);
+
 	return 0;
 }
 
@@ -871,7 +871,8 @@ static int ioda_eeh_next_error(struct eeh_pe **pe)
 					"detected, location: %s\n",
 					hose->global_number,
 					eeh_pe_loc_get(phb_pe));
-				ioda_eeh_phb_diag(hose);
+				ioda_eeh_phb_diag(phb_pe);
+				pnv_pci_dump_phb_diag_data(hose, phb_pe->data);
 				ret = EEH_NEXT_ERR_NONE;
 			}
 
@@ -924,7 +925,7 @@ static int ioda_eeh_next_error(struct eeh_pe **pe)
 		    ret == EEH_NEXT_ERR_FENCED_PHB) &&
 		    !((*pe)->state & EEH_PE_ISOLATED)) {
 			eeh_pe_state_mark(*pe, EEH_PE_ISOLATED);
-			ioda_eeh_phb_diag(hose);
+			ioda_eeh_phb_diag(*pe);
 		}
 
 		/*

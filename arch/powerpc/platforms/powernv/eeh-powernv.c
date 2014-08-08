@@ -326,7 +326,7 @@ static int powernv_eeh_wait_state(struct eeh_pe *pe, int max_wait)
  * Retrieve the temporary or permanent error from the PE.
  */
 static int powernv_eeh_get_log(struct eeh_pe *pe, int severity,
-			char *drv_log, unsigned long len)
+			       char *drv_log, unsigned long len)
 {
 	struct pci_controller *hose = pe->phb;
 	struct pnv_phb *phb = hose->private_data;
@@ -433,6 +433,7 @@ static int __init eeh_powernv_init(void)
 	if (!machine_is(powernv))
 		return ret;
 
+	eeh_set_pe_aux_size(PNV_PCI_DIAG_BUF_SIZE);
 	ret = eeh_ops_register(&powernv_eeh_ops);
 	if (!ret)
 		pr_info("EEH: PowerNV platform initialized\n");
