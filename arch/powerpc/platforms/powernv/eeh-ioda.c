@@ -676,8 +676,8 @@ static void ioda_eeh_hub_diag(struct pci_controller *hose)
 
 	rc = opal_pci_get_hub_diag_data(phb->hub_id, data, sizeof(*data));
 	if (rc != OPAL_SUCCESS) {
-		pr_warning("%s: Failed to get HUB#%llx diag-data (%ld)\n",
-			   __func__, phb->hub_id, rc);
+		pr_warn("%s: Failed to get HUB#%llx diag-data (%ld)\n",
+			__func__, phb->hub_id, rc);
 		return;
 	}
 
@@ -713,8 +713,8 @@ static void ioda_eeh_hub_diag(struct pci_controller *hose)
 		ioda_eeh_hub_diag_common(data);
 		break;
 	default:
-		pr_warning("%s: Invalid type of HUB#%llx diag-data (%d)\n",
-			   __func__, phb->hub_id, data->type);
+		pr_warn("%s: Invalid type of HUB#%llx diag-data (%d)\n",
+			__func__, phb->hub_id, data->type);
 	}
 }
 
