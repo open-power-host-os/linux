@@ -49,6 +49,12 @@ struct iommu_table_ops {
 			unsigned long uaddr,
 			enum dma_data_direction direction,
 			struct dma_attrs *attrs);
+	int (*exchange)(struct iommu_table *tbl,
+			long index, long npages,
+			unsigned long uaddr,
+			unsigned long *old_tces,
+			enum dma_data_direction direction,
+			struct dma_attrs *attrs);
 	void (*clear)(struct iommu_table *tbl,
 			long index, long npages);
 	unsigned long (*get)(struct iommu_table *tbl, long index);
@@ -59,6 +65,13 @@ struct iommu_table_ops {
 			long index,
 			long npages,
 			unsigned long uaddr,
+			enum dma_data_direction direction,
+			struct dma_attrs *attrs);
+	int (*exchange_rm)(struct iommu_table *tbl,
+			long index,
+			long npages,
+			unsigned long uaddr,
+			unsigned long *old_tces,
 			enum dma_data_direction direction,
 			struct dma_attrs *attrs);
 	void (*clear_rm)(struct iommu_table *tbl,

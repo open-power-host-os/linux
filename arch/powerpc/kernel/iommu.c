@@ -1081,6 +1081,7 @@ int iommu_tce_build(struct iommu_table *tbl, unsigned long entry,
 		unsigned long *hpas, unsigned long npages, bool rm)
 {
 	int i, ret = 0;
+	unsigned long oldtce;
 
 	if (rm && !tbl->it_ops->set_rm)
 		return -EAGAIN;
@@ -1088,23 +1089,39 @@ int iommu_tce_build(struct iommu_table *tbl, unsigned long entry,
 	arch_spin_lock(&tbl->it_rm_lock);
 
 	for (i = 0; i < npages; ++i) {
-		if (tbl->it_ops->get(tbl, entry + i) &
-				(TCE_PCI_WRITE | TCE_PCI_READ)) {
-			arch_spin_unlock(&tbl->it_rm_lock);
-			return -EBUSY;
-		}
-	}
-
-	for (i = 0; i < npages; ++i) {
 		unsigned long volatile hva = (unsigned long) __va(hpas[i]);
 		enum dma_data_direction dir = iommu_tce_direction(hva);
 
-		if (rm)
-			ret = tbl->it_ops->set_rm(tbl, entry + i, 1,
-					hva, dir, NULL);
-		else
-			ret = tbl->it_ops->set(tbl, entry + i, 1,
-					hva, dir, NULL);
+		if (rm) {
+			ret = tbl->it_ops->exchange_rm(tbl, entry, 1, hva,
+					&oldtce, dir, NULL);
+			if (oldtce & (TCE_PCI_READ | TCE_PCI_WRITE)) {
+				struct page *p = pfn_to_page(oldtce >>
+						PAGE_SHIFT);
+
+				if (oldtce & TCE_PCI_WRITE)
+					SetPageDirty(p);
+				if (!put_page_unless_one(p)) {
+					ret = tbl->it_ops->set(tbl, entry, 1,
+							(unsigned long)
+							__va(oldtce),
+							dir, NULL);
+					ret = -EAGAIN;
+				}
+			}
+		} else {
+			ret = tbl->it_ops->exchange(tbl, entry, 1, hva,
+					&oldtce, dir, NULL);
+			if (oldtce & (TCE_PCI_READ | TCE_PCI_WRITE)) {
+				struct page *p = pfn_to_page(oldtce >>
+						PAGE_SHIFT);
+
+				if (oldtce & TCE_PCI_WRITE)
+					SetPageDirty(p);
+				put_page(p);
+			}
+		}
+
 		if (ret)
 			break;
 	}
@@ -1132,7 +1149,7 @@ int iommu_put_tce_user_mode(struct iommu_table *tbl, unsigned long entry,
 {
 	int ret;
 	struct page *page = NULL;
-	unsigned long hpa, offset = tce & IOMMU_PAGE_MASK(tbl) & ~PAGE_MASK;
+	unsigned long hwaddr, offset = tce & IOMMU_PAGE_MASK(tbl) & ~PAGE_MASK;
 	enum dma_data_direction direction = iommu_tce_direction(tce);
 
 	ret = get_user_pages_fast(tce & PAGE_MASK, 1,
@@ -1142,10 +1159,10 @@ int iommu_put_tce_user_mode(struct iommu_table *tbl, unsigned long entry,
 				tce, entry << tbl->it_page_shift, ret); */
 		return -EFAULT;
 	}
-	hpa = __pa((unsigned long) page_address(page)) + offset;
-	hpa |= tce & (TCE_PCI_READ | TCE_PCI_WRITE);
+	hwaddr = (unsigned long) page_address(page) + offset;
+	hwaddr |= tce & (TCE_PCI_READ | TCE_PCI_WRITE);
 
-	ret = iommu_tce_build(tbl, entry, &hpa, 1, false);
+	ret = iommu_tce_build(tbl, entry, &hwaddr, 1, false);
 	if (ret)
 		put_page(page);
 
@@ -1161,6 +1178,16 @@ int iommu_take_ownership(struct iommu_table *tbl)
 {
 	unsigned long flags, i, sz = (tbl->it_size + 7) >> 3;
 	int ret = 0, bit0 = 0;
+
+	/*
+	 * VFIO does not control TCE entries allocation and the guest
+	 * can write new TCEs on top of existing ones so iommu_tce_build()
+	 * must be able to release old pages. This functionality
+	 * requires exchange() callback defined so if it is not
+	 * implemented, we disallow taking ownership over the table.
+	 */
+	if (!tbl->it_ops->exchange)
+		return -EINVAL;
 
 	spin_lock_irqsave(&tbl->large_pool.lock, flags);
 	for (i = 0; i < tbl->nr_pools; i++)

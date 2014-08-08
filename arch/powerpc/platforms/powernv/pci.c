@@ -584,6 +584,44 @@ static int pnv_tce_build_vm(struct iommu_table *tbl, long index, long npages,
 	return pnv_tce_build(tbl, index, npages, uaddr, direction, attrs, false);
 }
 
+static int pnv_tce_xchg(struct iommu_table *tbl, long index, long npages,
+			 unsigned long uaddr, unsigned long *old_tces,
+			 enum dma_data_direction direction,
+			 struct dma_attrs *attrs, bool rm)
+{
+	u64 proto_tce = TCE_PCI_READ;
+	u64 *tcep, *tces;
+	u64 rpn;
+	long i;
+
+	if (direction != DMA_TO_DEVICE)
+		proto_tce |= TCE_PCI_WRITE;
+
+	tces = tcep = ((u64 *)tbl->it_base) + index - tbl->it_offset;
+	rpn = __pa(uaddr) >> tbl->it_page_shift;
+
+	for (i = 0; i < npages; i++) {
+		unsigned long oldtce = xchg(tcep, cpu_to_be64(proto_tce |
+				(rpn++ << tbl->it_page_shift)));
+		old_tces[i] = (unsigned long) __va(oldtce);
+		tcep++;
+	}
+
+	pnv_tce_invalidate(tbl, tces, tcep - 1, rm);
+
+	return 0;
+}
+
+static int pnv_tce_xchg_vm(struct iommu_table *tbl, long index,
+				  long npages,
+				  unsigned long uaddr, unsigned long *old_tces,
+				  enum dma_data_direction direction,
+				  struct dma_attrs *attrs)
+{
+	return pnv_tce_xchg(tbl, index, npages, uaddr, old_tces, direction,
+			attrs, false);
+}
+
 static void pnv_tce_free(struct iommu_table *tbl, long index, long npages, bool rm)
 {
 	u64 *tcep, *tces;
@@ -613,6 +651,16 @@ static int pnv_tce_build_rm(struct iommu_table *tbl, long index, long npages,
 	return pnv_tce_build(tbl, index, npages, uaddr, direction, attrs, true);
 }
 
+static int pnv_tce_xchg_rm(struct iommu_table *tbl, long index,
+				  long npages, unsigned long uaddr,
+				  unsigned long *old_tces,
+				  enum dma_data_direction direction,
+				  struct dma_attrs *attrs)
+{
+	return pnv_tce_xchg(tbl, index, npages, uaddr, old_tces, direction,
+			attrs, true);
+}
+
 static void pnv_tce_free_rm(struct iommu_table *tbl, long index, long npages)
 {
 	pnv_tce_free(tbl, index, npages, true);
@@ -620,8 +668,10 @@ static void pnv_tce_free_rm(struct iommu_table *tbl, long index, long npages)
 
 struct iommu_table_ops pnv_iommu_ops = {
 	.set = pnv_tce_build_vm,
+	.exchange = pnv_tce_xchg_vm,
 	.clear = pnv_tce_free_vm,
 	.set_rm = pnv_tce_build_rm,
+	.exchange_rm = pnv_tce_xchg_rm,
 	.clear_rm = pnv_tce_free_rm,
 	.get = pnv_tce_get,
 };
