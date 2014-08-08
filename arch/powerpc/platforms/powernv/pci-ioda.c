@@ -2069,6 +2069,7 @@ static void pnv_pci_ioda_fixup_iov_resources(struct pci_dev *pdev)
 	int i;
 	resource_size_t size;
 	struct pci_dn *pdn;
+	int mul, total_vfs;
 
 	if (!pdev->is_physfn || pdev->is_added)
 		return;
@@ -2078,6 +2079,32 @@ static void pnv_pci_ioda_fixup_iov_resources(struct pci_dev *pdev)
 
 	pdn = pci_get_pdn(pdev);
 	pdn->vfs = 0;
+
+	total_vfs = pci_sriov_get_totalvfs(pdev);
+	pdn->m64_per_iov = 1;
+	mul = phb->ioda.total_pe;
+
+	for (i = PCI_IOV_RESOURCES; i <= PCI_IOV_RESOURCE_END; i++) {
+		res = &pdev->resource[i];
+		if (!res->flags || res->parent)
+			continue;
+		if (!pnv_pci_is_mem_pref_64(res->flags)) {
+			dev_warn(&pdev->dev, " non M64 IOV BAR %pR on %s\n",
+					res, pci_name(pdev));
+			continue;
+		}
+
+		size = pnv_pci_sriov_resource_size(pdev, i);
+
+		/* bigger than 64M */
+		if (size > (1 << 26)) {
+			dev_info(&pdev->dev, "PowerNV: VF BAR[%d] size "
+					"is bigger than 64M, roundup power2\n", i);
+			pdn->m64_per_iov = M64_PER_IOV;
+			mul = __roundup_pow_of_two(total_vfs);
+			break;
+		}
+	}
 
 	for (i = PCI_IOV_RESOURCES; i <= PCI_IOV_RESOURCE_END; i++) {
 		res = &pdev->resource[i];
@@ -2092,10 +2119,10 @@ static void pnv_pci_ioda_fixup_iov_resources(struct pci_dev *pdev)
 		dev_dbg(&pdev->dev, "PowerNV: Fixing VF BAR[%d] %pR to\n",
 				i, res);
 		size = pnv_pci_sriov_resource_size(pdev, i);
-		res->end = res->start + size * phb->ioda.total_pe - 1;
+		res->end = res->start + size * mul - 1;
 		dev_dbg(&pdev->dev, "                       %pR\n", res);
 	}
-	pdn->vfs = phb->ioda.total_pe;
+	pdn->vfs = mul;
 }
 
 static void pnv_pci_ioda_fixup_sriov(struct pci_bus *bus)

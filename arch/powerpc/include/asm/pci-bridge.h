@@ -177,6 +177,8 @@ struct pci_dn {
 	u16     vfs;			/* number of VFs IOV BAR expended */
 	u16     vf_pes;
 	int     offset;
+#define M64_PER_IOV 4
+	int     m64_per_iov;
 #define IODA_INVALID_M64        (-1)
 	int     m64_wins[PCI_SRIOV_NUM_BARS];
 #endif /* CONFIG_PCI_IOV */
