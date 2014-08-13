@@ -296,6 +296,8 @@ kvm_start_guest:
 	/* if we have no vcpu to run, go back to sleep */
 	beq	kvm_no_guest
 
+kvm_secondary_got_guest:
+
 	/* Set HSTATE_DSCR(r13) to something sensible */
 	LOAD_REG_ADDR(r6, dscr_default)
 	ld	r6, 0(r6)
@@ -324,19 +326,44 @@ kvm_start_guest:
 
 /*
  * At this point we have finished executing in the guest.
+ * We need to wait for hwthread_req to become zero, since
+ * we may not turn on the MMU while hwthread_req is non-zero.
+ * While waiting we also need to check if we get given a vcpu to run.
+ */
+kvm_no_guest:
+	lbz	r3, HSTATE_HWTHREAD_REQ(r13)
+	cmpwi	r3, 0
+	bne	53f
+	HMT_MEDIUM
+	li	r0, KVM_HWTHREAD_IN_KERNEL
+	stb	r0, HSTATE_HWTHREAD_STATE(r13)
+	/* need to recheck hwthread_req after a barrier, to avoid race */
+	sync
+	lbz	r3, HSTATE_HWTHREAD_REQ(r13)
+	cmpwi	r3, 0
+	bne	54f
+/*
  * We jump to power7_wakeup_loss, which will return to the caller
  * of power7_nap in the powernv cpu offline loop.  The value we
  * put in r3 becomes the return value for power7_nap.
  */
-kvm_no_guest:
-	li	r0, KVM_HWTHREAD_IN_KERNEL
-	stb	r0, HSTATE_HWTHREAD_STATE(r13)
 	li	r3, LPCR_PECE0
 	mfspr	r4, SPRN_LPCR
 	rlwimi	r4, r3, 0, LPCR_PECE0 | LPCR_PECE1
 	mtspr	SPRN_LPCR, r4
 	li	r3, 0
 	b	.power7_wakeup_loss
+
+53:	HMT_LOW
+	ld	r4, HSTATE_KVM_VCPU(r13)
+	cmpdi	r4, 0
+	beq	kvm_no_guest
+	HMT_MEDIUM
+	b	kvm_secondary_got_guest
+
+54:	li	r0, KVM_HWTHREAD_IN_KVM
+	stb	r0, HSTATE_HWTHREAD_STATE(r13)
+	b	kvm_no_guest
 
 /******************************************************************************
  *                                                                            *
