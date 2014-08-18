@@ -87,10 +87,8 @@
  */
 #define EEH_MAX_FAILS	2100000
 
-/* All in milliseconds */
-#define EEH_PE_STATUS_WAIT_TIME		(5 * 60 * 1000)
-#define EEH_PE_RESET_HOLD_TIME		250
-#define EEH_PE_RESET_SETTLE_TIME	1800
+/* Time to wait for a PCI slot to report status, in milliseconds */
+#define PCI_BUS_RESET_WAIT_MSEC (5*60*1000)
 
 /*
  * EEH probe mode support, which is part of the flags,
@@ -604,7 +602,7 @@ int eeh_pci_enable(struct eeh_pe *pe, int function)
 			__func__, function, pe->phb->global_number,
 			pe->addr, rc);
 
-	rc = eeh_ops->wait_state(pe, EEH_PE_STATUS_WAIT_TIME);
+	rc = eeh_ops->wait_state(pe, PCI_BUS_RESET_WAIT_MSEC);
 	if (rc <= 0)
 		return rc;
 
@@ -725,7 +723,7 @@ int eeh_reset_pe(struct eeh_pe *pe)
 		 * EEH_PE_ISOLATED is expected to be removed after
 		 * BAR restore.
 		 */
-		rc = eeh_ops->wait_state(pe, EEH_PE_STATUS_WAIT_TIME);
+		rc = eeh_ops->wait_state(pe, PCI_BUS_RESET_WAIT_MSEC);
 		if ((rc & flags) == flags)
 			return 0;
 
