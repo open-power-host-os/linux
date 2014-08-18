@@ -43,6 +43,9 @@
 #include "powernv.h"
 #include "pci.h"
 
+/* 256M DMA window, 4K TCE pages, 8 bytes TCE */
+#define TCE32_TABLE_SIZE	((0x10000000 / 0x1000) * 8)
+
 #ifdef CONFIG_PCI_IOV
 #define VF_PE_LOG						\
 	else if (pe->flags & PNV_IODA_PE_VF)                    \
@@ -519,6 +522,7 @@ static struct pnv_ioda_pe *pnv_ioda_get_pe(struct pci_dev *dev)
 }
 #endif /* CONFIG_PCI_MSI */
 
+#ifdef CONFIG_PCI_IOV
 static int pnv_ioda_deconfigure_pe(struct pnv_phb *phb, struct pnv_ioda_pe *pe)
 {
 	struct pci_dev *parent;
@@ -555,11 +559,9 @@ static int pnv_ioda_deconfigure_pe(struct pnv_phb *phb, struct pnv_ioda_pe *pe)
 		}
 		rid_end = pe->rid + (count << 8);
 	} else {
-#ifdef CONFIG_PCI_IOV
 		if (pe->flags & PNV_IODA_PE_VF)
 			parent = pe->parent_dev;
 		else
-#endif /* CONFIG_PCI_IOV */
 			parent = pe->pdev->bus->self;
 		bcomp = OpalPciBusAll;
 		dcomp = OPAL_COMPARE_RID_DEVICE_NUMBER;
@@ -607,12 +609,11 @@ static int pnv_ioda_deconfigure_pe(struct pnv_phb *phb, struct pnv_ioda_pe *pe)
 
 	pe->pbus = NULL;
 	pe->pdev = NULL;
-#ifdef CONFIG_PCI_IOV
 	pe->parent_dev = NULL;
-#endif /* CONFIG_PCI_IOV */
 
 	return 0;
 }
+#endif /* CONFIG_PCI_IOV */
 
 static int pnv_ioda_configure_pe(struct pnv_phb *phb, struct pnv_ioda_pe *pe)
 {
@@ -1122,8 +1123,6 @@ m64_failed:
 	return -EBUSY;
 }
 
-/* 256M DMA window, 4K TCE pages, 8 bytes TCE */
-#define TCE32_TABLE_SIZE	((0x10000000 / 0x1000) * 8)
 static void pnv_pci_ioda2_release_dma_pe(struct pci_dev *dev, struct pnv_ioda_pe *pe)
 {
 	struct pci_bus        *bus;
@@ -2498,17 +2497,20 @@ static int pnv_pci_enable_device_hook(struct pci_dev *dev)
 	if (!pdn || pdn->pe_number == IODA_INVALID_PE)
 		return -EINVAL;
 
+#ifdef CONFIG_PCI_IOV
 	if (dev->is_physfn)
 		pnv_pci_sriov_enable(dev, pci_sriov_get_totalvfs(dev));
+#endif
+
 	return 0;
 }
 
 static void pnv_pci_disable_device_hook(struct pci_dev *dev)
 {
+#ifdef CONFIG_PCI_IOV
 	if (dev->is_physfn)
 		pnv_pci_sriov_disable(dev);
-
-	return;
+#endif
 }
 
 static u32 pnv_ioda_bdfn_to_pe(struct pnv_phb *phb, struct pci_bus *bus,

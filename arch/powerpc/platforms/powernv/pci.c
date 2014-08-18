@@ -944,6 +944,7 @@ static int __init tce_iommu_bus_notifier_init(void)
 
 subsys_initcall_sync(tce_iommu_bus_notifier_init);
 
+#ifdef CONFIG_PCI_IOV
 static void pnv_sriov_final_fixup(struct pci_dev *dev)
 {
 	struct resource *res;
@@ -960,3 +961,4 @@ static void pnv_sriov_final_fixup(struct pci_dev *dev)
 	}
 }
 DECLARE_PCI_FIXUP_FINAL(PCI_ANY_ID, PCI_ANY_ID, pnv_sriov_final_fixup);
+#endif /* CONFIG_PCI_IOV */

@@ -139,6 +139,7 @@ struct pci_dn *pci_get_pdn(struct pci_dev *pdev)
 	return NULL;
 }
 
+#ifdef CONFIG_PCI_IOV
 static struct pci_dn *add_one_dev_pci_info(struct pci_dn *parent,
 					   struct pci_dev *pdev,
 					   int busno, int devfn)
@@ -175,6 +176,7 @@ static struct pci_dn *add_one_dev_pci_info(struct pci_dn *parent,
 
 	return pdn;
 }
+#endif /* CONFIG_PCI_IOV */
 
 struct pci_dn *add_dev_pci_info(struct pci_dev *pdev)
 {
