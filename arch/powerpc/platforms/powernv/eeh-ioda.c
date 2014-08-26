@@ -674,6 +674,43 @@ static int ioda_eeh_configure_bridge(struct eeh_pe *pe)
 	return 0;
 }
 
+static int ioda_eeh_err_inject(struct eeh_pe *pe, int type, int function,
+			       unsigned long addr, unsigned long mask)
+{
+	struct pci_controller *hose = pe->phb;
+	struct pnv_phb *phb = hose->private_data;
+	s64 ret;
+
+	/* Sanity check on error type */
+	if (type < OpalErrinjctTypeIoaBusError   ||
+	    type > OpalErrinjctTypeIoaBusError64 ||
+	    function < OpalEjtIoaLoadMemAddr     ||
+	    function > OpalEjtIoaDmaWriteMemTarget) {
+		pr_warn("%s: Invalid error type %d-%d\n",
+			__func__, type, function);
+		return -ERANGE;
+	}
+
+	/* Firmware supports error injection ? */
+	ret = opal_check_token(OPAL_PCI_ERR_INJCT);
+	if (ret != OPAL_TOKEN_PRESENT) {
+		pr_warn("%s: Firmware not support error injection (%lld)\n",
+			__func__, ret);
+		return -ENXIO;
+	}
+
+	/* Do error injection */
+	ret = opal_pci_err_inject(phb->opal_id, pe->addr,
+				  type, function, addr, mask);
+	if (ret != OPAL_SUCCESS) {
+		pr_warn("%s: Failure %lld injecting error to PHB#%x-PE#%x\n",
+			__func__, ret, hose->global_number, pe->addr);
+		return -EIO;
+	}
+
+	return 0;
+}
+
 static void ioda_eeh_hub_diag_common(struct OpalIoP7IOCErrorData *data)
 {
 	/* GEM */
@@ -996,5 +1033,6 @@ struct pnv_eeh_ops ioda_eeh_ops = {
 	.reset			= ioda_eeh_reset,
 	.get_log		= ioda_eeh_get_log,
 	.configure_bridge	= ioda_eeh_configure_bridge,
+	.err_inject		= ioda_eeh_err_inject,
 	.next_error		= ioda_eeh_next_error
 };
