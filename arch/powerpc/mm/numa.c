@@ -534,7 +534,7 @@ static int of_drconf_to_nid_single(struct of_drconf_cell *drmem,
  */
 static int __cpuinit numa_setup_cpu(unsigned long lcpu)
 {
-	int nid;
+	int nid = -1;
 	struct device_node *cpu;
 
 	/*
@@ -551,19 +551,21 @@ static int __cpuinit numa_setup_cpu(unsigned long lcpu)
 
 	if (!cpu) {
 		WARN_ON(1);
-		nid = 0;
-		goto out;
+		if (cpu_present(lcpu))
+			goto out_present;
+		else
+			goto out;
 	}
 
 	nid = of_node_to_nid_single(cpu);
 
+out_present:
 	if (nid < 0 || !node_online(nid))
 		nid = first_online_node;
-out:
+
 	map_cpu_to_node(lcpu, nid);
-
 	of_node_put(cpu);
-
+out:
 	return nid;
 }
 
