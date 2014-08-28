@@ -95,18 +95,23 @@ static void put_compound_page(struct page *page)
 			 * still hot on arches that do not support
 			 * this_cpu_cmpxchg_double().
 			 */
-			if (PageSlab(page_head) || PageHeadHuge(page_head)) {
+			if (!__compound_tail_refcounted(page_head)) {
 				if (likely(PageTail(page))) {
 					/*
 					 * __split_huge_page_refcount
 					 * cannot race here.
 					 */
 					VM_BUG_ON(!PageHead(page_head));
-					atomic_dec(&page->_mapcount);
+					VM_BUG_ON(page_mapcount(page) != 0);
+					/*
+					 * drop the get_page_unless_zero ref count
+					 */
 					if (put_page_testzero(page_head))
 						VM_BUG_ON(1);
-					if (put_page_testzero(page_head))
+					if (put_page_testzero(page_head)) {
+						VM_BUG_ON(PageSlab(page_head));
 						__put_compound_page(page_head);
+					}
 					return;
 				} else
 					/*
