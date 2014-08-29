@@ -2393,7 +2393,6 @@ machine_check_realmode:
 	mr	r3, r9		/* get vcpu pointer */
 	bl	.kvmppc_realmode_machine_check
 	nop
-	cmpdi	r3, 0		/* Did we handle MCE ? */
 	ld	r9, HSTATE_KVM_VCPU(r13)
 	li	r12, BOOK3S_INTERRUPT_MACHINE_CHECK
 	/*
@@ -2406,12 +2405,18 @@ machine_check_realmode:
 	 * The old code used to return to host for unhandled errors which
 	 * was causing guest to hang with soft lockups inside guest and
 	 * makes it difficult to recover guest instance.
+	 *
+	 * If we receive machine check with MSR(RI)=0 then deliver it to
+	 * guest as machine check causing guest to crash.
 	 */
 	ld	r10, VCPU_PC(r9)
 	ld	r11, VCPU_MSR(r9)
+	andi.	r0, r11, MSR_RI		/* check for unrecoverable exception */
+	beq	1f			/* Deliver a machine check to guest */
+	cmpdi	r3, 0			/* Did we handle MCE ? */
 	bne	2f	/* Continue guest execution. */
 	/* If not, deliver a machine check.  SRR0/1 are already set */
-	li	r10, BOOK3S_INTERRUPT_MACHINE_CHECK
+1:	li	r10, BOOK3S_INTERRUPT_MACHINE_CHECK
 	bl	kvmppc_msr_interrupt
 2:	b	fast_interrupt_c_return
 
