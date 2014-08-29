@@ -127,7 +127,8 @@ static long kvmppc_stt_npages(unsigned long window_size)
 static long kvmppc_account_memlimit(long npages, bool inc)
 {
 	long stt_pages = ALIGN(sizeof(struct kvmppc_spapr_tce_table) +
-			(abs(npages) * sizeof(struct page *)), PAGE_SIZE);
+			(abs(npages) * sizeof(struct page *)), PAGE_SIZE) /
+			PAGE_SIZE;
 
 	npages += stt_pages;
 	if (inc)
