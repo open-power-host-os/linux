@@ -2385,9 +2385,8 @@ machine_check_realmode:
 	 */
 	ld	r10, VCPU_PC(r9)
 	ld	r11, VCPU_MSR(r9)
-	andi.	r10, r11, MSR_RI	/* check for unrecoverable exception */
+	andi.	r0, r11, MSR_RI		/* check for unrecoverable exception */
 	beq	1f			/* Deliver a machine check to guest */
-	ld	r10, VCPU_PC(r9)
 	cmpdi	r3, 0			/* Did we handle MCE ? */
 	bne	2f	/* Continue guest execution. */
 	/* If not, deliver a machine check.  SRR0/1 are already set */
