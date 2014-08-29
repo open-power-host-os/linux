@@ -147,24 +147,6 @@ void kvmppc_tce_put(struct kvmppc_spapr_tce_table *tt,
 EXPORT_SYMBOL_GPL(kvmppc_tce_put);
 
 #ifdef CONFIG_KVM_BOOK3S_HV_POSSIBLE
-
-static unsigned long kvmppc_rm_hugepage_gpa_to_hpa(
-		struct kvm_arch *ka,
-		unsigned long gpa)
-{
-	struct kvmppc_spapr_iommu_hugepage *hp;
-	const unsigned key = KVMPPC_SPAPR_HUGEPAGE_HASH(gpa);
-
-	hash_for_each_possible_rcu_notrace(ka->hugepages_hash_tab, hp,
-			hash_node, key) {
-		if ((gpa < hp->gpa) || (gpa >= hp->gpa + hp->size))
-			continue;
-		return hp->hpa + (gpa & (hp->size - 1));
-	}
-
-	return ERROR_ADDR;
-}
-
 /*
  * Converts guest physical address to host physical address.
  *
@@ -184,14 +166,6 @@ static unsigned long kvmppc_rm_gpa_to_hpa_and_get(struct kvm_vcpu *vcpu,
 	unsigned long gfn = gpa >> PAGE_SHIFT;
 	unsigned shift = 0;
 
-	/* Check if it is a hugepage */
-	hpa = kvmppc_rm_hugepage_gpa_to_hpa(&vcpu->kvm->arch, gpa);
-	if (hpa != ERROR_ADDR) {
-		*pg = NULL; /* Tell the caller not to put page */
-		return hpa;
-	}
-
-	/* System page size case */
 	memslot = search_memslots(kvm_memslots_raw(vcpu->kvm), gfn);
 	if (!memslot)
 		return ERROR_ADDR;

@@ -118,106 +118,6 @@ struct iommu_group *find_group_by_liobn(struct kvm *kvm, unsigned long liobn)
 	return grp;
 }
 
-/*
- * API to support huge pages in real mode
- */
-void kvmppc_iommu_hugepages_init(struct kvm_arch *ka)
-{
-	spin_lock_init(&ka->hugepages_write_lock);
-	hash_init(ka->hugepages_hash_tab);
-}
-EXPORT_SYMBOL_GPL(kvmppc_iommu_hugepages_init);
-
-void kvmppc_iommu_hugepages_cleanup(struct kvm_arch *ka)
-{
-	int bkt;
-	struct kvmppc_spapr_iommu_hugepage *hp;
-	struct hlist_node *tmp;
-
-	spin_lock(&ka->hugepages_write_lock);
-	hash_for_each_safe(ka->hugepages_hash_tab, bkt, tmp, hp, hash_node) {
-		pr_debug("Release HP #%u gpa=%lx hpa=%lx size=%ld\n",
-				bkt, hp->gpa, hp->hpa, hp->size);
-		hlist_del_rcu(&hp->hash_node);
-
-		put_page(hp->page);
-		kfree(hp);
-	}
-	spin_unlock(&ka->hugepages_write_lock);
-}
-EXPORT_SYMBOL_GPL(kvmppc_iommu_hugepages_cleanup);
-
-/* Returns true if a page with GPA is already in the hash table */
-static bool kvmppc_iommu_hugepage_lookup_gpa(struct kvm_arch *ka,
-		unsigned long gpa)
-{
-	struct kvmppc_spapr_iommu_hugepage *hp;
-	const unsigned key = KVMPPC_SPAPR_HUGEPAGE_HASH(gpa);
-
-	hash_for_each_possible_rcu(ka->hugepages_hash_tab, hp,
-			hash_node, key) {
-		if ((gpa < hp->gpa) || (gpa >= hp->gpa + hp->size))
-			continue;
-
-		return true;
-	}
-
-	return false;
-}
-
-/* Returns true if a page with GPA has been added to the hash table */
-static bool kvmppc_iommu_hugepage_add(struct kvm_vcpu *vcpu,
-		unsigned long hva, unsigned long gpa)
-{
-	struct kvm_arch *ka = &vcpu->kvm->arch;
-	struct kvmppc_spapr_iommu_hugepage *hp;
-	const unsigned key = KVMPPC_SPAPR_HUGEPAGE_HASH(gpa);
-	pte_t *ptep;
-	unsigned int shift = 0;
-	static const int is_write = 1;
-
-	ptep = find_linux_pte_or_hugepte(vcpu->arch.pgdir, hva, &shift);
-	WARN_ON(!ptep);
-
-	if (!ptep || (shift <= PAGE_SHIFT))
-		return false;
-
-	hp = kzalloc(sizeof(*hp), GFP_KERNEL);
-	if (!hp)
-		return false;
-
-	hp->gpa = gpa & ~((1 << shift) - 1);
-	hp->hpa = (pte_pfn(*ptep) << PAGE_SHIFT);
-	hp->size = 1 << shift;
-
-	if (get_user_pages_fast(hva & ~(hp->size - 1), 1,
-			is_write, &hp->page) != 1) {
-		kfree(hp);
-		return false;
-	}
-	hash_add_rcu(ka->hugepages_hash_tab, &hp->hash_node, key);
-
-	return true;
-}
-
-/*
- * Returns true if a page with GPA is in the hash table or
- * has just been added.
- */
-static bool kvmppc_iommu_hugepage_try_add(struct kvm_vcpu *vcpu,
-		unsigned long hva, unsigned long gpa)
-{
-	struct kvm_arch *ka = &vcpu->kvm->arch;
-	bool ret;
-
-	spin_lock(&ka->hugepages_write_lock);
-	ret = kvmppc_iommu_hugepage_lookup_gpa(ka, gpa) ||
-			kvmppc_iommu_hugepage_add(vcpu, hva, gpa);
-	spin_unlock(&ka->hugepages_write_lock);
-
-	return ret;
-}
-
 static long kvmppc_stt_npages(unsigned long window_size)
 {
 	return ALIGN((window_size >> SPAPR_TCE_SHIFT)
@@ -377,18 +277,6 @@ static void __user *kvmppc_gpa_to_hva_and_get(struct kvm_vcpu *vcpu,
 		*phpa = __pa((unsigned long) page_address(*pg)) |
 				(hva & ~PAGE_MASK);
 
-	if (PageCompound(*pg)) {
-		/*
-		 * Check if this GPA is taken care of by the hash table.
-		 * If this is the case, do not show the caller page struct
-		 * address as huge pages will be released at KVM exit.
-		 */
-		if (kvmppc_iommu_hugepage_try_add(vcpu, hva, gpa)) {
-			put_page(*pg);
-			*pg = NULL;
-		}
-	}
-
 	return (void *) hva;
 }
 
@@ -436,7 +324,7 @@ long kvmppc_h_put_tce_iommu(struct kvm_vcpu *vcpu,
 	if (!iommu_tce_build(tbl, ioba >> IOMMU_PAGE_SHIFT_4K, &hpa, 1, false))
 		return H_SUCCESS;
 
-	if (pg && !PageCompound(pg))
+	if (pg)
 		put_page(pg);
 
 	return H_HARDWARE;
@@ -485,7 +373,7 @@ putpages_flush_exit:
 	for (--i; i >= 0; --i) {
 		struct page *pg;
 		pg = pfn_to_page(vcpu->arch.tce_tmp_hpas[i] >> PAGE_SHIFT);
-		if (pg && !PageCompound(pg))
+		if (pg)
 			put_page(pg);
 	}
 

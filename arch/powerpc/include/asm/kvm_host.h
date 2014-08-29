@@ -210,28 +210,6 @@ struct kvm_rma_info {
 	unsigned long base_pfn;
 };
 
-/*
- * The KVM guest can be backed with 16MB pages.
- * In this case, we cannot do page counting from the real mode
- * as the compound pages are used - they are linked in a list
- * with pointers as virtual addresses which are inaccessible
- * in real mode.
- *
- * The code below keeps a 16MB pages list and uses page struct
- * in real mode if it is already locked in RAM and inserted into
- * the list or switches to the virtual mode where it can be
- * handled in a usual manner.
- */
-#define KVMPPC_SPAPR_HUGEPAGE_HASH(gpa)	hash_32(gpa >> 24, 32)
-
-struct kvmppc_spapr_iommu_hugepage {
-	struct hlist_node hash_node;
-	unsigned long gpa;	/* Guest physical address */
-	unsigned long hpa;	/* Host physical address */
-	struct page *page;	/* page struct of the very first subpage */
-	unsigned long size;	/* Huge page size (always 16MB at the moment) */
-};
-
 #define KVMPPC_SPAPR_IOMMU_GRP_HASH(liobn)	hash_32(liobn, 32)
 
 struct kvmppc_spapr_iommu_grp {
@@ -316,8 +294,6 @@ struct kvm_arch {
 	struct list_head spapr_tce_tables;
 	struct kvmppc_spapr_tce_iommu_device *tcedev;
 	struct list_head rtas_tokens;
-	DECLARE_HASHTABLE(hugepages_hash_tab, ilog2(64));
-	spinlock_t hugepages_write_lock;
 	DECLARE_HASHTABLE(iommu_grp_hash_tab, ilog2(4));
 	spinlock_t iommu_grp_write_lock;
 #endif
