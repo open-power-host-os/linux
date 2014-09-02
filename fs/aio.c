@@ -702,7 +702,7 @@ static long aio_read_events_ring(struct kioctx *ctx,
 				 struct io_event __user *event, long nr)
 {
 	struct aio_ring *ring;
-	unsigned head, pos;
+	unsigned head, tail, pos;
 	long ret = 0;
 	int copy_ret;
 
@@ -710,11 +710,18 @@ static long aio_read_events_ring(struct kioctx *ctx,
 
 	ring = kmap_atomic(ctx->ring_pages[0]);
 	head = ring->head;
+	tail = ring->tail;
 	kunmap_atomic(ring);
 
-	pr_debug("h%u t%u m%u\n", head, ctx->tail, ctx->nr_events);
+	/*
+	 * Ensure that once we've read the current tail pointer, that
+	 * we also see the events that were stored up to the tail.
+	 */
+	smp_rmb();
 
-	if (head == ctx->tail)
+	pr_debug("h%u t%u m%u\n", head, tail, ctx->nr_events);
+
+	if (head == tail)
 		goto out;
 
 	head %= ctx->nr_events;
@@ -724,8 +731,8 @@ static long aio_read_events_ring(struct kioctx *ctx,
 		struct io_event *ev;
 		struct page *page;
 
-		avail = (head <= ctx->tail ? ctx->tail : ctx->nr_events) - head;
-		if (head == ctx->tail)
+		avail = (head <= tail ? tail : ctx->nr_events) - head;
+		if (head == tail)
 			break;
 
 		avail = min(avail, nr - ret);
@@ -756,7 +763,7 @@ static long aio_read_events_ring(struct kioctx *ctx,
 	kunmap_atomic(ring);
 	flush_dcache_page(ctx->ring_pages[0]);
 
-	pr_debug("%li  h%u t%u\n", ret, head, ctx->tail);
+	pr_debug("%li  h%u t%u\n", ret, head, tail);
 out:
 	mutex_unlock(&ctx->ring_lock);
 
