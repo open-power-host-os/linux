@@ -166,7 +166,6 @@ struct pci_dn {
 
 	int	force_32bit_msi:1;
 
-	struct	pci_dev *pcidev;	/* back-pointer to the pci device */
 #ifdef CONFIG_EEH
 	struct eeh_dev *edev;		/* eeh device */
 #endif
