@@ -221,6 +221,16 @@ void remove_dev_pci_info(struct pci_dev *pdev)
 	struct pci_dn *pdn, *tmp;
 	int i;
 
+	/* VF and VF PE is create/released dynamicly, which we need to
+	 * bind/unbind them. Otherwise when re-enable SRIOV, the VF and VF PE
+	 * would be mismatched.
+	 */
+	if (pdev->is_virtfn) {
+		pdn = pci_get_pdn(pdev);
+		pdn->pe_number = IODA_INVALID_PE;
+		return;
+	}
+
 	/* Only support IOV PF for now */
 	if (!pdev->is_physfn)
 		return;
