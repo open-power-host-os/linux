@@ -16,6 +16,7 @@
 #include <linux/init.h>
 #include <linux/memblock.h>
 #include <linux/sizes.h>
+#include <linux/bitops.h>
 
 #include <asm/cputable.h>
 #include <asm/kvm_ppc.h>
@@ -185,6 +186,25 @@ void __init kvm_cma_reserve(void)
 		align_size = max(kvm_rma_pages << PAGE_SHIFT, align_size);
 		kvm_cma_declare_contiguous(selected_size, align_size);
 	}
+}
+
+/*
+ * Real-mode H_CONFER implementation.
+ * We check if we are the only vcpu out of this virtual core
+ * still running in the guest and not ceded.  If so, we pop up
+ * to the virtual-mode implementation; if not, just return to
+ * the guest.
+ */
+long int kvmppc_rm_h_confer(struct kvm_vcpu *vcpu, int target,
+			    unsigned int yield_count)
+{
+	struct kvmppc_vcore *vc = vcpu->arch.vcore;
+	int threads_running = VCORE_ENTRY_COUNT(vc);
+	int threads_ceded = hweight32(vc->napping_threads);
+
+	if (threads_ceded + 1 < threads_running)
+		return H_SUCCESS;
+	return H_TOO_HARD;
 }
 
 int kvmppc_hwrng_present(void)
