@@ -335,6 +335,7 @@ static int powernv_cpufreq_cpu_init(struct cpufreq_policy *policy)
 
 static int powernv_cpufreq_cpu_exit(struct cpufreq_policy *policy)
 {
+	smp_call_function_single(policy->cpu, set_pstate, &powernv_pstate_info.min, 1);
 	cpufreq_frequency_table_put_attr(policy->cpu);
 	return 0;
 }
