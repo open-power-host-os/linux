@@ -606,6 +606,27 @@ static int kvmppc_h_set_mode(struct kvm_vcpu *vcpu, unsigned long mflags,
 	}
 }
 
+static int kvm_arch_vcpu_yield_to(struct kvm_vcpu *target)
+{
+	struct kvmppc_vcore *vcore = target->arch.vcore;
+
+	/*
+	 * We expect to have been called by the real mode handler
+	 * (kvmppc_rm_h_confer()) which would have directly returned
+	 * H_SUCCESS if the source vcore wasn't idle (e.g. if it may
+	 * have useful work to do and should not confer) so we don't
+	 * recheck that here.
+	 */
+
+	spin_lock(&vcore->lock);
+	if (target->arch.state == KVMPPC_VCPU_RUNNABLE &&
+	    vcore->vcore_state != VCORE_INACTIVE)
+		target = vcore->runner;
+	spin_unlock(&vcore->lock);
+
+	return kvm_vcpu_yield_to(target);
+}
+
 int kvmppc_pseries_do_hcall(struct kvm_vcpu *vcpu)
 {
 	unsigned long req = kvmppc_get_gpr(vcpu, 3);
@@ -649,7 +670,7 @@ int kvmppc_pseries_do_hcall(struct kvm_vcpu *vcpu)
 			ret = H_PARAMETER;
 			break;
 		}
-		kvm_vcpu_yield_to(tvcpu);
+		kvm_arch_vcpu_yield_to(tvcpu);
 		break;
 	case H_REGISTER_VPA:
 		ret = do_h_register_vpa(vcpu, kvmppc_get_gpr(vcpu, 4),
