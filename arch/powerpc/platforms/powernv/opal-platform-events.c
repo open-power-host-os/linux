@@ -178,9 +178,20 @@ static ssize_t opal_event_read(struct file *filep,
 		}
 	}
 	spin_unlock_irqrestore(&opal_plat_evt_spinlock, flags);
+
 	if (copy_to_user(buf, &evt->opal_event,
-		sizeof(struct opal_plat_event)))
+		sizeof(struct opal_plat_event))) {
+
+		/*
+		 * Copy to user has failed. The event node had
+		 * been deleted from the list. Lets add it back
+		 * there.
+		 */
+		spin_lock_irqsave(&opal_plat_evt_spinlock, flags);
+		list_add_tail(&evt->link, &opal_event_queue);
+		spin_unlock_irqrestore(&opal_plat_evt_spinlock, flags);
 		return -EFAULT;
+	}
 
 	kfree(evt);
 	return sizeof(struct opal_plat_event);
