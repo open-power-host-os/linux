@@ -146,4 +146,6 @@ OPAL_CALL(opal_config_idle_state,		OPAL_CONFIG_IDLE_STATE);
 OPAL_CALL(opal_slw_set_reg,			OPAL_SLW_SET_REG);
 OPAL_CALL(opal_register_dump_region,		OPAL_REGISTER_DUMP_REGION);
 OPAL_CALL(opal_unregister_dump_region,		OPAL_UNREGISTER_DUMP_REGION);
+OPAL_CALL(opal_tpo_write,			OPAL_WRITE_TPO);
+OPAL_CALL(opal_tpo_read,			OPAL_READ_TPO);
 OPAL_CALL(opal_get_dpo_status,			OPAL_GET_DPO_STATUS);

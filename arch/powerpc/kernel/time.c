@@ -1050,6 +1050,7 @@ void GregorianDay(struct rtc_time * tm)
 
 	tm->tm_wday = day % 7;
 }
+EXPORT_SYMBOL_GPL(GregorianDay);
 
 void to_tm(int tim, struct rtc_time * tm)
 {
