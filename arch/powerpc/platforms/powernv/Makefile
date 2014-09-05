@@ -1,7 +1,7 @@
 obj-y			+= setup.o opal-takeover.o opal-wrappers.o opal.o opal-async.o
 obj-y			+= opal-rtc.o opal-nvram.o opal-lpc.o opal-flash.o opal-sysparam.o
 obj-y			+= rng.o opal-dump.o opal-elog.o opal-sensor.o opal-msglog.o
-obj-y			+= subcore.o subcore-asm.o opal-hmi.o
+obj-y			+= subcore.o subcore-asm.o opal-hmi.o opal-platform-events.o
 
 obj-$(CONFIG_SMP)	+= smp.o
 obj-$(CONFIG_PCI)	+= pci.o pci-p5ioc2.o pci-ioda.o

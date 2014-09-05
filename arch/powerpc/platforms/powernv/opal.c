@@ -582,7 +582,7 @@ static void __init opal_dump_region_init(void)
 }
 static int __init opal_init(void)
 {
-	struct device_node *np, *consoles;
+	struct device_node *np, *consoles, *epow;
 	const u32 *irqs;
 	int rc, i, irqlen;
 
@@ -604,6 +604,12 @@ static int __init opal_init(void)
 			of_platform_device_create(np, NULL, NULL);
 		}
 		of_node_put(consoles);
+	}
+
+	epow = of_find_node_by_path("/ibm,opal/epow");
+	if (epow) {
+		of_platform_device_create(epow, "opal_event", NULL);
+		of_node_put(epow);
 	}
 
 	/* Find all OPAL interrupts and request them */
