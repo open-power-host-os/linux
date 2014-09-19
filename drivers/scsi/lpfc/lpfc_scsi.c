@@ -4469,6 +4469,8 @@ lpfc_scsi_prep_task_mgmt_cmd(struct lpfc_vport *vport,
 		piocb->ulpFCP2Rcvy = 1;
 	}
 	piocb->ulpClass = (ndlp->nlp_fcp_info & 0x0f);
+	piocb->ulpPU = 0;
+	piocb->un.fcpi.fcpi_parm = 0;
 
 	/* ulpTimeout is only one byte */
 	if (lpfc_cmd->timeout > 0xff) {
