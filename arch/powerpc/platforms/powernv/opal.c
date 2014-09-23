@@ -157,6 +157,24 @@ static int __init opal_register_exception_handlers(void)
 	 * fwnmi area at 0x7000 to provide the glue space to OPAL
 	 */
 	glue = 0x7000;
+
+	/* Check if we are running on newer firmware that exports
+	 * OPAL_HANDLE_HMI token. If yes, then don't ask opal to patch
+	 * HMI interrupt and we catch it directly in Linux kernel.
+	 *
+	 * For older firmware we will fallback to old behavior and
+	 * let OPAL patch the HMI vector and handle it inside OPAL
+	 * firmware.
+	 */
+	if (opal_check_token(OPAL_HANDLE_HMI) != OPAL_TOKEN_PRESENT) {
+		/* We are on old firmware. fallback to old behavior. */
+		pr_info("%s: Falling back to old HMI handling behavior.\n",
+			__func__);
+		opal_register_exception_handler(
+				OPAL_HYPERVISOR_MAINTENANCE_HANDLER,
+				0, glue);
+		glue += 128;
+	}
 	opal_register_exception_handler(OPAL_SOFTPATCH_HANDLER, 0, glue);
 
 	return 0;
