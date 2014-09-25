@@ -949,7 +949,7 @@ BEGIN_FTR_SECTION
 	MACHINE_CHECK_HANDLER_WINDUP
 	GET_PACA(r13)
 	ld	r1,PACAR1(r13)
-	b	.power7_enter_nap_mode
+	b	power7_enter_nap_mode
 4:
 #endif
 	/*
