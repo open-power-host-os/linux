@@ -627,10 +627,24 @@ static int kvm_arch_vcpu_yield_to(struct kvm_vcpu *target)
 	return kvm_vcpu_yield_to(target);
 }
 
+static int kvmppc_get_yield_count(struct kvm_vcpu *vcpu)
+{
+	int yield_count = 0;
+	struct lppaca *lppaca;
+
+	spin_lock(&vcpu->arch.vpa_update_lock);
+	lppaca = (struct lppaca *)vcpu->arch.vpa.pinned_addr;
+	if (lppaca)
+		yield_count = lppaca->yield_count;
+	spin_unlock(&vcpu->arch.vpa_update_lock);
+	return yield_count;
+}
+
 int kvmppc_pseries_do_hcall(struct kvm_vcpu *vcpu)
 {
 	unsigned long req = kvmppc_get_gpr(vcpu, 3);
 	unsigned long target, ret = H_SUCCESS;
+	int yield_count;
 	struct kvm_vcpu *tvcpu;
 	int idx, rc;
 
@@ -670,6 +684,9 @@ int kvmppc_pseries_do_hcall(struct kvm_vcpu *vcpu)
 			ret = H_PARAMETER;
 			break;
 		}
+		yield_count = kvmppc_get_gpr(vcpu, 5);
+		if (kvmppc_get_yield_count(tvcpu) != yield_count)
+			break;
 		kvm_arch_vcpu_yield_to(tvcpu);
 		break;
 	case H_REGISTER_VPA:
@@ -1673,6 +1690,7 @@ static void kvmppc_run_core(struct kvmppc_vcore *vc)
 	vc->vcore_state = VCORE_STARTING;
 	vc->in_guest = 0;
 	vc->napping_threads = 0;
+	vc->conferring_threads = 0;
 	vc->real_mode_threads = 0;
 
 	/*

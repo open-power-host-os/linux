@@ -199,12 +199,24 @@ long int kvmppc_rm_h_confer(struct kvm_vcpu *vcpu, int target,
 			    unsigned int yield_count)
 {
 	struct kvmppc_vcore *vc = vcpu->arch.vcore;
-	int threads_running = VCORE_ENTRY_COUNT(vc);
-	int threads_ceded = hweight32(vc->napping_threads);
+	int threads_running;
+	int threads_ceded;
+	int threads_conferring;
+	u64 stop = get_tb() + 10 * tb_ticks_per_usec;
+	int rv = H_SUCCESS; /* => don't yield */
 
-	if (threads_ceded + 1 < threads_running)
-		return H_SUCCESS;
-	return H_TOO_HARD;
+	set_bit(vcpu->arch.ptid, &vc->conferring_threads);
+	while ((get_tb() < stop) && (VCORE_EXIT_COUNT(vc) == 0)) {
+		threads_running = VCORE_ENTRY_COUNT(vc);
+		threads_ceded = hweight32(vc->napping_threads);
+		threads_conferring = hweight32(vc->conferring_threads);
+		if (threads_ceded + threads_conferring >= threads_running) {
+			rv = H_TOO_HARD; /* => do yield */
+			break;
+		}
+	}
+	clear_bit(vcpu->arch.ptid, &vc->conferring_threads);
+	return rv;
 }
 
 int kvmppc_hwrng_present(void)
