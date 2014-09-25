@@ -206,8 +206,12 @@ static int opal_rtc_probe(struct platform_device *pdev)
 
 	rtc = devm_rtc_device_register(&pdev->dev, DRVNAME, &opal_rtc_ops,
 				       THIS_MODULE);
+	if (IS_ERR(rtc))
+		return PTR_ERR(rtc);
 
-	return PTR_RET(rtc);
+	rtc->uie_unsupported = 1;
+
+	return 0;
 }
 
 static struct of_device_id opal_rtc_match[] = {
