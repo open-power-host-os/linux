@@ -371,10 +371,9 @@ static void fetch_dpo_timeout(int64_t *dpo_timeout)
 	int rc;
 
 	rc = opal_get_dpo_status(dpo_timeout);
-	if (rc != OPAL_SUCCESS) {
-		pr_err("DPO: OPAL call failed\n");
+	if (rc == OPAL_WRONG_STATE) {
+		pr_info("DPO: Not initiated by OPAL\n");
 		*dpo_timeout = 0;
-		return;
 	}
 }
 
