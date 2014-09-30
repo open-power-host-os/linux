@@ -31,6 +31,7 @@
 #include <linux/spinlock.h>
 #include <linux/page-flags.h>
 #include <linux/srcu.h>
+#include <linux/debugfs.h>
 
 #include <asm/reg.h>
 #include <asm/cputable.h>
@@ -2441,6 +2442,7 @@ static int kvmppc_hv_setup_htab_rma(struct kvm_vcpu *vcpu)
 static int kvmppc_core_init_vm_hv(struct kvm *kvm)
 {
 	unsigned long lpcr, lpid;
+	char buf[32];
 
 	/* Allocate the guest's logical partition ID */
 
@@ -2491,6 +2493,14 @@ static int kvmppc_core_init_vm_hv(struct kvm *kvm)
 	 */
 	kvm_hv_vm_activated();
 
+	/*
+	 * Create a debugfs directory for the VM
+	 */
+	sprintf(buf, "vm%d", current->pid);
+	kvm->arch.debugfs_dir = debugfs_create_dir(buf, kvm_debugfs_dir);
+	if (!IS_ERR_OR_NULL(kvm->arch.debugfs_dir))
+		kvmppc_mmu_debugfs_init(kvm);
+
 	return 0;
 }
 
@@ -2511,6 +2521,8 @@ static void kvmppc_free_vcores(struct kvm *kvm)
 
 static void kvmppc_core_destroy_vm_hv(struct kvm *kvm)
 {
+	debugfs_remove_recursive(kvm->arch.debugfs_dir);
+
 	kvm_hv_vm_deactivated();
 
 	kvmppc_free_vcores(kvm);
