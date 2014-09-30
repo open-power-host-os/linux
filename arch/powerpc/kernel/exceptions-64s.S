@@ -306,15 +306,26 @@ decrementer_pSeries:
 	. = 0xc00
 	.globl	system_call_pSeries
 system_call_pSeries:
-	HMT_MEDIUM
+	/*
+	 * Switch to HMT medium priority on systems where we don't support
+	 * saving/restoring PPR or if CONFIG_KVM_BOOK3S_64_HANDLER is not
+	 * set. Otherwise, we save PPR in the CONFIG_KVM_BOOK3S_64_HANDLER
+	 * path before switching priority.
+	 */
 #ifdef CONFIG_KVM_BOOK3S_64_HANDLER
+	HMT_MEDIUM_PPR_DISCARD
 	SET_SCRATCH0(r13)
 	GET_PACA(r13)
 	std	r9,PACA_EXGEN+EX_R9(r13)
+	OPT_GET_SPR(r9, SPRN_PPR, CPU_FTR_HAS_PPR);
+	HMT_MEDIUM;
 	std	r10,PACA_EXGEN+EX_R10(r13)
+	OPT_SAVE_REG_TO_PACA(PACA_EXGEN+EX_PPR, r9, CPU_FTR_HAS_PPR);
 	mfcr	r9
 	KVMTEST(0xc00)
 	GET_SCRATCH0(r13)
+#else
+	HMT_MEDIUM;
 #endif
 	SYSCALL_PSERIES_1
 	SYSCALL_PSERIES_2_RFID
