@@ -1092,7 +1092,7 @@ int iommu_tce_build(struct iommu_table *tbl, unsigned long entry,
 			ret = tbl->it_ops->exchange_rm(tbl, entry, 1, hva,
 					&oldtce, dir, NULL);
 			if (oldtce & (TCE_PCI_READ | TCE_PCI_WRITE)) {
-				struct page *p = pfn_to_page(oldtce >>
+				struct page *p = pfn_to_page(__pa(oldtce) >>
 						PAGE_SHIFT);
 
 				if (oldtce & TCE_PCI_WRITE)
@@ -1100,7 +1100,7 @@ int iommu_tce_build(struct iommu_table *tbl, unsigned long entry,
 				if (!put_page_unless_one(p)) {
 					ret = tbl->it_ops->set(tbl, entry, 1,
 							(unsigned long)
-							__va(oldtce),
+							oldtce,
 							dir, NULL);
 					ret = -EAGAIN;
 				}
@@ -1109,7 +1109,7 @@ int iommu_tce_build(struct iommu_table *tbl, unsigned long entry,
 			ret = tbl->it_ops->exchange(tbl, entry, 1, hva,
 					&oldtce, dir, NULL);
 			if (oldtce & (TCE_PCI_READ | TCE_PCI_WRITE)) {
-				struct page *p = pfn_to_page(oldtce >>
+				struct page *p = pfn_to_page(__pa(oldtce) >>
 						PAGE_SHIFT);
 
 				if (oldtce & TCE_PCI_WRITE)
