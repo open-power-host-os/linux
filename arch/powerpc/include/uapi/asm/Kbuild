@@ -44,3 +44,4 @@ header-y += tm.h
 header-y += types.h
 header-y += ucontext.h
 header-y += unistd.h
+header-y += opal_platform_events.h
