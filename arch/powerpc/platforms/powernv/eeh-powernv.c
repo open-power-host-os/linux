@@ -383,6 +383,45 @@ static int powernv_eeh_err_inject(struct eeh_pe *pe, int type, int function,
 	return ret;
 }
 
+static inline bool powernv_eeh_cfg_blocked(struct device_node *dn)
+{
+	struct eeh_dev *edev = of_node_to_eeh_dev(dn);
+
+	if (!edev || !edev->pe)
+		return false;
+
+	if (edev->pe->state & EEH_PE_CFG_BLOCKED)
+		return true;
+
+	return false;
+}
+
+static int powernv_eeh_read_config(struct device_node *dn,
+				   int where, int size, u32 *val)
+{
+	*val = 0xFFFFFFFF;
+
+	if (!dn || !PCI_DN(dn))
+		return PCIBIOS_DEVICE_NOT_FOUND;
+
+	if (powernv_eeh_cfg_blocked(dn))
+		return PCIBIOS_SET_FAILED;
+
+	return pnv_pci_cfg_read(PCI_DN(dn), where, size, val);
+}
+
+static int powernv_eeh_write_config(struct device_node *dn,
+				    int where, int size, u32 val)
+{
+	if (!dn || !PCI_DN(dn))
+		return PCIBIOS_DEVICE_NOT_FOUND;
+
+	if (powernv_eeh_cfg_blocked(dn))
+		return PCIBIOS_SET_FAILED;
+
+	return pnv_pci_cfg_write(PCI_DN(dn), where, size, val);
+}
+
 /**
  * powernv_eeh_next_error - Retrieve next EEH error to handle
  * @pe: Affected PE
@@ -403,26 +442,6 @@ static int powernv_eeh_next_error(struct eeh_pe **pe)
 		return phb->eeh_ops->next_error(pe);
 
 	return -EEXIST;
-}
-
-static int powernv_eeh_cfg_read(struct device_node *dn,
-				int where, int size, u32 *val)
-{
-	struct pci_dn *pdn = PCI_DN(dn);
-
-	if (!pdn)
-		return PCIBIOS_DEVICE_NOT_FOUND;
-	return pnv_pci_cfg_read(pdn, where, size, val);
-}
-
-static int powernv_eeh_cfg_write(struct device_node *dn,
-				 int where, int size, u32 val)
-{
-	struct pci_dn *pdn = PCI_DN(dn);
-
-	if (!pdn)
-		return PCIBIOS_DEVICE_NOT_FOUND;
-	return pnv_pci_cfg_write(pdn, where, size, val);
 }
 
 static int powernv_eeh_restore_config(struct device_node *dn)
@@ -460,8 +479,8 @@ static struct eeh_ops powernv_eeh_ops = {
 	.get_log                = powernv_eeh_get_log,
 	.configure_bridge       = powernv_eeh_configure_bridge,
 	.err_inject		= powernv_eeh_err_inject,
-	.read_config            = powernv_eeh_cfg_read,
-	.write_config           = powernv_eeh_cfg_write,
+	.read_config            = powernv_eeh_read_config,
+	.write_config           = powernv_eeh_write_config,
 	.next_error		= powernv_eeh_next_error,
 	.restore_config		= powernv_eeh_restore_config
 };
