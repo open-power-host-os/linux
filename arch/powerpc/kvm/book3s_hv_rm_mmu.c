@@ -654,27 +654,13 @@ long kvmppc_h_protect(struct kvm_vcpu *vcpu, unsigned long flags,
 		hpte[0] = v & ~HPTE_V_VALID;
 		do_tlbies(kvm, &rb, 1, global_invalidates(kvm, flags), true);
 		/*
-		 * If the host has this page as readonly but the guest
-		 * wants to make it read/write, reduce the permissions.
-		 * Checking the host permissions involves finding the
-		 * memslot and then the Linux PTE for the page.
+		 * If the page is valid, don't let it transition from
+		 * readonly to writable.  If it should be writable, we'll
+		 * take a trap and let the page fault code sort it out.
 		 */
-		if (hpte_is_writable(r) && kvm->arch.using_mmu_notifiers) {
-			unsigned long psize, gfn, hva;
-			struct kvm_memory_slot *memslot;
-			pgd_t *pgdir = vcpu->arch.pgdir;
-			pte_t pte;
-
-			psize = hpte_page_size(v, r);
-			gfn = ((r & HPTE_R_RPN) & ~(psize - 1)) >> PAGE_SHIFT;
-			memslot = __gfn_to_memslot(kvm_memslots_raw(kvm), gfn);
-			if (memslot) {
-				hva = __gfn_to_hva_memslot(memslot, gfn);
-				pte = lookup_linux_pte(pgdir, hva, 1, &psize);
-				if (pte_present(pte) && !pte_write(pte))
-					r = hpte_make_readonly(r);
-			}
-		}
+		if (hpte_is_writable(r) && kvm->arch.using_mmu_notifiers &&
+		    !hpte_is_writable(hpte[1]))
+			r = hpte_make_readonly(r);
 	}
 	hpte[1] = r;
 	eieio();
