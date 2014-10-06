@@ -100,7 +100,7 @@ struct cpu_spec {
 	/*
 	 * Processor specific routine to flush tlbs.
 	 */
-	void		(*flush_tlb)(unsigned long inval_selector);
+	void		(*flush_tlb)(unsigned int action);
 
 };
 

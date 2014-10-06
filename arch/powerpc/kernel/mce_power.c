@@ -28,6 +28,59 @@
 #include <asm/mce.h>
 #include <asm/machdep.h>
 
+static void _flush_tlb(uint32_t tlb_set, unsigned long inval_selector)
+{
+	unsigned long i, rb;
+
+	rb = inval_selector;
+	for (i = 0; i < tlb_set; i++) {
+		asm volatile("tlbiel %0" : : "r" (rb));
+		rb += 1 << TLBIEL_INVAL_SET_SHIFT;
+	}
+}
+
+/*
+ * Generic routine to flush TLB on power7. This routine is used as
+ * flush_tlb hook in cpu_spec for Power7 processor.
+ *
+ * action => FLUSH_TLB_ALL:  Invalidate all TLBs.
+ *	     FLUSH_TLB_LPID: Invalidate TLB for current LPID.
+ */
+void __flush_tlb_power7(unsigned int action)
+{
+	switch (action) {
+	case FLUSH_TLB_ALL:
+		_flush_tlb(POWER7_TLB_SETS, TLBIEL_INVAL_SET);
+		break;
+	case FLUSH_TLB_LPID:
+		_flush_tlb(POWER7_TLB_SETS, TLBIEL_INVAL_SET_LPID);
+		break;
+	default:
+		break;
+	}
+}
+
+/*
+ * Generic routine to flush TLB on power8. This routine is used as
+ * flush_tlb hook in cpu_spec for power8 processor.
+ *
+ * action => FLUSH_TLB_ALL:  Invalidate all TLBs.
+ *	     FLUSH_TLB_LPID: Invalidate TLB for current LPID.
+ */
+void __flush_tlb_power8(unsigned int action)
+{
+	switch (action) {
+	case FLUSH_TLB_ALL:
+		_flush_tlb(POWER8_TLB_SETS, TLBIEL_INVAL_SET);
+		break;
+	case FLUSH_TLB_LPID:
+		_flush_tlb(POWER8_TLB_SETS, TLBIEL_INVAL_SET_LPID);
+		break;
+	default:
+		break;
+	}
+}
+
 /* flush SLBs and reload */
 static void flush_and_reload_slb(void)
 {
@@ -79,7 +132,7 @@ static long mce_handle_derror(uint64_t dsisr, uint64_t slb_error_bits)
 	}
 	if (dsisr & P7_DSISR_MC_TLB_MULTIHIT_MFTLB) {
 		if (cur_cpu_spec && cur_cpu_spec->flush_tlb)
-			cur_cpu_spec->flush_tlb(TLBIEL_INVAL_PAGE);
+			cur_cpu_spec->flush_tlb(FLUSH_TLB_ALL);
 		/* reset error bits */
 		dsisr &= ~P7_DSISR_MC_TLB_MULTIHIT_MFTLB;
 	}
@@ -110,7 +163,7 @@ static long mce_handle_common_ierror(uint64_t srr1)
 		break;
 	case P7_SRR1_MC_IFETCH_TLB_MULTIHIT:
 		if (cur_cpu_spec && cur_cpu_spec->flush_tlb) {
-			cur_cpu_spec->flush_tlb(TLBIEL_INVAL_PAGE);
+			cur_cpu_spec->flush_tlb(FLUSH_TLB_ALL);
 			handled = 1;
 		}
 		break;
