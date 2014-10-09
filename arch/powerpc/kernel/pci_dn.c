@@ -71,29 +71,27 @@ static struct pci_dn *pci_bus_to_pdn(struct pci_bus *bus)
 struct pci_dn *pci_get_pdn_by_devfn(struct pci_bus *bus,
 				    int devfn)
 {
-	struct device_node *dn;
+	struct device_node *dn = NULL;
 	struct pci_dn *parent, *pdn;
 	struct pci_dev *pdev = NULL;
 
-	/* We can't call pci_get_slot() from interrupt context */
-	if (in_interrupt())
-		goto slow_path;
-
 	/* Fast path: fetch from PCI device */
-	pdev = pci_get_slot(bus, devfn);
-	pdn = pdev ? pdev->dev.archdata.firmware_data : NULL;
-	pci_dev_put(pdev);
-	if (pdn)
-		return pdn;
+	list_for_each_entry(pdev, &bus->devices, bus_list) {
+		if (pdev->devfn == devfn) {
+			if (pdev->dev.archdata.firmware_data)
+				return pdev->dev.archdata.firmware_data;
+
+			dn = pci_device_to_OF_node(pdev);
+			break;
+		}
+	}
 
 	/* Fast path: fetch from device node */
-	dn = pdev ? pci_device_to_OF_node(pdev) : NULL;
 	pdn = dn ? PCI_DN(dn) : NULL;
 	if (pdn)
 		return pdn;
 
 	/* Slow path: fetch from firmware data hierarchy */
-slow_path:
 	parent = pci_bus_to_pdn(bus);
 	if (!parent)
 		return NULL;
