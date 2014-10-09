@@ -646,25 +646,28 @@ long kvmppc_h_protect(struct kvm_vcpu *vcpu, unsigned long flags,
 		rev->guest_rpte = r;
 		note_hpte_modification(kvm, rev);
 	}
-	r = (hpte[1] & ~mask) | bits;
 
 	/* Update HPTE */
 	if (v & HPTE_V_VALID) {
-		rb = compute_tlbie_rb(v, r, pte_index);
-		hpte[0] = v & ~HPTE_V_VALID;
-		do_tlbies(kvm, &rb, 1, global_invalidates(kvm, flags), true);
 		/*
 		 * If the page is valid, don't let it transition from
 		 * readonly to writable.  If it should be writable, we'll
 		 * take a trap and let the page fault code sort it out.
 		 */
+		r = (hpte[1] & ~mask) | bits;
 		if (hpte_is_writable(r) && kvm->arch.using_mmu_notifiers &&
 		    !hpte_is_writable(hpte[1]))
 			r = hpte_make_readonly(r);
+		/* If the PTE is changing, invalidate it first */
+		if (r != hpte[1]) {
+			rb = compute_tlbie_rb(v, r, pte_index);
+			hpte[0] = (v & ~HPTE_V_VALID) | HPTE_V_ABSENT;
+			do_tlbies(kvm, &rb, 1, global_invalidates(kvm, flags),
+				  true);
+			hpte[1] = r;
+		}
 	}
-	hpte[1] = r;
-	eieio();
-	hpte[0] = v & ~HPTE_V_HVLOCK;
+	unlock_hpte(hpte, v & ~HPTE_V_HVLOCK);
 	asm volatile("ptesync" : : : "memory");
 	return H_SUCCESS;
 }
