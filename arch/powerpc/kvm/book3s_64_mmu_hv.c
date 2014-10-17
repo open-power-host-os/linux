@@ -625,16 +625,18 @@ int kvmppc_book3s_hv_page_fault(struct kvm_run *run, struct kvm_vcpu *vcpu,
 
 	/* Translate the logical address and get the page */
 	psize = hpte_page_size(hpte[0], r);
-	gpa = (r & HPTE_R_RPN & ~(psize - 1)) | (ea & (psize - 1));
+	gpa = (r & HPTE_R_RPN & ~(psize - 1));
 	gfn = gpa >> PAGE_SHIFT;
 	memslot = gfn_to_memslot(kvm, gfn);
 
 	trace_kvm_page_fault_enter(vcpu, hpte, memslot, ea, dsisr);
 
 	/* No memslot means it's an emulated MMIO region */
-	if (!memslot || (memslot->flags & KVM_MEMSLOT_INVALID))
+	if (!memslot || (memslot->flags & KVM_MEMSLOT_INVALID)) {
+		gpa |= (ea & (psize - 1));
 		return kvmppc_hv_emulate_mmio(run, vcpu, gpa, ea,
 					      dsisr & DSISR_ISSTORE);
+	}
 
 	if (!kvm->arch.using_mmu_notifiers)
 		return -EFAULT;		/* should never get here */
