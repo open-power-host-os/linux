@@ -370,6 +370,10 @@ static int __init pnv_probe_idle_states(void)
 		if (flags[i] & IDLE_INST_NAP)
 			supported_cpuidle_states |= IDLE_USE_NAP;
 
+		/*
+		 * Force disable fast-sleep and winkle due to timebase resync
+		 * issue. Re-enable with timebase sync fix.
+		 *
 		if (flags[i] & IDLE_INST_SLEEP)
 			supported_cpuidle_states |= IDLE_USE_SLEEP;
 
@@ -379,11 +383,13 @@ static int __init pnv_probe_idle_states(void)
 		}
 
 		if (flags[i] & IDLE_INST_WINKLE) {
+		*/
 			/*
 			 * If winkle is supported, save HSPRG0, HIDs and LPCR
 			 * contents via OPAL. Enable winkle only if this
 			 * succeeds.
 			 */
+		/*
 			int opal_ret_val = pnv_save_sprs_for_winkle();
 			if (!opal_ret_val)
 				supported_cpuidle_states |= IDLE_USE_WINKLE;
@@ -391,6 +397,7 @@ static int __init pnv_probe_idle_states(void)
 				pr_warn("opal: opal_slw_set_reg failed with rc=%d, disabling winkle\n",
 						opal_ret_val);
 		}
+		*/
 
 	}
 
