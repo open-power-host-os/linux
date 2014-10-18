@@ -457,6 +457,11 @@ static int powernv_add_idle_states(void)
 			nr_idle_states++;
 		}
 
+/*
+ * Disable fast-sleep now and enable after ensuring that
+ * only the first waking thread will call timebase resync.
+ */
+#if 0
 		if ((flags[i] & IDLE_INST_SLEEP_ER1) || (flags[i] & IDLE_INST_SLEEP)) {
 			/* Add FASTSLEEP state */
 			strcpy(powernv_states[nr_idle_states].name, "FastSleep");
@@ -467,6 +472,7 @@ static int powernv_add_idle_states(void)
 			powernv_states[nr_idle_states].enter = &fastsleep_loop;
 			nr_idle_states++;
 		}
+#endif
 	}
 
 	return nr_idle_states;
