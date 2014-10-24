@@ -634,16 +634,56 @@ static int ioda_eeh_bridge_reset(struct pci_dev *dev, int option)
 	return 0;
 }
 
+static int pnv_pci_dev_reset_type(struct pci_dev *pdev, void *data)
+{
+	int *freset = data;
+
+	*freset |= pdev->needs_freset;
+	return *freset;
+}
+
 void pnv_pci_reset_secondary_bus(struct pci_dev *dev)
 {
-	struct pci_controller *hose;
+	int freset = 0;
 
 	if (pci_is_root_bus(dev->bus)) {
+		struct pci_controller *hose;
+		int option = EEH_RESET_HOT;
+
+		/* We always support fundamental reset on root port */
+		pci_walk_bus(dev->bus, pnv_pci_dev_reset_type, &freset);
+		if (freset)
+			option = EEH_RESET_FUNDAMENTAL;
+
+		pci_save_state(dev);
+
 		hose = pci_bus_to_host(dev->bus);
-		ioda_eeh_root_reset(hose, EEH_RESET_HOT);
+		ioda_eeh_root_reset(hose, option);
 		ioda_eeh_root_reset(hose, EEH_RESET_DEACTIVATE);
+
+		pci_restore_state(dev);
 	} else {
-		ioda_eeh_bridge_reset(dev, EEH_RESET_HOT);
+
+		/*
+		 * Only specific PLX switch downstream ports support
+		 * fundamental reset
+		 */
+		pci_walk_bus(dev->subordinate, pnv_pci_dev_reset_type, &freset);
+		if (freset && (pci_pcie_type(dev) == PCI_EXP_TYPE_DOWNSTREAM) &&
+		    (dev->vendor == 0x10b5 && dev->device == 0x8732)) {
+			uint16_t ctrl;
+
+			pci_read_config_word(dev, 0x80, &ctrl);
+			ctrl |= 0x0400;
+			pci_write_config_word(dev, 0x80, ctrl);
+			msleep(EEH_PE_RST_HOLD_TIME);
+
+			ctrl &= ~0x0400;
+			pci_write_config_word(dev, 0x80, ctrl);
+		} else {
+			ioda_eeh_bridge_reset(dev, EEH_RESET_HOT);
+		}
+
 		ioda_eeh_bridge_reset(dev, EEH_RESET_DEACTIVATE);
 	}
 }
