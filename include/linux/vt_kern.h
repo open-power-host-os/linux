@@ -171,7 +171,6 @@ extern void hide_boot_cursor(bool hide);
 
 /* keyboard  provided interfaces */
 extern int vt_do_diacrit(unsigned int cmd, void __user *up, int eperm);
-extern int vt_do_kdskbmute(int console, unsigned int arg);
 extern int vt_do_kdskbmode(int console, unsigned int arg);
 extern int vt_do_kdskbmeta(int console, unsigned int arg);
 extern int vt_do_kbkeycode_ioctl(int cmd, struct kbkeycode __user *user_kbkc,
@@ -181,7 +180,6 @@ extern int vt_do_kdsk_ioctl(int cmd, struct kbentry __user *user_kbe,
 extern int vt_do_kdgkb_ioctl(int cmd, struct kbsentry __user *user_kdgkb,
                                         int perm);
 extern int vt_do_kdskled(int console, int cmd, unsigned long arg, int perm);
-extern int vt_do_kdgkbmute(int console);
 extern int vt_do_kdgkbmode(int console);
 extern int vt_do_kdgkbmeta(int console);
 extern void vt_reset_unicode(int console);

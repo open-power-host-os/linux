@@ -644,7 +644,7 @@ static void k_spec(struct vc_data *vc, unsigned char value, char up_flag)
 		return;
 	if ((kbd->kbdmode == VC_RAW ||
 	     kbd->kbdmode == VC_MEDIUMRAW ||
-	     vc_kbd_mode(kbd, VC_MUTE)) &&
+	     kbd->kbdmode == VC_OFF) &&
 	     value != KVAL(K_SAK))
 		return;		/* SAK is allowed even in raw mode */
 	fn_handler[value](vc);
@@ -1368,7 +1368,7 @@ static void kbd_keycode(unsigned int keycode, int down, int hw_raw)
 	if (rc == NOTIFY_STOP)
 		return;
 
-	if ((raw_mode || vc_kbd_mode(kbd, VC_MUTE)) && type != KT_SPEC && type != KT_SHIFT)
+	if ((raw_mode || kbd->kbdmode == VC_OFF) && type != KT_SPEC && type != KT_SHIFT)
 		return;
 
 	(*k_handler[type])(vc, keysym & 0xff, !down);
@@ -1718,36 +1718,15 @@ int vt_do_kdskbmode(int console, unsigned int arg)
 		kbd->kbdmode = VC_UNICODE;
 		do_compute_shiftstate();
 		break;
+	case K_OFF:
+		kbd->kbdmode = VC_OFF;
+		break;
 	default:
 		ret = -EINVAL;
 	}
 	spin_unlock_irqrestore(&kbd_event_lock, flags);
 	return ret;
 }
-
-/**
- *	vt_do_kdskbmute		-	set keyboard event mute
- *	@console: the console to use
- *	@arg: the requested mode
- *
- *	Update the keyboard mute state while holding the correct locks.
- *	Return 0 for success or an error code.
- */
-int vt_do_kdskbmute(int console, unsigned int arg)
-{
-	struct kbd_struct * kbd = kbd_table + console;
-	int ret = 0;
-	unsigned long flags;
-
-	spin_lock_irqsave(&kbd_event_lock, flags);
-	if (arg)
-		set_vc_kbd_mode(kbd, VC_MUTE);
-	else
-		clr_vc_kbd_mode(kbd, VC_MUTE);
-	spin_unlock_irqrestore(&kbd_event_lock, flags);
-	return ret;
-}
-
 
 /**
  *	vt_do_kdskbmeta		-	set keyboard meta state
@@ -2076,16 +2055,11 @@ int vt_do_kdgkbmode(int console)
 		return K_MEDIUMRAW;
 	case VC_UNICODE:
 		return K_UNICODE;
+	case VC_OFF:
+		return K_OFF;
 	default:
 		return K_XLATE;
 	}
-}
-
-int vt_do_kdgkbmute(int console)
-{
-	struct kbd_struct * kbd = kbd_table + console;
-	/* This is a spot read so needs no locking */
-	return vc_kbd_mode(kbd, VC_MUTE);
 }
 
 /**

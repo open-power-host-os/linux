@@ -520,19 +520,6 @@ int vt_ioctl(struct tty_struct *tty,
 		ret = put_user(uival, (int __user *)arg);
 		break;
 
-	case KDSKBMUTE:
-		if (!perm)
-			return -EPERM;
-		ret = vt_do_kdskbmute(console, arg);
-		if (ret == 0)
-			tty_ldisc_flush(tty);
-		break;
-
-	case KDGKBMUTE:
-		uival = vt_do_kdgkbmute(console);
-		ret = put_user(uival, (int __user *)arg);
-		break;
-
 	/* this could be folded into KDSKBMODE, but for compatibility
 	   reasons it is not so easy to fold KDGKBMETA into KDGKBMODE */
 	case KDSKBMETA:
