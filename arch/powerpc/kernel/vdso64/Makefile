@@ -36,8 +36,7 @@ $(obj-vdso64): %.o: %.S
 
 # actual build commands
 quiet_cmd_vdso64ld = VDSO64L $@
-      cmd_vdso64ld = $(CC) $(c_flags) -Wl,-T $^ -o $@ \
-		     $(if $(AFTER_LINK),; $(AFTER_LINK))
+      cmd_vdso64ld = $(CC) $(c_flags) -Wl,-T $^ -o $@
 quiet_cmd_vdso64as = VDSO64A $@
       cmd_vdso64as = $(CC) $(a_flags) -c -o $@ $<
 
