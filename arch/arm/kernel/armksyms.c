@@ -50,7 +50,6 @@ extern void fpundefinstr(void);
 
 	/* platform dependent support */
 EXPORT_SYMBOL(arm_delay_ops);
-EXPORT_SYMBOL(read_current_timer);
 
 	/* networking */
 EXPORT_SYMBOL(csum_partial);
