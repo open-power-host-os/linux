@@ -24,8 +24,6 @@
 
 #include "physaddr.h"
 
-EXPORT_SYMBOL_GPL(page_is_ram);
-
 /*
  * Fix up the linear direct mapping of the kernel to avoid cache attribute
  * conflicts.
