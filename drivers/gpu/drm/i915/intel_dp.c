@@ -283,7 +283,7 @@ intel_dp_check_edp(struct intel_dp *intel_dp)
 	pp_ctrl_reg = IS_VALLEYVIEW(dev) ? PIPEA_PP_CONTROL : PCH_PP_CONTROL;
 
 	if (!ironlake_edp_have_panel_power(intel_dp) && !ironlake_edp_have_panel_vdd(intel_dp)) {
-		DRM_ERROR("eDP powered off while attempting aux channel communication.\n");
+		WARN(1, "eDP powered off while attempting aux channel communication.\n");
 		DRM_DEBUG_KMS("Status 0x%08x Control 0x%08x\n",
 				I915_READ(pp_stat_reg),
 				I915_READ(pp_ctrl_reg));
@@ -376,7 +376,7 @@ intel_dp_aux_ch(struct intel_dp *intel_dp,
 	}
 
 	if (try == 3) {
-		DRM_ERROR("dp_aux_ch not started status 0x%08x\n",
+		WARN(1, "dp_aux_ch not started status 0x%08x\n",
 		     I915_READ(ch_ctl));
 		ret = -EBUSY;
 		goto out;
@@ -996,8 +996,8 @@ void ironlake_edp_panel_vdd_on(struct intel_dp *intel_dp)
 		return;
 	DRM_DEBUG_KMS("Turn eDP VDD on\n");
 
-	if (intel_dp->want_panel_vdd)
-		DRM_ERROR("eDP VDD already requested on\n");
+	WARN(intel_dp->want_panel_vdd,
+	     "eDP VDD already requested on\n");
 
 	intel_dp->want_panel_vdd = true;
 
@@ -1071,8 +1071,7 @@ void ironlake_edp_panel_vdd_off(struct intel_dp *intel_dp, bool sync)
 		return;
 
 	DRM_DEBUG_KMS("Turn eDP VDD off %d\n", intel_dp->want_panel_vdd);
-	if (!intel_dp->want_panel_vdd)
-		DRM_ERROR("eDP VDD not forced on");
+	WARN(!intel_dp->want_panel_vdd, "eDP VDD not forced on");
 
 	intel_dp->want_panel_vdd = false;
 
@@ -1146,8 +1145,7 @@ void ironlake_edp_panel_off(struct intel_dp *intel_dp)
 
 	DRM_DEBUG_KMS("Turn eDP power off\n");
 
-	if (!intel_dp->want_panel_vdd)
-		DRM_ERROR("Need VDD to turn off panel\n");
+	WARN(!intel_dp->want_panel_vdd, "Need VDD to turn off panel\n");
 
 	pp = ironlake_get_pp_control(intel_dp);
 	/* We need to switch off panel power _and_ force vdd, for otherwise some
