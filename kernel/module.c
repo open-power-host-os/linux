@@ -2866,10 +2866,6 @@ static int check_module_license_and_versions(struct module *mod)
 	if (strcmp(mod->name, "ndiswrapper") == 0)
 		add_taint(TAINT_PROPRIETARY_MODULE, LOCKDEP_NOW_UNRELIABLE);
 
-	/* vbox is garbage. */
-	if (strcmp(mod->name, "vboxdrv") == 0)
-		add_taint(TAINT_CRAP, LOCKDEP_NOW_UNRELIABLE);
-
 	/* driverloader was caught wrongly pretending to be under GPL */
 	if (strcmp(mod->name, "driverloader") == 0)
 		add_taint_module(mod, TAINT_PROPRIETARY_MODULE,
