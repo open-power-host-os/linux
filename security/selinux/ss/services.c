@@ -72,7 +72,6 @@
 
 int selinux_policycap_netpeer;
 int selinux_policycap_openperm;
-int selinux_policycap_ptrace_child;
 
 static DEFINE_RWLOCK(policy_rwlock);
 
@@ -1817,8 +1816,6 @@ static void security_load_policycaps(void)
 						  POLICYDB_CAPABILITY_NETPEER);
 	selinux_policycap_openperm = ebitmap_get_bit(&policydb.policycaps,
 						  POLICYDB_CAPABILITY_OPENPERM);
-	selinux_policycap_ptrace_child = ebitmap_get_bit(&policydb.policycaps,
-						  POLICYDB_CAPABILITY_PTRACE_CHILD);
 }
 
 static int security_preserve_bools(struct policydb *p);

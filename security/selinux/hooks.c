@@ -1856,39 +1856,6 @@ static inline u32 open_file_to_av(struct file *file)
 
 /* Hook functions begin here. */
 
-/**
- * task_is_descendant - walk up a process family tree looking for a match
- * @parent: the process to compare against while walking up from child
- * @child: the process to start from while looking upwards for parent
- *
- * Returns 1 if child is a descendant of parent, 0 if not.
- */
-static int task_is_descendant(struct task_struct *parent,
-			      struct task_struct *child)
-{
-	int rc = 0;
-	struct task_struct *walker = child;
-
-	if (!parent || !child)
-		return 0;
-
-	rcu_read_lock();
-	if (!thread_group_leader(parent))
-		parent = rcu_dereference(parent->group_leader);
-	while (walker->pid > 0) {
-		if (!thread_group_leader(walker))
-			walker = rcu_dereference(walker->group_leader);
-		if (walker == parent) {
-			rc = 1;
-			break;
-		}
-		walker = rcu_dereference(walker->real_parent);
-	}
-	rcu_read_unlock();
-
-	return rc;
-}
-
 static int selinux_ptrace_access_check(struct task_struct *child,
 				     unsigned int mode)
 {
@@ -1904,9 +1871,6 @@ static int selinux_ptrace_access_check(struct task_struct *child,
 		return avc_has_perm(sid, csid, SECCLASS_FILE, FILE__READ, NULL);
 	}
 
-
-	if (selinux_policycap_ptrace_child && task_is_descendant(current, child))
-		return current_has_perm(child, PROCESS__PTRACE_CHILD);
 	return current_has_perm(child, PROCESS__PTRACE);
 }
 
@@ -1918,8 +1882,6 @@ static int selinux_ptrace_traceme(struct task_struct *parent)
 	if (rc)
 		return rc;
 
-	if (selinux_policycap_ptrace_child && task_is_descendant(parent, current))
-		return task_has_perm(parent, current, PROCESS__PTRACE_CHILD);
 	return task_has_perm(parent, current, PROCESS__PTRACE);
 }
 
