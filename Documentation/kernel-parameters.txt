@@ -2776,13 +2776,6 @@ bytes respectively. Such letter suffixes can also be entirely omitted.
 			Note: increases power consumption, thus should only be
 			enabled if running jitter sensitive (HPC/RT) workloads.
 
-	secureboot_enable=
-			[KNL] Enables an emulated UEFI Secure Boot mode.  This
-			locks down various aspects of the kernel guarded by the
-			CAP_COMPROMISE_KERNEL capability.  This includes things
-			like /dev/mem, IO port access, and other areas.  It can
-			be used on non-UEFI machines for testing purposes.
-
 	security=	[SECURITY] Choose a security module to enable at boot.
 			If this boot parameter is not specified, only the first
 			security module asking for security registration will be

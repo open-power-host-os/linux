@@ -159,9 +159,6 @@ static ssize_t write_mem(struct file *file, const char __user *buf,
 	unsigned long copied;
 	void *ptr;
 
-	if (!capable(CAP_COMPROMISE_KERNEL))
-		return -EPERM;
-
 	if (!valid_phys_addr_range(p, count))
 		return -EFAULT;
 
@@ -534,9 +531,6 @@ static ssize_t write_kmem(struct file *file, const char __user *buf,
 	char *kbuf; /* k-addr because vwrite() takes vmlist_lock rwlock */
 	int err = 0;
 
-	if (!capable(CAP_COMPROMISE_KERNEL))
-		return -EPERM;
-
 	if (p < (unsigned long) high_memory) {
 		unsigned long to_write = min_t(unsigned long, count,
 					       (unsigned long)high_memory - p);
@@ -603,9 +597,6 @@ static ssize_t write_port(struct file *file, const char __user *buf,
 {
 	unsigned long i = *ppos;
 	const char __user *tmp = buf;
-
-	if (!capable(CAP_COMPROMISE_KERNEL))
-		return -EPERM;
 
 	if (!access_ok(VERIFY_READ, buf, count))
 		return -EFAULT;

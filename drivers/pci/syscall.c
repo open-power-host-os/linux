@@ -92,7 +92,7 @@ SYSCALL_DEFINE5(pciconfig_write, unsigned long, bus, unsigned long, dfn,
 	u32 dword;
 	int err = 0;
 
-	if (!capable(CAP_SYS_ADMIN) || !capable(CAP_COMPROMISE_KERNEL))
+	if (!capable(CAP_SYS_ADMIN))
 		return -EPERM;
 
 	dev = pci_get_bus_and_slot(bus, dfn);

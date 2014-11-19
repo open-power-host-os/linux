@@ -942,7 +942,7 @@ SYSCALL_DEFINE4(kexec_load, unsigned long, entry, unsigned long, nr_segments,
 	int result;
 
 	/* We only trust the superuser with rebooting the system. */
-	if (!capable(CAP_SYS_BOOT) || !capable(CAP_COMPROMISE_KERNEL))
+	if (!capable(CAP_SYS_BOOT))
 		return -EPERM;
 
 	/*

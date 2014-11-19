@@ -343,11 +343,7 @@ struct vfs_cap_data {
 
 #define CAP_BLOCK_SUSPEND    36
 
-/* Allow things that trivially permit root to modify the running kernel */
-
-#define CAP_COMPROMISE_KERNEL  37
-
-#define CAP_LAST_CAP         CAP_COMPROMISE_KERNEL
+#define CAP_LAST_CAP         CAP_BLOCK_SUSPEND
 
 #define cap_valid(x) ((x) >= 0 && (x) <= CAP_LAST_CAP)
 

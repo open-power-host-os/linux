@@ -11,7 +11,6 @@
 
 #define pr_fmt(fmt) "X.509: "fmt
 #include <linux/kernel.h>
-#include <linux/export.h>
 #include <linux/slab.h>
 #include <linux/err.h>
 #include <linux/oid_registry.h>
@@ -48,12 +47,9 @@ void x509_free_certificate(struct x509_certificate *cert)
 		kfree(cert->subject);
 		kfree(cert->fingerprint);
 		kfree(cert->authority);
-		kfree(cert->sig.digest);
-		mpi_free(cert->sig.rsa.s);
 		kfree(cert);
 	}
 }
-EXPORT_SYMBOL_GPL(x509_free_certificate);
 
 /*
  * Parse an X.509 certificate
@@ -99,7 +95,6 @@ error_no_ctx:
 error_no_cert:
 	return ERR_PTR(ret);
 }
-EXPORT_SYMBOL_GPL(x509_cert_parse);
 
 /*
  * Note an OID when we find one for later processing when we know how
@@ -157,33 +152,33 @@ int x509_note_pkey_algo(void *context, size_t hdrlen,
 		return -ENOPKG; /* Unsupported combination */
 
 	case OID_md4WithRSAEncryption:
-		ctx->cert->sig.pkey_hash_algo = PKEY_HASH_MD5;
-		ctx->cert->sig.pkey_algo = PKEY_ALGO_RSA;
+		ctx->cert->sig_hash_algo = PKEY_HASH_MD5;
+		ctx->cert->sig_pkey_algo = PKEY_ALGO_RSA;
 		break;
 
 	case OID_sha1WithRSAEncryption:
-		ctx->cert->sig.pkey_hash_algo = PKEY_HASH_SHA1;
-		ctx->cert->sig.pkey_algo = PKEY_ALGO_RSA;
+		ctx->cert->sig_hash_algo = PKEY_HASH_SHA1;
+		ctx->cert->sig_pkey_algo = PKEY_ALGO_RSA;
 		break;
 
 	case OID_sha256WithRSAEncryption:
-		ctx->cert->sig.pkey_hash_algo = PKEY_HASH_SHA256;
-		ctx->cert->sig.pkey_algo = PKEY_ALGO_RSA;
+		ctx->cert->sig_hash_algo = PKEY_HASH_SHA256;
+		ctx->cert->sig_pkey_algo = PKEY_ALGO_RSA;
 		break;
 
 	case OID_sha384WithRSAEncryption:
-		ctx->cert->sig.pkey_hash_algo = PKEY_HASH_SHA384;
-		ctx->cert->sig.pkey_algo = PKEY_ALGO_RSA;
+		ctx->cert->sig_hash_algo = PKEY_HASH_SHA384;
+		ctx->cert->sig_pkey_algo = PKEY_ALGO_RSA;
 		break;
 
 	case OID_sha512WithRSAEncryption:
-		ctx->cert->sig.pkey_hash_algo = PKEY_HASH_SHA512;
-		ctx->cert->sig.pkey_algo = PKEY_ALGO_RSA;
+		ctx->cert->sig_hash_algo = PKEY_HASH_SHA512;
+		ctx->cert->sig_pkey_algo = PKEY_ALGO_RSA;
 		break;
 
 	case OID_sha224WithRSAEncryption:
-		ctx->cert->sig.pkey_hash_algo = PKEY_HASH_SHA224;
-		ctx->cert->sig.pkey_algo = PKEY_ALGO_RSA;
+		ctx->cert->sig_hash_algo = PKEY_HASH_SHA224;
+		ctx->cert->sig_pkey_algo = PKEY_ALGO_RSA;
 		break;
 	}
 
@@ -208,21 +203,8 @@ int x509_note_signature(void *context, size_t hdrlen,
 		return -EINVAL;
 	}
 
-	ctx->cert->raw_sig = value;
-	ctx->cert->raw_sig_size = vlen;
-	return 0;
-}
-
-/*
- * Note the certificate serial number
- */
-int x509_note_serial(void *context, size_t hdrlen,
-		     unsigned char tag,
-		     const void *value, size_t vlen)
-{
-	struct x509_parse_context *ctx = context;
-	ctx->cert->raw_serial = value;
-	ctx->cert->raw_serial_size = vlen;
+	ctx->cert->sig = value;
+	ctx->cert->sig_size = vlen;
 	return 0;
 }
 
@@ -338,8 +320,6 @@ int x509_note_issuer(void *context, size_t hdrlen,
 		     const void *value, size_t vlen)
 {
 	struct x509_parse_context *ctx = context;
-	ctx->cert->raw_issuer = value;
-	ctx->cert->raw_issuer_size = vlen;
 	return x509_fabricate_name(ctx, hdrlen, tag, &ctx->cert->issuer, vlen);
 }
 
@@ -348,8 +328,6 @@ int x509_note_subject(void *context, size_t hdrlen,
 		      const void *value, size_t vlen)
 {
 	struct x509_parse_context *ctx = context;
-	ctx->cert->raw_subject = value;
-	ctx->cert->raw_subject_size = vlen;
 	return x509_fabricate_name(ctx, hdrlen, tag, &ctx->cert->subject, vlen);
 }
 
@@ -365,9 +343,8 @@ int x509_extract_key_data(void *context, size_t hdrlen,
 	if (ctx->last_oid != OID_rsaEncryption)
 		return -ENOPKG;
 
-	ctx->cert->pub->pkey_algo = PKEY_ALGO_RSA;
-
-	/* Discard the BIT STRING metadata */
+	/* There seems to be an extraneous 0 byte on the front of the data */
+	ctx->cert->pkey_algo = PKEY_ALGO_RSA;
 	ctx->key = value + 1;
 	ctx->key_size = vlen - 1;
 	return 0;
