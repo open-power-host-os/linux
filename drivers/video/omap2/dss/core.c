@@ -601,9 +601,6 @@ static int __init omap_dss_init(void)
 {
 	int r;
 
-	/* hack to load panel-tfp410 driver */
-	request_module("panel-tfp410");
-
 	r = omap_dss_bus_register();
 	if (r)
 		return r;
