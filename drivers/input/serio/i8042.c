@@ -849,8 +849,10 @@ static int __init i8042_check_aux(void)
 
 static int i8042_controller_check(void)
 {
-	if (i8042_flush() == I8042_BUFFER_SIZE)
+	if (i8042_flush() == I8042_BUFFER_SIZE) {
+		pr_err("No controller found\n");
 		return -ENODEV;
+	}
 
 	return 0;
 }
