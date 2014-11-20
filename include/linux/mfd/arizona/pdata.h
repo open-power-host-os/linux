@@ -77,7 +77,7 @@ struct arizona_micbias {
 	int mV;                    /** Regulated voltage */
 	unsigned int ext_cap:1;    /** External capacitor fitted */
 	unsigned int discharge:1;  /** Actively discharge */
-	unsigned int fast_start:1; /** Enable aggressive startup ramp rate */
+	unsigned int soft_start:1; /** Disable aggressive startup ramp rate */
 	unsigned int bypass:1;     /** Use bypass mode */
 };
 
@@ -126,6 +126,9 @@ struct arizona_pdata {
 
 	/** Internal pull on GPIO5 is disabled when used for jack detection */
 	bool jd_gpio5_nopull;
+
+	/** set to true if jackdet contact opens on insert */
+	bool jd_invert;
 
 	/** Use the headphone detect circuit to identify the accessory */
 	bool hpdet_acc_id;

@@ -20,32 +20,34 @@
 #include <asm/firmware.h>
 #include <asm/xics.h>
 #include <asm/opal.h>
+#include <asm/prom.h>
 #include <asm/uaccess.h>
+#include <asm/debug.h>
 
 static int opal_lpc_chip_id = -1;
 
 static u8 opal_lpc_inb(unsigned long port)
 {
 	int64_t rc;
-	uint32_t data;
+	__be32 data;
 
 	if (opal_lpc_chip_id < 0 || port > 0xffff)
 		return 0xff;
 	rc = opal_lpc_read(opal_lpc_chip_id, OPAL_LPC_IO, port, &data, 1);
-	return rc ? 0xff : data;
+	return rc ? 0xff : be32_to_cpu(data);
 }
 
 static __le16 __opal_lpc_inw(unsigned long port)
 {
 	int64_t rc;
-	uint32_t data;
+	__be32 data;
 
 	if (opal_lpc_chip_id < 0 || port > 0xfffe)
 		return 0xffff;
 	if (port & 1)
 		return (__le16)opal_lpc_inb(port) << 8 | opal_lpc_inb(port + 1);
 	rc = opal_lpc_read(opal_lpc_chip_id, OPAL_LPC_IO, port, &data, 2);
-	return rc ? 0xffff : data;
+	return rc ? 0xffff : be32_to_cpu(data);
 }
 static u16 opal_lpc_inw(unsigned long port)
 {
@@ -55,7 +57,7 @@ static u16 opal_lpc_inw(unsigned long port)
 static __le32 __opal_lpc_inl(unsigned long port)
 {
 	int64_t rc;
-	uint32_t data;
+	__be32 data;
 
 	if (opal_lpc_chip_id < 0 || port > 0xfffc)
 		return 0xffffffff;
@@ -65,7 +67,7 @@ static __le32 __opal_lpc_inl(unsigned long port)
 		       (__le32)opal_lpc_inb(port + 2) <<  8 |
 			       opal_lpc_inb(port + 3);
 	rc = opal_lpc_read(opal_lpc_chip_id, OPAL_LPC_IO, port, &data, 4);
-	return rc ? 0xffffffff : data;
+	return rc ? 0xffffffff : be32_to_cpu(data);
 }
 
 static u32 opal_lpc_inl(unsigned long port)
@@ -214,14 +216,54 @@ static ssize_t lpc_debug_read(struct file *filp, char __user *ubuf,
 				   &data, len);
 		if (rc)
 			return -ENXIO;
+
+		/*
+		 * Now there is some trickery with the data returned by OPAL
+		 * as it's the desired data right justified in a 32-bit BE
+		 * word.
+		 *
+		 * This is a very bad interface and I'm to blame for it :-(
+		 *
+		 * So we can't just apply a 32-bit swap to what comes from OPAL,
+		 * because user space expects the *bytes* to be in their proper
+		 * respective positions (ie, LPC position).
+		 *
+		 * So what we really want to do here is to shift data right
+		 * appropriately on a LE kernel.
+		 *
+		 * IE. If the LPC transaction has bytes B0, B1, B2 and B3 in that
+		 * order, we have in memory written to by OPAL at the "data"
+		 * pointer:
+		 *
+		 *               Bytes:      OPAL "data"   LE "data"
+		 *   32-bit:   B0 B1 B2 B3   B0B1B2B3      B3B2B1B0
+		 *   16-bit:   B0 B1         0000B0B1      B1B00000
+		 *    8-bit:   B0            000000B0      B0000000
+		 *
+		 * So a BE kernel will have the leftmost of the above in the MSB
+		 * and rightmost in the LSB and can just then "cast" the u32 "data"
+		 * down to the appropriate quantity and write it.
+		 *
+		 * However, an LE kernel can't. It doesn't need to swap because a
+		 * load from data followed by a store to user are going to preserve
+		 * the byte ordering which is the wire byte order which is what the
+		 * user wants, but in order to "crop" to the right size, we need to
+		 * shift right first.
+		 */
 		switch(len) {
 		case 4:
 			rc = __put_user((u32)data, (u32 __user *)ubuf);
 			break;
 		case 2:
+#ifdef __LITTLE_ENDIAN__
+			data >>= 16;
+#endif
 			rc = __put_user((u16)data, (u16 __user *)ubuf);
 			break;
 		default:
+#ifdef __LITTLE_ENDIAN__
+			data >>= 24;
+#endif
 			rc = __put_user((u8)data, (u8 __user *)ubuf);
 			break;
 		}
@@ -261,12 +303,31 @@ static ssize_t lpc_debug_write(struct file *filp, const char __user *ubuf,
 			else if (todo > 1 && (pos & 1) == 0)
 				len = 2;
 		}
+
+		/*
+		 * Similarly to the read case, we have some trickery here but
+		 * it's different to handle. We need to pass the value to OPAL in
+		 * a register whose layout depends on the access size. We want
+		 * to reproduce the memory layout of the user, however we aren't
+		 * doing a load from user and a store to another memory location
+		 * which would achieve that. Here we pass the value to OPAL via
+		 * a register which is expected to contain the "BE" interpretation
+		 * of the byte sequence. IE: for a 32-bit access, byte 0 should be
+		 * in the MSB. So here we *do* need to byteswap on LE.
+		 *
+		 *           User bytes:    LE "data"  OPAL "data"
+		 *  32-bit:  B0 B1 B2 B3    B3B2B1B0   B0B1B2B3
+		 *  16-bit:  B0 B1          0000B1B0   0000B0B1
+		 *   8-bit:  B0             000000B0   000000B0
+		 */
 		switch(len) {
 		case 4:
 			rc = __get_user(data, (u32 __user *)ubuf);
+			data = cpu_to_be32(data);
 			break;
 		case 2:
 			rc = __get_user(data, (u16 __user *)ubuf);
+			data = cpu_to_be16(data);
 			break;
 		default:
 			rc = __get_user(data, (u8 __user *)ubuf);
@@ -322,7 +383,7 @@ static int opal_lpc_init_debugfs(void)
 	rc |= opal_lpc_debugfs_create_type(root, "fw", OPAL_LPC_FW);
 	return rc;
 }
-device_initcall(opal_lpc_init_debugfs);
+machine_device_initcall(powernv, opal_lpc_init_debugfs);
 #endif  /* CONFIG_DEBUG_FS */
 
 void opal_lpc_init(void)

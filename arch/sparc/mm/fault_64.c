@@ -21,6 +21,7 @@
 #include <linux/kprobes.h>
 #include <linux/kdebug.h>
 #include <linux/percpu.h>
+#include <linux/context_tracking.h>
 
 #include <asm/page.h>
 #include <asm/pgtable.h>
@@ -31,6 +32,7 @@
 #include <asm/lsu.h>
 #include <asm/sections.h>
 #include <asm/mmu_context.h>
+#include <asm/setup.h>
 
 int show_unhandled_signals = 1;
 
@@ -195,9 +197,6 @@ static void do_fault_siginfo(int code, int sig, struct pt_regs *regs,
 	force_sig_info(sig, &info, current);
 }
 
-extern int handle_ldf_stq(u32, struct pt_regs *);
-extern int handle_ld_nf(u32, struct pt_regs *);
-
 static unsigned int get_fault_insn(struct pt_regs *regs, unsigned int insn)
 {
 	if (!insn) {
@@ -282,6 +281,7 @@ static void noinline __kprobes bogus_32bit_fault_tpc(struct pt_regs *regs)
 
 asmlinkage void __kprobes do_sparc64_fault(struct pt_regs *regs)
 {
+	enum ctx_state prev_state = exception_enter();
 	struct mm_struct *mm = current->mm;
 	struct vm_area_struct *vma;
 	unsigned int insn = 0;
@@ -292,7 +292,7 @@ asmlinkage void __kprobes do_sparc64_fault(struct pt_regs *regs)
 	fault_code = get_thread_fault_code();
 
 	if (notify_page_fault(regs))
-		return;
+		goto exit_exception;
 
 	si_code = SEGV_MAPERR;
 	address = current_thread_info()->fault_address;
@@ -321,9 +321,10 @@ asmlinkage void __kprobes do_sparc64_fault(struct pt_regs *regs)
 			/* Valid, no problems... */
 		} else {
 			bad_kernel_pc(regs, address);
-			return;
+			goto exit_exception;
 		}
-	}
+	} else
+		flags |= FAULT_FLAG_USER;
 
 	/*
 	 * If we're in an interrupt or have no user
@@ -344,6 +345,9 @@ asmlinkage void __kprobes do_sparc64_fault(struct pt_regs *regs)
 retry:
 		down_read(&mm->mmap_sem);
 	}
+
+	if (fault_code & FAULT_CODE_BAD_RA)
+		goto do_sigbus;
 
 	vma = find_vma(mm, address);
 	if (!vma)
@@ -426,17 +430,18 @@ good_area:
 		    vma->vm_file != NULL)
 			set_thread_fault_code(fault_code |
 					      FAULT_CODE_BLKCOMMIT);
+
+		flags |= FAULT_FLAG_WRITE;
 	} else {
 		/* Allow reads even for write-only mappings */
 		if (!(vma->vm_flags & (VM_READ | VM_EXEC)))
 			goto bad_area;
 	}
 
-	flags |= ((fault_code & FAULT_CODE_WRITE) ? FAULT_FLAG_WRITE : 0);
 	fault = handle_mm_fault(mm, vma, address, flags);
 
 	if ((fault & VM_FAULT_RETRY) && fatal_signal_pending(current))
-		return;
+		goto exit_exception;
 
 	if (unlikely(fault & VM_FAULT_ERROR)) {
 		if (fault & VM_FAULT_OOM)
@@ -488,6 +493,8 @@ good_area:
 
 	}
 #endif
+exit_exception:
+	exception_exit(prev_state);
 	return;
 
 	/*
@@ -500,7 +507,7 @@ bad_area:
 
 handle_kernel_fault:
 	do_kernel_fault(regs, si_code, fault_code, insn, address);
-	return;
+	goto exit_exception;
 
 /*
  * We ran out of memory, or some other thing happened to us that made
@@ -511,7 +518,7 @@ out_of_memory:
 	up_read(&mm->mmap_sem);
 	if (!(regs->tstate & TSTATE_PRIV)) {
 		pagefault_out_of_memory();
-		return;
+		goto exit_exception;
 	}
 	goto handle_kernel_fault;
 

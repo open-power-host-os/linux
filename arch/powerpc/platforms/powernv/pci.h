@@ -102,7 +102,7 @@ struct pnv_eeh_ops {
 	int (*get_log)(struct eeh_pe *pe, int severity,
 		       char *drv_log, unsigned long len);
 	int (*configure_bridge)(struct eeh_pe *pe);
-	int (*err_inject)(struct eeh_pe *pe, int type, int function,
+	int (*err_inject)(struct eeh_pe *pe, int type, int func,
 			  unsigned long addr, unsigned long mask);
 	int (*next_error)(struct eeh_pe **pe);
 };
@@ -235,6 +235,7 @@ extern struct pci_ops pnv_pci_ops;
 #ifdef CONFIG_EEH
 extern struct pnv_eeh_ops ioda_eeh_ops;
 #endif
+
 extern struct iommu_table_ops pnv_iommu_ops;
 
 void pnv_pci_dump_phb_diag_data(struct pci_controller *hose,
@@ -250,11 +251,11 @@ extern void pnv_pci_init_p5ioc2_hub(struct device_node *np);
 extern void pnv_pci_init_ioda_hub(struct device_node *np);
 extern void pnv_pci_init_ioda2_phb(struct device_node *np);
 extern void pnv_pci_ioda_tce_invalidate(struct iommu_table *tbl,
-					u64 *startp, u64 *endp, bool rm);
-extern void pnv_pci_reset_secondary_bus(struct pci_dev *dev);
-extern int ioda_eeh_phb_reset(struct pci_controller *hose, int option);
+					__be64 *startp, __be64 *endp, bool rm);
 #ifdef CONFIG_PCI_IOV
 resource_size_t pnv_pci_sriov_resource_size(struct pci_dev *pdev, int resno);
 #endif
+extern void pnv_pci_reset_secondary_bus(struct pci_dev *dev);
+extern int ioda_eeh_phb_reset(struct pci_controller *hose, int option);
 
 #endif /* __POWERNV_PCI_H */

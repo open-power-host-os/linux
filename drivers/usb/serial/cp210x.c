@@ -122,6 +122,7 @@ static const struct usb_device_id id_table[] = {
 	{ USB_DEVICE(0x10C4, 0x8665) }, /* AC-Services OBD-IF */
 	{ USB_DEVICE(0x10C4, 0x88A4) }, /* MMB Networks ZigBee USB Device */
 	{ USB_DEVICE(0x10C4, 0x88A5) }, /* Planet Innovation Ingeni ZigBee USB Device */
+	{ USB_DEVICE(0x10C4, 0x8946) }, /* Ketra N1 Wireless Interface */
 	{ USB_DEVICE(0x10C4, 0xEA60) }, /* Silicon Labs factory default */
 	{ USB_DEVICE(0x10C4, 0xEA61) }, /* Silicon Labs factory default */
 	{ USB_DEVICE(0x10C4, 0xEA70) }, /* Silicon Labs factory default */
@@ -154,7 +155,9 @@ static const struct usb_device_id id_table[] = {
 	{ USB_DEVICE(0x18EF, 0xE00F) }, /* ELV USB-I2C-Interface */
 	{ USB_DEVICE(0x1ADB, 0x0001) }, /* Schweitzer Engineering C662 Cable */
 	{ USB_DEVICE(0x1B1C, 0x1C00) }, /* Corsair USB Dongle */
+	{ USB_DEVICE(0x1BA4, 0x0002) },	/* Silicon Labs 358x factory default */
 	{ USB_DEVICE(0x1BE3, 0x07A6) }, /* WAGO 750-923 USB Service Cable */
+	{ USB_DEVICE(0x1D6F, 0x0010) }, /* Seluxit ApS RF Dongle */
 	{ USB_DEVICE(0x1E29, 0x0102) }, /* Festo CPX-USB */
 	{ USB_DEVICE(0x1E29, 0x0501) }, /* Festo CMSP */
 	{ USB_DEVICE(0x1FB9, 0x0100) }, /* Lake Shore Model 121 Current Source */
@@ -307,10 +310,8 @@ static int cp210x_get_config(struct usb_serial_port *port, u8 request,
 	length = (((size - 1) | 3) + 1) / 4;
 
 	buf = kcalloc(length, sizeof(__le32), GFP_KERNEL);
-	if (!buf) {
-		dev_err(&port->dev, "%s - out of memory.\n", __func__);
+	if (!buf)
 		return -ENOMEM;
-	}
 
 	/* Issue the request, attempting to read 'size' bytes */
 	result = usb_control_msg(serial->dev, usb_rcvctrlpipe(serial->dev, 0),
@@ -354,10 +355,8 @@ static int cp210x_set_config(struct usb_serial_port *port, u8 request,
 	length = (((size - 1) | 3) + 1) / 4;
 
 	buf = kmalloc(length * sizeof(__le32), GFP_KERNEL);
-	if (!buf) {
-		dev_err(&port->dev, "%s - out of memory.\n", __func__);
+	if (!buf)
 		return -ENOMEM;
-	}
 
 	/* Array of integers into bytes */
 	for (i = 0; i < length; i++)
@@ -672,11 +671,6 @@ static void cp210x_set_termios(struct tty_struct *tty,
 	unsigned int bits;
 	unsigned int modem_ctl[4];
 
-	dev_dbg(dev, "%s - port %d\n", __func__, port->number);
-
-	if (!tty)
-		return;
-
 	cflag = tty->termios.c_cflag;
 	old_cflag = old_termios->c_cflag;
 
@@ -864,9 +858,6 @@ static int cp210x_startup(struct usb_serial *serial)
 {
 	struct usb_host_interface *cur_altsetting;
 	struct cp210x_serial_private *spriv;
-
-	/* cp210x buffers behave strangely unless device is reset */
-	usb_reset_device(serial->dev);
 
 	spriv = kzalloc(sizeof(*spriv), GFP_KERNEL);
 	if (!spriv)

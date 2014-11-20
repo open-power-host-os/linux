@@ -20,6 +20,7 @@
 #include <crypto/sha.h>
 #include <linux/percpu.h>
 #include <asm/byteorder.h>
+#include <asm/unaligned.h>
 
 static inline u64 Ch(u64 x, u64 y, u64 z)
 {
@@ -68,7 +69,7 @@ static const u64 sha512_K[80] = {
 
 static inline void LOAD_OP(int I, u64 *W, const u8 *input)
 {
-	W[I] = __be64_to_cpu( ((__be64*)(input))[I] );
+	W[I] = get_unaligned_be64((__u64 *)input + I);
 }
 
 static inline void BLEND_OP(int I, u64 *W)
@@ -238,7 +239,7 @@ static int sha384_final(struct shash_desc *desc, u8 *hash)
 	sha512_final(desc, D);
 
 	memcpy(hash, D, 48);
-	memset(D, 0, 64);
+	memzero_explicit(D, 64);
 
 	return 0;
 }
@@ -251,6 +252,7 @@ static struct shash_alg sha512_algs[2] = { {
 	.descsize	=	sizeof(struct sha512_state),
 	.base		=	{
 		.cra_name	=	"sha512",
+		.cra_driver_name =	"sha512-generic",
 		.cra_flags	=	CRYPTO_ALG_TYPE_SHASH,
 		.cra_blocksize	=	SHA512_BLOCK_SIZE,
 		.cra_module	=	THIS_MODULE,
@@ -263,6 +265,7 @@ static struct shash_alg sha512_algs[2] = { {
 	.descsize	=	sizeof(struct sha512_state),
 	.base		=	{
 		.cra_name	=	"sha384",
+		.cra_driver_name =	"sha384-generic",
 		.cra_flags	=	CRYPTO_ALG_TYPE_SHASH,
 		.cra_blocksize	=	SHA384_BLOCK_SIZE,
 		.cra_module	=	THIS_MODULE,

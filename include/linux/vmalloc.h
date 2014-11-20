@@ -10,12 +10,12 @@
 struct vm_area_struct;		/* vma defining user mapping in mm_types.h */
 
 /* bits in flags of vmalloc's vm_struct below */
-#define VM_IOREMAP	0x00000001	/* ioremap() and friends */
-#define VM_ALLOC	0x00000002	/* vmalloc() */
-#define VM_MAP		0x00000004	/* vmap()ed pages */
-#define VM_USERMAP	0x00000008	/* suitable for remap_vmalloc_range */
-#define VM_VPAGES	0x00000010	/* buffer for pages was vmalloc'ed */
-#define VM_UNLIST	0x00000020	/* vm_struct is not listed in vmlist */
+#define VM_IOREMAP		0x00000001	/* ioremap() and friends */
+#define VM_ALLOC		0x00000002	/* vmalloc() */
+#define VM_MAP			0x00000004	/* vmap()ed pages */
+#define VM_USERMAP		0x00000008	/* suitable for remap_vmalloc_range */
+#define VM_VPAGES		0x00000010	/* buffer for pages was vmalloc'ed */
+#define VM_UNINITIALIZED	0x00000020	/* vm_struct is not fully initialized */
 /* bits [20..32] reserved for arch specific ioremap internals */
 
 /*
@@ -82,6 +82,10 @@ extern void *vmap(struct page **pages, unsigned int count,
 			unsigned long flags, pgprot_t prot);
 extern void vunmap(const void *addr);
 
+extern int remap_vmalloc_range_partial(struct vm_area_struct *vma,
+				       unsigned long uaddr, void *kaddr,
+				       unsigned long size);
+
 extern int remap_vmalloc_range(struct vm_area_struct *vma, void *addr,
 							unsigned long pgoff);
 void vmalloc_sync_all(void);
@@ -109,7 +113,7 @@ extern struct vm_struct *remove_vm_area(const void *addr);
 extern struct vm_struct *find_vm_area(const void *addr);
 
 extern int map_vm_area(struct vm_struct *area, pgprot_t prot,
-			struct page ***pages);
+			struct page **pages);
 #ifdef CONFIG_MMU
 extern int map_kernel_range_noflush(unsigned long start, unsigned long size,
 				    pgprot_t prot, struct page **pages);

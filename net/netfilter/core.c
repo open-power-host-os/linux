@@ -35,11 +35,7 @@ EXPORT_SYMBOL_GPL(nf_ipv6_ops);
 
 int nf_register_afinfo(const struct nf_afinfo *afinfo)
 {
-	int err;
-
-	err = mutex_lock_interruptible(&afinfo_mutex);
-	if (err < 0)
-		return err;
+	mutex_lock(&afinfo_mutex);
 	RCU_INIT_POINTER(nf_afinfo[afinfo->family], afinfo);
 	mutex_unlock(&afinfo_mutex);
 	return 0;
@@ -58,7 +54,7 @@ EXPORT_SYMBOL_GPL(nf_unregister_afinfo);
 struct list_head nf_hooks[NFPROTO_NUMPROTO][NF_MAX_HOOKS] __read_mostly;
 EXPORT_SYMBOL(nf_hooks);
 
-#if defined(CONFIG_JUMP_LABEL)
+#ifdef HAVE_JUMP_LABEL
 struct static_key nf_hooks_needed[NFPROTO_NUMPROTO][NF_MAX_HOOKS];
 EXPORT_SYMBOL(nf_hooks_needed);
 #endif
@@ -68,18 +64,15 @@ static DEFINE_MUTEX(nf_hook_mutex);
 int nf_register_hook(struct nf_hook_ops *reg)
 {
 	struct nf_hook_ops *elem;
-	int err;
 
-	err = mutex_lock_interruptible(&nf_hook_mutex);
-	if (err < 0)
-		return err;
+	mutex_lock(&nf_hook_mutex);
 	list_for_each_entry(elem, &nf_hooks[reg->pf][reg->hooknum], list) {
 		if (reg->priority < elem->priority)
 			break;
 	}
 	list_add_rcu(&reg->list, elem->list.prev);
 	mutex_unlock(&nf_hook_mutex);
-#if defined(CONFIG_JUMP_LABEL)
+#ifdef HAVE_JUMP_LABEL
 	static_key_slow_inc(&nf_hooks_needed[reg->pf][reg->hooknum]);
 #endif
 	return 0;
@@ -91,7 +84,7 @@ void nf_unregister_hook(struct nf_hook_ops *reg)
 	mutex_lock(&nf_hook_mutex);
 	list_del_rcu(&reg->list);
 	mutex_unlock(&nf_hook_mutex);
-#if defined(CONFIG_JUMP_LABEL)
+#ifdef HAVE_JUMP_LABEL
 	static_key_slow_dec(&nf_hooks_needed[reg->pf][reg->hooknum]);
 #endif
 	synchronize_net();
@@ -146,7 +139,7 @@ unsigned int nf_iterate(struct list_head *head,
 		/* Optimization: we don't need to hold module
 		   reference here, since function can't sleep. --RR */
 repeat:
-		verdict = (*elemp)->hook(hook, skb, indev, outdev, okfn);
+		verdict = (*elemp)->hook(*elemp, skb, indev, outdev, okfn);
 		if (verdict != NF_ACCEPT) {
 #ifdef CONFIG_NETFILTER_DEBUG
 			if (unlikely((verdict & NF_VERDICT_MASK)
@@ -234,12 +227,13 @@ EXPORT_SYMBOL(skb_make_writable);
 /* This does not belong here, but locally generated errors need it if connection
    tracking in use: without this, connection may not be in hash table, and hence
    manufactured ICMP or RST packets will not be associated with it. */
-void (*ip_ct_attach)(struct sk_buff *, struct sk_buff *) __rcu __read_mostly;
+void (*ip_ct_attach)(struct sk_buff *, const struct sk_buff *)
+		__rcu __read_mostly;
 EXPORT_SYMBOL(ip_ct_attach);
 
-void nf_ct_attach(struct sk_buff *new, struct sk_buff *skb)
+void nf_ct_attach(struct sk_buff *new, const struct sk_buff *skb)
 {
-	void (*attach)(struct sk_buff *, struct sk_buff *);
+	void (*attach)(struct sk_buff *, const struct sk_buff *);
 
 	if (skb->nfct) {
 		rcu_read_lock();
@@ -304,17 +298,26 @@ static struct pernet_operations netfilter_net_ops = {
 	.exit = netfilter_net_exit,
 };
 
-void __init netfilter_init(void)
+int __init netfilter_init(void)
 {
-	int i, h;
+	int i, h, ret;
+
 	for (i = 0; i < ARRAY_SIZE(nf_hooks); i++) {
 		for (h = 0; h < NF_MAX_HOOKS; h++)
 			INIT_LIST_HEAD(&nf_hooks[i][h]);
 	}
 
-	if (register_pernet_subsys(&netfilter_net_ops) < 0)
-		panic("cannot create netfilter proc entry");
+	ret = register_pernet_subsys(&netfilter_net_ops);
+	if (ret < 0)
+		goto err;
 
-	if (netfilter_log_init() < 0)
-		panic("cannot initialize nf_log");
+	ret = netfilter_log_init();
+	if (ret < 0)
+		goto err_pernet;
+
+	return 0;
+err_pernet:
+	unregister_pernet_subsys(&netfilter_net_ops);
+err:
+	return ret;
 }

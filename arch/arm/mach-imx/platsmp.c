@@ -20,8 +20,6 @@
 #include "common.h"
 #include "hardware.h"
 
-#define SCU_STANDBY_ENABLE	(1 << 5)
-
 u32 g_diag_reg;
 static void __iomem *scu_base;
 
@@ -45,15 +43,7 @@ void __init imx_scu_map_io(void)
 	scu_base = IMX_IO_ADDRESS(base);
 }
 
-void imx_scu_standby_enable(void)
-{
-	u32 val = readl_relaxed(scu_base);
-
-	val |= SCU_STANDBY_ENABLE;
-	writel_relaxed(val, scu_base);
-}
-
-static int __cpuinit imx_boot_secondary(unsigned int cpu, struct task_struct *idle)
+static int imx_boot_secondary(unsigned int cpu, struct task_struct *idle)
 {
 	imx_set_cpu_jump(cpu, v7_secondary_startup);
 	imx_enable_cpu(cpu, true);
@@ -92,8 +82,7 @@ static void __init imx_smp_prepare_cpus(unsigned int max_cpus)
 	 * secondary cores when booting them.
 	 */
 	asm("mrc p15, 0, %0, c15, c0, 1" : "=r" (g_diag_reg) : : "cc");
-	__cpuc_flush_dcache_area(&g_diag_reg, sizeof(g_diag_reg));
-	outer_clean_range(__pa(&g_diag_reg), __pa(&g_diag_reg + 1));
+	sync_cache_w(&g_diag_reg);
 }
 
 struct smp_operations  imx_smp_ops __initdata = {

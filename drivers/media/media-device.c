@@ -103,12 +103,8 @@ static long media_device_enum_entities(struct media_device *mdev,
 		return -EINVAL;
 
 	u_ent.id = ent->id;
-	if (ent->name) {
-		strncpy(u_ent.name, ent->name, sizeof(u_ent.name));
-		u_ent.name[sizeof(u_ent.name) - 1] = '\0';
-	} else {
-		memset(u_ent.name, 0, sizeof(u_ent.name));
-	}
+	if (ent->name)
+		strlcpy(u_ent.name, ent->name, sizeof(u_ent.name));
 	u_ent.type = ent->type;
 	u_ent.revision = ent->revision;
 	u_ent.flags = ent->flags;
@@ -143,6 +139,8 @@ static long __media_device_enum_links(struct media_device *mdev,
 
 		for (p = 0; p < entity->num_pads; p++) {
 			struct media_pad_desc pad;
+
+			memset(&pad, 0, sizeof(pad));
 			media_device_kpad_to_upad(&entity->pads[p], &pad);
 			if (copy_to_user(&links->pads[p], &pad, sizeof(pad)))
 				return -EFAULT;
@@ -160,6 +158,7 @@ static long __media_device_enum_links(struct media_device *mdev,
 			if (entity->links[l].source->entity != entity)
 				continue;
 
+			memset(&link, 0, sizeof(link));
 			media_device_kpad_to_upad(entity->links[l].source,
 						  &link.source);
 			media_device_kpad_to_upad(entity->links[l].sink,
@@ -370,7 +369,8 @@ static void media_device_release(struct media_devnode *mdev)
  * - dev must point to the parent device
  * - model must be filled with the device model name
  */
-int __must_check media_device_register(struct media_device *mdev)
+int __must_check __media_device_register(struct media_device *mdev,
+					 struct module *owner)
 {
 	int ret;
 
@@ -386,7 +386,7 @@ int __must_check media_device_register(struct media_device *mdev)
 	mdev->devnode.fops = &media_device_fops;
 	mdev->devnode.parent = mdev->dev;
 	mdev->devnode.release = media_device_release;
-	ret = media_devnode_register(&mdev->devnode);
+	ret = media_devnode_register(&mdev->devnode, owner);
 	if (ret < 0)
 		return ret;
 
@@ -398,7 +398,7 @@ int __must_check media_device_register(struct media_device *mdev)
 
 	return 0;
 }
-EXPORT_SYMBOL_GPL(media_device_register);
+EXPORT_SYMBOL_GPL(__media_device_register);
 
 /**
  * media_device_unregister - unregister a media device

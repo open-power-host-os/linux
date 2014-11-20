@@ -25,7 +25,11 @@ extern u64 pnv_pci_dma_get_required_mask(struct pci_dev *pdev);
 #else
 static inline void pnv_pci_init(void) { }
 static inline void pnv_pci_shutdown(void) { }
-static inline int pnv_pci_dma_set_mask(struct pci_dev *pdev, u64 dma_mask) { }
+
+static inline int pnv_pci_dma_set_mask(struct pci_dev *pdev, u64 dma_mask)
+{
+	return -ENODEV;
+}
 
 static inline u64 pnv_pci_dma_get_required_mask(struct pci_dev *pdev)
 {
@@ -33,8 +37,8 @@ static inline u64 pnv_pci_dma_get_required_mask(struct pci_dev *pdev)
 }
 #endif
 
-bool cpu_core_split_required(void);
-
 extern void pnv_lpc_init(void);
+
+bool cpu_core_split_required(void);
 
 #endif /* _POWERNV_H */

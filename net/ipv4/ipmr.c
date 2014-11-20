@@ -127,9 +127,9 @@ static struct kmem_cache *mrt_cachep __read_mostly;
 static struct mr_table *ipmr_new_table(struct net *net, u32 id);
 static void ipmr_free_table(struct mr_table *mrt);
 
-static int ip_mr_forward(struct net *net, struct mr_table *mrt,
-			 struct sk_buff *skb, struct mfc_cache *cache,
-			 int local);
+static void ip_mr_forward(struct net *net, struct mr_table *mrt,
+			  struct sk_buff *skb, struct mfc_cache *cache,
+			  int local);
 static int ipmr_cache_report(struct mr_table *mrt,
 			     struct sk_buff *pkt, vifi_t vifi, int assert);
 static int __ipmr_fill_mroute(struct mr_table *mrt, struct sk_buff *skb,
@@ -428,6 +428,7 @@ struct net_device *ipmr_new_tunnel(struct net *net, struct vifctl *v)
 				goto failure;
 
 			ipv4_devconf_setall(in_dev);
+			neigh_parms_data_state_setall(in_dev->arp_parms);
 			IPV4_DEVCONF(in_dev->cnf, RP_FILTER) = 0;
 
 			if (dev_open(dev))
@@ -454,7 +455,7 @@ static netdev_tx_t reg_vif_xmit(struct sk_buff *skb, struct net_device *dev)
 	struct mr_table *mrt;
 	struct flowi4 fl4 = {
 		.flowi4_oif	= dev->ifindex,
-		.flowi4_iif	= skb->skb_iif,
+		.flowi4_iif	= skb->skb_iif ? : LOOPBACK_IFINDEX,
 		.flowi4_mark	= skb->mark,
 	};
 	int err;
@@ -483,7 +484,7 @@ static void reg_vif_setup(struct net_device *dev)
 	dev->type		= ARPHRD_PIMREG;
 	dev->mtu		= ETH_DATA_LEN - sizeof(struct iphdr) - 8;
 	dev->flags		= IFF_NOARP;
-	dev->netdev_ops		= &reg_vif_netdev_ops,
+	dev->netdev_ops		= &reg_vif_netdev_ops;
 	dev->destructor		= free_netdev;
 	dev->features		|= NETIF_F_NETNS_LOCAL;
 }
@@ -499,7 +500,7 @@ static struct net_device *ipmr_reg_vif(struct net *net, struct mr_table *mrt)
 	else
 		sprintf(name, "pimreg%u", mrt->id);
 
-	dev = alloc_netdev(0, name, reg_vif_setup);
+	dev = alloc_netdev(0, name, NET_NAME_UNKNOWN, reg_vif_setup);
 
 	if (dev == NULL)
 		return NULL;
@@ -520,6 +521,7 @@ static struct net_device *ipmr_reg_vif(struct net *net, struct mr_table *mrt)
 	}
 
 	ipv4_devconf_setall(in_dev);
+	neigh_parms_data_state_setall(in_dev->arp_parms);
 	IPV4_DEVCONF(in_dev->cnf, RP_FILTER) = 0;
 	rcu_read_unlock();
 
@@ -983,7 +985,7 @@ static int ipmr_cache_report(struct mr_table *mrt,
 
 	/* Copy the IP header */
 
-	skb->network_header = skb->tail;
+	skb_set_network_header(skb, skb->len);
 	skb_put(skb, ihl);
 	skb_copy_to_linear_data(skb, pkt->data, ihl);
 	ip_hdr(skb)->protocol = 0;	/* Flag to the kernel this is a route add */
@@ -1612,7 +1614,7 @@ int ipmr_compat_ioctl(struct sock *sk, unsigned int cmd, void __user *arg)
 
 static int ipmr_device_event(struct notifier_block *this, unsigned long event, void *ptr)
 {
-	struct net_device *dev = ptr;
+	struct net_device *dev = netdev_notifier_info_to_dev(ptr);
 	struct net *net = dev_net(dev);
 	struct mr_table *mrt;
 	struct vif_device *v;
@@ -1798,9 +1800,9 @@ static int ipmr_find_vif(struct mr_table *mrt, struct net_device *dev)
 
 /* "local" means that we should preserve one skb (for local delivery) */
 
-static int ip_mr_forward(struct net *net, struct mr_table *mrt,
-			 struct sk_buff *skb, struct mfc_cache *cache,
-			 int local)
+static void ip_mr_forward(struct net *net, struct mr_table *mrt,
+			  struct sk_buff *skb, struct mfc_cache *cache,
+			  int local)
 {
 	int psend = -1;
 	int vif, ct;
@@ -1906,14 +1908,13 @@ last_forward:
 				ipmr_queue_xmit(net, mrt, skb2, cache, psend);
 		} else {
 			ipmr_queue_xmit(net, mrt, skb, cache, psend);
-			return 0;
+			return;
 		}
 	}
 
 dont_forward:
 	if (!local)
 		kfree_skb(skb);
-	return 0;
 }
 
 static struct mr_table *ipmr_rt_fib_lookup(struct net *net, struct sk_buff *skb)
@@ -2071,9 +2072,8 @@ static int __pim_rcv(struct mr_table *mrt, struct sk_buff *skb,
 	skb_reset_network_header(skb);
 	skb->protocol = htons(ETH_P_IP);
 	skb->ip_summed = CHECKSUM_NONE;
-	skb->pkt_type = PACKET_HOST;
 
-	skb_tunnel_rx(skb, reg_dev);
+	skb_tunnel_rx(skb, reg_dev, dev_net(reg_dev));
 
 	netif_rx(skb);
 

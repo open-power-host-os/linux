@@ -33,7 +33,6 @@
 
 #include "ttype.h"
 
-/*---------------------  Export Definitions -------------------------*/
 /* bit type */
 #define BIT0	0x00000001
 #define BIT1	0x00000002
@@ -68,7 +67,7 @@
 #define BIT30	0x40000000
 #define BIT31	0x80000000
 
-// 802.11 frame related, defined as 802.11 spec
+/* 802.11 frame related, defined as 802.11 spec */
 #define WLAN_ADDR_LEN               6
 #define WLAN_CRC_LEN                4
 #define WLAN_CRC32_LEN              4
@@ -84,7 +83,8 @@
 #define WLAN_RATES_MAXLEN_11B       4
 #define WLAN_RSN_MAXLEN             32
 #define WLAN_DATA_MAXLEN            2312
-#define WLAN_A3FR_MAXLEN            (WLAN_HDR_ADDR3_LEN + WLAN_DATA_MAXLEN + WLAN_CRC_LEN)
+#define WLAN_A3FR_MAXLEN            (WLAN_HDR_ADDR3_LEN + WLAN_DATA_MAXLEN + \
+				     WLAN_CRC_LEN)
 
 #define WLAN_BEACON_FR_MAXLEN       WLAN_A3FR_MAXLEN
 #define WLAN_ATIM_FR_MAXLEN         (WLAN_HDR_ADDR3_LEN + 0)
@@ -155,7 +155,7 @@
 #ifdef __BIG_ENDIAN
 
 /* GET & SET Frame Control bit */
-#define WLAN_GET_FC_PRVER(n)    ((((unsigned short)(n) >> 8) & (BIT0 | BIT1))
+#define WLAN_GET_FC_PRVER(n)    (((unsigned short)(n) >> 8) & (BIT0 | BIT1))
 #define WLAN_GET_FC_FTYPE(n)    ((((unsigned short)(n) >> 8) & (BIT2 | BIT3)) >> 2)
 #define WLAN_GET_FC_FSTYPE(n)   ((((unsigned short)(n) >> 8) & (BIT4|BIT5|BIT6|BIT7)) >> 4)
 #define WLAN_GET_FC_TODS(n)     ((((unsigned short)(n) << 8) & (BIT8)) >> 8)
@@ -314,11 +314,5 @@ typedef union tagUWLAN_80211HDR {
 	WLAN_80211HDR_A3        sA3;
 	WLAN_80211HDR_A4        sA4;
 } UWLAN_80211HDR, *PUWLAN_80211HDR;
-
-/*---------------------  Export Classes  ----------------------------*/
-
-/*---------------------  Export Variables  --------------------------*/
-
-/*---------------------  Export Functions  --------------------------*/
 
 #endif /* __80211HDR_H__ */

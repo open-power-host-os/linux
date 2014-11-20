@@ -6,7 +6,7 @@
  *****************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2013, Intel Corp.
+ * Copyright (C) 2000 - 2014, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -103,6 +103,7 @@ acpi_ns_convert_to_integer(union acpi_operand_object *original_object,
 		break;
 
 	default:
+
 		return (AE_AML_OPERAND_TYPE);
 	}
 
@@ -191,6 +192,7 @@ acpi_ns_convert_to_string(union acpi_operand_object *original_object,
 		break;
 
 	default:
+
 		return (AE_AML_OPERAND_TYPE);
 	}
 
@@ -294,6 +296,7 @@ acpi_ns_convert_to_buffer(union acpi_operand_object *original_object,
 		break;
 
 	default:
+
 		return (AE_AML_OPERAND_TYPE);
 	}
 

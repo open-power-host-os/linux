@@ -23,6 +23,7 @@
 #include <linux/irq.h>
 #include <linux/seq_file.h>
 #include <linux/of.h>
+#include <linux/of_fdt.h>
 #include <linux/interrupt.h>
 #include <linux/bug.h>
 #include <linux/cpuidle.h>
@@ -36,6 +37,7 @@
 #include <asm/opal.h>
 #include <asm/kexec.h>
 #include <asm/cputhreads.h>
+#include <asm/smp.h>
 
 #include "powernv.h"
 
@@ -51,6 +53,8 @@ static DEFINE_PER_CPU(int, fastsleep_cnt);
 
 static void __init pnv_setup_arch(void)
 {
+	set_arch_panic_timeout(10, ARCH_PANIC_TIMEOUT);
+
 	/* Initialize SMP */
 	pnv_smp_init();
 
@@ -263,17 +267,6 @@ static void pnv_kexec_cpu_down(int crash_shutdown, int secondary)
 }
 #endif /* CONFIG_KEXEC */
 
-/* PowerNV idle routines */
-void powernv_idle(void)
-{
-	/* Hook to cpuidle framework if available, else
-	 * call on default platform idle code
-	 */
-	if (cpuidle_idle_call()) {
-		power7_idle();
-	}
-}
-
 static unsigned int supported_cpuidle_states = 0;
 static int need_fastsleep_workaround = 0;
 
@@ -471,6 +464,12 @@ static unsigned long pnv_power7_winkle(void)
 	return srr1;
 }
 
+#ifdef CONFIG_MEMORY_HOTPLUG_SPARSE
+static unsigned long pnv_memory_block_size(void)
+{
+	return 256UL * 1024 * 1024;
+}
+#endif
 
 static void __init pnv_setup_machdep_opal(void)
 {
@@ -526,7 +525,7 @@ static int __init pnv_probe(void)
  * Returns the cpu frequency for 'cpu' in Hz. This is used by
  * /proc/cpuinfo
  */
-unsigned long pnv_get_proc_freq(unsigned int cpu)
+static unsigned long pnv_get_proc_freq(unsigned int cpu)
 {
 	unsigned long ret_freq;
 
@@ -551,11 +550,14 @@ define_machine(powernv) {
 	.get_proc_freq          = pnv_get_proc_freq,
 	.progress		= pnv_progress,
 	.machine_shutdown	= pnv_shutdown,
-	.power_save             = powernv_idle,
+	.power_save             = power7_idle,
 	.calibrate_decr		= generic_calibrate_decr,
 	.dma_set_mask		= pnv_dma_set_mask,
 	.dma_get_required_mask	= pnv_dma_get_required_mask,
 #ifdef CONFIG_KEXEC
 	.kexec_cpu_down		= pnv_kexec_cpu_down,
+#endif
+#ifdef CONFIG_MEMORY_HOTPLUG_SPARSE
+	.memory_block_size	= pnv_memory_block_size,
 #endif
 };

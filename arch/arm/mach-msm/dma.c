@@ -18,6 +18,7 @@
 #include <linux/io.h>
 #include <linux/interrupt.h>
 #include <linux/completion.h>
+#include <linux/module.h>
 #include <mach/dma.h>
 #include <mach/msm_iomap.h>
 
@@ -77,6 +78,7 @@ void msm_dmov_stop_cmd(unsigned id, struct msm_dmov_cmd *cmd, int graceful)
 {
 	writel((graceful << 31), DMOV_FLUSH0(id));
 }
+EXPORT_SYMBOL_GPL(msm_dmov_stop_cmd);
 
 void msm_dmov_enqueue_cmd(unsigned id, struct msm_dmov_cmd *cmd)
 {
@@ -115,6 +117,7 @@ void msm_dmov_enqueue_cmd(unsigned id, struct msm_dmov_cmd *cmd)
 	}
 	spin_unlock_irqrestore(&msm_dmov_lock, irq_flags);
 }
+EXPORT_SYMBOL_GPL(msm_dmov_enqueue_cmd);
 
 struct msm_dmov_exec_cmdptr_cmd {
 	struct msm_dmov_cmd dmov_cmd;
@@ -284,6 +287,7 @@ static int __init msm_init_datamover(void)
 	clk = clk_get(NULL, "adm_clk");
 	if (IS_ERR(clk))
 		return PTR_ERR(clk);
+	clk_prepare(clk);
 	msm_dmov_clk = clk;
 	ret = request_irq(INT_ADM_AARM, msm_datamover_irq_handler, 0, "msmdatamover", NULL);
 	if (ret)
@@ -291,6 +295,4 @@ static int __init msm_init_datamover(void)
 	disable_irq(INT_ADM_AARM);
 	return 0;
 }
-
-arch_initcall(msm_init_datamover);
-
+module_init(msm_init_datamover);

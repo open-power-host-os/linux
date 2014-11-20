@@ -147,6 +147,9 @@ int __request_module(bool wait, const char *fmt, ...)
 	 */
 	WARN_ON_ONCE(wait && current_is_async());
 
+	if (!modprobe_path[0])
+		return 0;
+
 	va_start(args, fmt);
 	ret = vsnprintf(module_name, MODULE_NAME_LEN, fmt, args);
 	va_end(args);
@@ -193,12 +196,34 @@ int __request_module(bool wait, const char *fmt, ...)
 EXPORT_SYMBOL(__request_module);
 #endif /* CONFIG_MODULES */
 
+static void call_usermodehelper_freeinfo(struct subprocess_info *info)
+{
+	if (info->cleanup)
+		(*info->cleanup)(info);
+	kfree(info);
+}
+
+static void umh_complete(struct subprocess_info *sub_info)
+{
+	struct completion *comp = xchg(&sub_info->complete, NULL);
+	/*
+	 * See call_usermodehelper_exec(). If xchg() returns NULL
+	 * we own sub_info, the UMH_KILLABLE caller has gone away
+	 * or the caller used UMH_NO_WAIT.
+	 */
+	if (comp)
+		complete(comp);
+	else
+		call_usermodehelper_freeinfo(sub_info);
+}
+
 /*
  * This is the task which runs the usermode application
  */
 static int ____call_usermodehelper(void *data)
 {
 	struct subprocess_info *sub_info = data;
+	int wait = sub_info->wait & ~UMH_KILLABLE;
 	struct cred *new;
 	int retval;
 
@@ -218,7 +243,7 @@ static int ____call_usermodehelper(void *data)
 	retval = -ENOMEM;
 	new = prepare_kernel_cred(current);
 	if (!new)
-		goto fail;
+		goto out;
 
 	spin_lock(&umh_sysctl_lock);
 	new->cap_bset = cap_intersect(usermodehelper_bset, new->cap_bset);
@@ -230,21 +255,22 @@ static int ____call_usermodehelper(void *data)
 		retval = sub_info->init(sub_info, new);
 		if (retval) {
 			abort_creds(new);
-			goto fail;
+			goto out;
 		}
 	}
 
 	commit_creds(new);
 
-	retval = do_execve(sub_info->path,
+	retval = do_execve(getname_kernel(sub_info->path),
 			   (const char __user *const __user *)sub_info->argv,
 			   (const char __user *const __user *)sub_info->envp);
+out:
+	sub_info->retval = retval;
+	/* wait_for_helper() will call umh_complete if UHM_WAIT_PROC. */
+	if (wait != UMH_WAIT_PROC)
+		umh_complete(sub_info);
 	if (!retval)
 		return 0;
-
-	/* Exec failed? */
-fail:
-	sub_info->retval = retval;
 	do_exit(0);
 }
 
@@ -255,26 +281,6 @@ static int call_helper(void *data)
 	return ____call_usermodehelper(data);
 }
 
-static void call_usermodehelper_freeinfo(struct subprocess_info *info)
-{
-	if (info->cleanup)
-		(*info->cleanup)(info);
-	kfree(info);
-}
-
-static void umh_complete(struct subprocess_info *sub_info)
-{
-	struct completion *comp = xchg(&sub_info->complete, NULL);
-	/*
-	 * See call_usermodehelper_exec(). If xchg() returns NULL
-	 * we own sub_info, the UMH_KILLABLE caller has gone away.
-	 */
-	if (comp)
-		complete(comp);
-	else
-		call_usermodehelper_freeinfo(sub_info);
-}
-
 /* Keventd can't block, but this (a child) can. */
 static int wait_for_helper(void *data)
 {
@@ -282,10 +288,7 @@ static int wait_for_helper(void *data)
 	pid_t pid;
 
 	/* If SIGCLD is ignored sys_wait4 won't populate the status. */
-	spin_lock_irq(&current->sighand->siglock);
-	current->sighand->action[SIGCHLD-1].sa.sa_handler = SIG_DFL;
-	spin_unlock_irq(&current->sighand->siglock);
-
+	kernel_sigaction(SIGCHLD, SIG_DFL);
 	pid = kernel_thread(____call_usermodehelper, sub_info, SIGCHLD);
 	if (pid < 0) {
 		sub_info->retval = pid;
@@ -336,18 +339,8 @@ static void __call_usermodehelper(struct work_struct *work)
 		kmod_thread_locker = NULL;
 	}
 
-	switch (wait) {
-	case UMH_NO_WAIT:
-		call_usermodehelper_freeinfo(sub_info);
-		break;
-
-	case UMH_WAIT_PROC:
-		if (pid > 0)
-			break;
-		/* FALLTHROUGH */
-	case UMH_WAIT_EXEC:
-		if (pid < 0)
-			sub_info->retval = pid;
+	if (pid < 0) {
+		sub_info->retval = pid;
 		umh_complete(sub_info);
 	}
 }
@@ -495,7 +488,7 @@ int __usermodehelper_disable(enum umh_disable_depth depth)
 static void helper_lock(void)
 {
 	atomic_inc(&running_helpers);
-	smp_mb__after_atomic_inc();
+	smp_mb__after_atomic();
 }
 
 static void helper_unlock(void)
@@ -568,15 +561,11 @@ int call_usermodehelper_exec(struct subprocess_info *sub_info, int wait)
 	DECLARE_COMPLETION_ONSTACK(done);
 	int retval = 0;
 
-	helper_lock();
 	if (!sub_info->path) {
-		retval = -EINVAL;
-		goto out;
+		call_usermodehelper_freeinfo(sub_info);
+		return -EINVAL;
 	}
-
-	if (sub_info->path[0] == '\0')
-		goto out;
-
+	helper_lock();
 	if (!khelper_wq || usermodehelper_disabled) {
 		retval = -EBUSY;
 		goto out;
@@ -592,7 +581,12 @@ int call_usermodehelper_exec(struct subprocess_info *sub_info, int wait)
 		goto out;
 	}
 
-	sub_info->complete = &done;
+	/*
+	 * Set the completion pointer only if there is a waiter.
+	 * This makes it possible to use umh_complete to free
+	 * the data structure in case of UMH_NO_WAIT.
+	 */
+	sub_info->complete = (wait == UMH_NO_WAIT) ? NULL : &done;
 	sub_info->wait = wait;
 
 	queue_work(khelper_wq, &sub_info->work);

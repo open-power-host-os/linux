@@ -4,7 +4,6 @@
 #ifndef _ASM_POWERPC_PPC_ASM_H
 #define _ASM_POWERPC_PPC_ASM_H
 
-#include <linux/init.h>
 #include <linux/stringify.h>
 #include <asm/asm-compat.h>
 #include <asm/processor.h>
@@ -54,10 +53,11 @@ BEGIN_FW_FTR_SECTION;							\
 	/* from user - see if there are any DTL entries to process */	\
 	ld	r10,PACALPPACAPTR(r13);	/* get ptr to VPA */		\
 	ld	r11,PACA_DTL_RIDX(r13);	/* get log read index */	\
-	ld	r10,LPPACA_DTLIDX(r10);	/* get log write index */	\
+	addi	r10,r10,LPPACA_DTLIDX;					\
+	LDX_BE	r10,0,r10;		/* get log write index */	\
 	cmpd	cr1,r11,r10;						\
 	beq+	cr1,33f;						\
-	bl	.accumulate_stolen_time;				\
+	bl	accumulate_stolen_time;				\
 	ld	r12,_MSR(r1);						\
 	andi.	r10,r12,MSR_PR;		/* Restore cr0 (coming from user) */ \
 33:									\
@@ -123,32 +123,30 @@ END_FW_FTR_SECTION_IFSET(FW_FEATURE_SPLPAR)
 #define REST_16VRS(n,b,base)	REST_8VRS(n,b,base); REST_8VRS(n+8,b,base)
 #define REST_32VRS(n,b,base)	REST_16VRS(n,b,base); REST_16VRS(n+16,b,base)
 
+#ifdef __BIG_ENDIAN__
+#define STXVD2X_ROT(n,b,base)		STXVD2X(n,b,base)
+#define LXVD2X_ROT(n,b,base)		LXVD2X(n,b,base)
+#else
+#define STXVD2X_ROT(n,b,base)		XXSWAPD(n,n);		\
+					STXVD2X(n,b,base);	\
+					XXSWAPD(n,n)
+
+#define LXVD2X_ROT(n,b,base)		LXVD2X(n,b,base);	\
+					XXSWAPD(n,n)
+#endif
 /* Save the lower 32 VSRs in the thread VSR region */
-#define SAVE_VSR(n,b,base)	li b,16*(n);  STXVD2X(n,R##base,R##b)
+#define SAVE_VSR(n,b,base)	li b,16*(n);  STXVD2X_ROT(n,R##base,R##b)
 #define SAVE_2VSRS(n,b,base)	SAVE_VSR(n,b,base); SAVE_VSR(n+1,b,base)
 #define SAVE_4VSRS(n,b,base)	SAVE_2VSRS(n,b,base); SAVE_2VSRS(n+2,b,base)
 #define SAVE_8VSRS(n,b,base)	SAVE_4VSRS(n,b,base); SAVE_4VSRS(n+4,b,base)
 #define SAVE_16VSRS(n,b,base)	SAVE_8VSRS(n,b,base); SAVE_8VSRS(n+8,b,base)
 #define SAVE_32VSRS(n,b,base)	SAVE_16VSRS(n,b,base); SAVE_16VSRS(n+16,b,base)
-#define REST_VSR(n,b,base)	li b,16*(n); LXVD2X(n,R##base,R##b)
+#define REST_VSR(n,b,base)	li b,16*(n); LXVD2X_ROT(n,R##base,R##b)
 #define REST_2VSRS(n,b,base)	REST_VSR(n,b,base); REST_VSR(n+1,b,base)
 #define REST_4VSRS(n,b,base)	REST_2VSRS(n,b,base); REST_2VSRS(n+2,b,base)
 #define REST_8VSRS(n,b,base)	REST_4VSRS(n,b,base); REST_4VSRS(n+4,b,base)
 #define REST_16VSRS(n,b,base)	REST_8VSRS(n,b,base); REST_8VSRS(n+8,b,base)
 #define REST_32VSRS(n,b,base)	REST_16VSRS(n,b,base); REST_16VSRS(n+16,b,base)
-/* Save the upper 32 VSRs (32-63) in the thread VSX region (0-31) */
-#define SAVE_VSRU(n,b,base)	li b,THREAD_VR0+(16*(n));  STXVD2X(n+32,R##base,R##b)
-#define SAVE_2VSRSU(n,b,base)	SAVE_VSRU(n,b,base); SAVE_VSRU(n+1,b,base)
-#define SAVE_4VSRSU(n,b,base)	SAVE_2VSRSU(n,b,base); SAVE_2VSRSU(n+2,b,base)
-#define SAVE_8VSRSU(n,b,base)	SAVE_4VSRSU(n,b,base); SAVE_4VSRSU(n+4,b,base)
-#define SAVE_16VSRSU(n,b,base)	SAVE_8VSRSU(n,b,base); SAVE_8VSRSU(n+8,b,base)
-#define SAVE_32VSRSU(n,b,base)	SAVE_16VSRSU(n,b,base); SAVE_16VSRSU(n+16,b,base)
-#define REST_VSRU(n,b,base)	li b,THREAD_VR0+(16*(n)); LXVD2X(n+32,R##base,R##b)
-#define REST_2VSRSU(n,b,base)	REST_VSRU(n,b,base); REST_VSRU(n+1,b,base)
-#define REST_4VSRSU(n,b,base)	REST_2VSRSU(n,b,base); REST_2VSRSU(n+2,b,base)
-#define REST_8VSRSU(n,b,base)	REST_4VSRSU(n,b,base); REST_4VSRSU(n+4,b,base)
-#define REST_16VSRSU(n,b,base)	REST_8VSRSU(n,b,base); REST_8VSRSU(n+8,b,base)
-#define REST_32VSRSU(n,b,base)	REST_16VSRSU(n,b,base); REST_16VSRSU(n+16,b,base)
 
 /*
  * b = base register for addressing, o = base offset from register of 1st EVR
@@ -191,8 +189,44 @@ END_FW_FTR_SECTION_IFSET(FW_FEATURE_SPLPAR)
 #define __STK_REG(i)   (112 + ((i)-14)*8)
 #define STK_REG(i)     __STK_REG(__REG_##i)
 
+#if defined(_CALL_ELF) && _CALL_ELF == 2
+#define STK_GOT		24
+#define __STK_PARAM(i)	(32 + ((i)-3)*8)
+#else
+#define STK_GOT		40
 #define __STK_PARAM(i)	(48 + ((i)-3)*8)
+#endif
 #define STK_PARAM(i)	__STK_PARAM(__REG_##i)
+
+#if defined(_CALL_ELF) && _CALL_ELF == 2
+
+#define _GLOBAL(name) \
+	.section ".text"; \
+	.align 2 ; \
+	.type name,@function; \
+	.globl name; \
+name:
+
+#define _GLOBAL_TOC(name) \
+	.section ".text"; \
+	.align 2 ; \
+	.type name,@function; \
+	.globl name; \
+name: \
+0:	addis r2,r12,(.TOC.-0b)@ha; \
+	addi r2,r2,(.TOC.-0b)@l; \
+	.localentry name,.-name
+
+#define _KPROBE(name) \
+	.section ".kprobes.text","a"; \
+	.align 2 ; \
+	.type name,@function; \
+	.globl name; \
+name:
+
+#define DOTSYM(a)	a
+
+#else
 
 #define XGLUE(a,b) a##b
 #define GLUE(a,b) XGLUE(a,b)
@@ -211,19 +245,7 @@ name: \
 	.type GLUE(.,name),@function; \
 GLUE(.,name):
 
-#define _INIT_GLOBAL(name) \
-	__REF; \
-	.align 2 ; \
-	.globl name; \
-	.globl GLUE(.,name); \
-	.section ".opd","aw"; \
-name: \
-	.quad GLUE(.,name); \
-	.quad .TOC.@tocbase; \
-	.quad 0; \
-	.previous; \
-	.type GLUE(.,name),@function; \
-GLUE(.,name):
+#define _GLOBAL_TOC(name) _GLOBAL(name)
 
 #define _KPROBE(name) \
 	.section ".kprobes.text","a"; \
@@ -239,29 +261,9 @@ name: \
 	.type GLUE(.,name),@function; \
 GLUE(.,name):
 
-#define _STATIC(name) \
-	.section ".text"; \
-	.align 2 ; \
-	.section ".opd","aw"; \
-name: \
-	.quad GLUE(.,name); \
-	.quad .TOC.@tocbase; \
-	.quad 0; \
-	.previous; \
-	.type GLUE(.,name),@function; \
-GLUE(.,name):
+#define DOTSYM(a)	GLUE(.,a)
 
-#define _INIT_STATIC(name) \
-	__REF; \
-	.align 2 ; \
-	.section ".opd","aw"; \
-name: \
-	.quad GLUE(.,name); \
-	.quad .TOC.@tocbase; \
-	.quad 0; \
-	.previous; \
-	.type GLUE(.,name),@function; \
-GLUE(.,name):
+#endif
 
 #else /* 32-bit */
 
@@ -274,6 +276,8 @@ n:
 	.stabs __stringify(n:F-1),N_FUN,0,0,n;\
 	.globl n;	\
 n:
+
+#define _GLOBAL_TOC(name) _GLOBAL(name)
 
 #define _KPROBE(n)	\
 	.section ".kprobes.text","a";	\
@@ -296,6 +300,11 @@ n:
  *   you want to access various offsets within it).  On ppc32 this is
  *   identical to LOAD_REG_IMMEDIATE.
  *
+ * LOAD_REG_ADDR_PIC(rn, name)
+ *   Loads the address of label 'name' into register 'run'. Use this when
+ *   the kernel doesn't run at the linked or relocated address. Please
+ *   note that this macro will clobber the lr register.
+ *
  * LOAD_REG_ADDRBASE(rn, name)
  * ADDROFF(name)
  *   LOAD_REG_ADDRBASE loads part of the address of label 'name' into
@@ -306,6 +315,14 @@ n:
  *      LOAD_REG_ADDRBASE(rX, name)
  *      ld	rY,ADDROFF(name)(rX)
  */
+
+/* Be careful, this will clobber the lr register. */
+#define LOAD_REG_ADDR_PIC(reg, name)		\
+	bl	0f;				\
+0:	mflr	reg;				\
+	addis	reg,reg,(name - 0b)@ha;		\
+	addi	reg,reg,(name - 0b)@l;
+
 #ifdef __powerpc64__
 #ifdef HAVE_AS_ATHIGH
 #define __AS_ATHIGH high
@@ -365,15 +382,17 @@ END_FTR_SECTION_IFSET(CPU_FTR_601)
 #define ISYNC_601
 #endif
 
-#ifdef CONFIG_PPC_CELL
+#if defined(CONFIG_PPC_CELL) || defined(CONFIG_PPC_FSL_BOOK3E)
 #define MFTB(dest)			\
-90:	mftb  dest;			\
+90:	mfspr dest, SPRN_TBRL;		\
 BEGIN_FTR_SECTION_NESTED(96);		\
 	cmpwi dest,0;			\
 	beq-  90b;			\
 END_FTR_SECTION_NESTED(CPU_FTR_CELL_TB_BUG, CPU_FTR_CELL_TB_BUG, 96)
-#else
+#elif defined(CONFIG_8xx)
 #define MFTB(dest)			mftb dest
+#else
+#define MFTB(dest)			mfspr dest, SPRN_TBRL
 #endif
 
 #ifndef CONFIG_SMP
@@ -759,6 +778,35 @@ END_FTR_SECTION_NESTED(CPU_FTR_HAS_PPR,CPU_FTR_HAS_PPR,945)
 #define N_SLINE	68
 #define N_SO	100
 
-#endif /*  __ASSEMBLY__ */
+/*
+ * Create an endian fixup trampoline
+ *
+ * This starts with a "tdi 0,0,0x48" instruction which is
+ * essentially a "trap never", and thus akin to a nop.
+ *
+ * The opcode for this instruction read with the wrong endian
+ * however results in a b . + 8
+ *
+ * So essentially we use that trick to execute the following
+ * trampoline in "reverse endian" if we are running with the
+ * MSR_LE bit set the "wrong" way for whatever endianness the
+ * kernel is built for.
+ */
 
+#ifdef CONFIG_PPC_BOOK3E
+#define FIXUP_ENDIAN
+#else
+#define FIXUP_ENDIAN						   \
+	tdi   0,0,0x48;	  /* Reverse endian of b . + 8		*/ \
+	b     $+36;	  /* Skip trampoline if endian is good	*/ \
+	.long 0x05009f42; /* bcl 20,31,$+4			*/ \
+	.long 0xa602487d; /* mflr r10				*/ \
+	.long 0x1c004a39; /* addi r10,r10,28			*/ \
+	.long 0xa600607d; /* mfmsr r11				*/ \
+	.long 0x01006b69; /* xori r11,r11,1			*/ \
+	.long 0xa6035a7d; /* mtsrr0 r10				*/ \
+	.long 0xa6037b7d; /* mtsrr1 r11				*/ \
+	.long 0x2400004c  /* rfid				*/
+#endif /* !CONFIG_PPC_BOOK3E */
+#endif /*  __ASSEMBLY__ */
 #endif /* _ASM_POWERPC_PPC_ASM_H */

@@ -19,6 +19,7 @@
 #include <asm/unistd.h>
 #include <asm/page.h>
 #include <asm/sigp.h>
+#include <asm/irq.h>
 
 __PT_R0      =	__PT_GPRS
 __PT_R1      =	__PT_GPRS + 8
@@ -41,13 +42,12 @@ STACK_SHIFT = PAGE_SHIFT + THREAD_ORDER
 STACK_SIZE  = 1 << STACK_SHIFT
 STACK_INIT = STACK_SIZE - STACK_FRAME_OVERHEAD - __PT_SIZE
 
-_TIF_WORK_SVC = (_TIF_SIGPENDING | _TIF_NOTIFY_RESUME | _TIF_NEED_RESCHED | \
-		 _TIF_MCCK_PENDING | _TIF_PER_TRAP )
-_TIF_WORK_INT = (_TIF_SIGPENDING | _TIF_NOTIFY_RESUME | _TIF_NEED_RESCHED | \
-		 _TIF_MCCK_PENDING)
-_TIF_TRACE    = (_TIF_SYSCALL_TRACE | _TIF_SYSCALL_AUDIT | _TIF_SECCOMP | \
-		 _TIF_SYSCALL_TRACEPOINT)
-_TIF_EXIT_SIE = (_TIF_SIGPENDING | _TIF_NEED_RESCHED | _TIF_MCCK_PENDING)
+_TIF_WORK	= (_TIF_SIGPENDING | _TIF_NOTIFY_RESUME | _TIF_NEED_RESCHED | \
+		   _TIF_UPROBE)
+_TIF_TRACE	= (_TIF_SYSCALL_TRACE | _TIF_SYSCALL_AUDIT | _TIF_SECCOMP | \
+		   _TIF_SYSCALL_TRACEPOINT)
+_CIF_WORK	= (_CIF_MCCK_PENDING | _CIF_ASCE)
+_PIF_WORK	= (_PIF_PER_TRAP)
 
 #define BASED(name) name-system_call(%r13)
 
@@ -74,30 +74,34 @@ _TIF_EXIT_SIE = (_TIF_SIGPENDING | _TIF_NEED_RESCHED | _TIF_MCCK_PENDING)
 	.endm
 
 	.macro LPP newpp
-#if defined(CONFIG_KVM) || defined(CONFIG_KVM_MODULE)
+#if IS_ENABLED(CONFIG_KVM)
 	tm	__LC_MACHINE_FLAGS+6,0x20	# MACHINE_FLAG_LPP
 	jz	.+8
 	.insn	s,0xb2800000,\newpp
 #endif
 	.endm
 
-	.macro	HANDLE_SIE_INTERCEPT scratch,pgmcheck
-#if defined(CONFIG_KVM) || defined(CONFIG_KVM_MODULE)
+	.macro	HANDLE_SIE_INTERCEPT scratch,reason
+#if IS_ENABLED(CONFIG_KVM)
 	tmhh	%r8,0x0001		# interrupting from user ?
-	jnz	.+42
+	jnz	.+62
 	lgr	\scratch,%r9
-	slg	\scratch,BASED(.Lsie_loop)
-	clg	\scratch,BASED(.Lsie_length)
-	.if	\pgmcheck
+	slg	\scratch,BASED(.Lsie_critical)
+	clg	\scratch,BASED(.Lsie_critical_length)
+	.if	\reason==1
 	# Some program interrupts are suppressing (e.g. protection).
 	# We must also check the instruction after SIE in that case.
 	# do_protection_exception will rewind to rewind_pad
-	jh	.+22
+	jh	.+42
 	.else
-	jhe	.+22
+	jhe	.+42
 	.endif
-	lg	%r9,BASED(.Lsie_loop)
-	LPP	BASED(.Lhost_id)	# set host id
+	lg	%r14,__SF_EMPTY(%r15)		# get control block pointer
+	LPP	__SF_EMPTY+16(%r15)		# set host id
+	ni	__SIE_PROG0C+3(%r14),0xfe	# no longer in SIE
+	lctlg	%c1,%c1,__LC_USER_ASCE		# load primary asce
+	larl	%r9,sie_exit			# skip forward to sie_exit
+	mvi	__SF_EMPTY+31(%r15),\reason	# set exit reason
 #endif
 	.endm
 
@@ -185,11 +189,7 @@ ENTRY(__switch_to)
 	lctl	%c4,%c4,__TASK_pid(%r3)		# load pid to control reg. 4
 	mvc	__LC_CURRENT_PID+4(4,%r0),__TASK_pid(%r3) # store pid of next
 	lg	%r15,__THREAD_ksp(%r3)		# load kernel stack of next
-	tm	__TI_flags+7(%r4),_TIF_MCCK_PENDING # machine check pending?
-	jz	0f
-	ni	__TI_flags+7(%r4),255-_TIF_MCCK_PENDING	# clear flag in prev
-	oi	__TI_flags+7(%r5),_TIF_MCCK_PENDING	# set it in next
-0:	lmg	%r6,%r15,__SF_GPRS(%r15)	# load gprs of next task
+	lmg	%r6,%r15,__SF_GPRS(%r15)	# load gprs of next task
 	br	%r14
 
 __critical_start:
@@ -204,6 +204,7 @@ sysc_stmg:
 	stmg	%r8,%r15,__LC_SAVE_AREA_SYNC
 	lg	%r10,__LC_LAST_BREAK
 	lg	%r12,__LC_THREAD_INFO
+	lghi	%r14,_PIF_SYSCALL
 sysc_per:
 	lg	%r15,__LC_KERNEL_STACK
 	la	%r11,STACK_FRAME_OVERHEAD(%r15)	# pointer to pt_regs
@@ -214,8 +215,8 @@ sysc_vtime:
 	mvc	__PT_R8(64,%r11),__LC_SAVE_AREA_SYNC
 	mvc	__PT_PSW(16,%r11),__LC_SVC_OLD_PSW
 	mvc	__PT_INT_CODE(4,%r11),__LC_SVC_ILC
+	stg	%r14,__PT_FLAGS(%r11)
 sysc_do_svc:
-	oi	__TI_flags+7(%r12),_TIF_SYSCALL
 	lg	%r10,__TI_sysc_table(%r12)	# address of system call table
 	llgh	%r8,__PT_INT_CODE+2(%r11)
 	slag	%r8,%r8,2			# shift and test for svc 0
@@ -231,7 +232,7 @@ sysc_nr_ok:
 	stg	%r2,__PT_ORIG_GPR2(%r11)
 	stg	%r7,STACK_FRAME_OVERHEAD(%r15)
 	lgf	%r9,0(%r8,%r10)			# get system call add.
-	tm	__TI_flags+6(%r12),_TIF_TRACE >> 8
+	tm	__TI_flags+7(%r12),_TIF_TRACE
 	jnz	sysc_tracesys
 	basr	%r14,%r9			# call sys_xxxx
 	stg	%r2,__PT_R2(%r11)		# store return value
@@ -241,9 +242,12 @@ sysc_return:
 sysc_tif:
 	tm	__PT_PSW+1(%r11),0x01		# returning to user ?
 	jno	sysc_restore
-	tm	__TI_flags+7(%r12),_TIF_WORK_SVC
+	tm	__PT_FLAGS+7(%r11),_PIF_WORK
+	jnz	sysc_work
+	tm	__TI_flags+7(%r12),_TIF_WORK
 	jnz	sysc_work			# check for work
-	ni	__TI_flags+7(%r12),255-_TIF_SYSCALL
+	tm	__LC_CPU_FLAGS+7,_CIF_WORK
+	jnz	sysc_work
 sysc_restore:
 	lg	%r14,__LC_VDSO_PER_CPU
 	lmg	%r0,%r10,__PT_R0(%r11)
@@ -258,16 +262,22 @@ sysc_done:
 # One of the work bits is on. Find out which one.
 #
 sysc_work:
-	tm	__TI_flags+7(%r12),_TIF_MCCK_PENDING
+	tm	__LC_CPU_FLAGS+7,_CIF_MCCK_PENDING
 	jo	sysc_mcck_pending
 	tm	__TI_flags+7(%r12),_TIF_NEED_RESCHED
 	jo	sysc_reschedule
-	tm	__TI_flags+7(%r12),_TIF_PER_TRAP
+#ifdef CONFIG_UPROBES
+	tm	__TI_flags+7(%r12),_TIF_UPROBE
+	jo	sysc_uprobe_notify
+#endif
+	tm	__PT_FLAGS+7(%r11),_PIF_PER_TRAP
 	jo	sysc_singlestep
 	tm	__TI_flags+7(%r12),_TIF_SIGPENDING
 	jo	sysc_sigpending
 	tm	__TI_flags+7(%r12),_TIF_NOTIFY_RESUME
 	jo	sysc_notify_resume
+	tm	__LC_CPU_FLAGS+7,_CIF_ASCE
+	jo	sysc_uaccess
 	j	sysc_return		# beware of critical section cleanup
 
 #
@@ -278,11 +288,19 @@ sysc_reschedule:
 	jg	schedule
 
 #
-# _TIF_MCCK_PENDING is set, call handler
+# _CIF_MCCK_PENDING is set, call handler
 #
 sysc_mcck_pending:
 	larl	%r14,sysc_return
 	jg	s390_handle_mcck	# TIF bit will be cleared by handler
+
+#
+# _CIF_ASCE is set, load user space asce
+#
+sysc_uaccess:
+	ni	__LC_CPU_FLAGS+7,255-_CIF_ASCE
+	lctlg	%c1,%c1,__LC_USER_ASCE		# load primary asce
+	j	sysc_return
 
 #
 # _TIF_SIGPENDING is set, call do_signal
@@ -290,7 +308,7 @@ sysc_mcck_pending:
 sysc_sigpending:
 	lgr	%r2,%r11		# pass pointer to pt_regs
 	brasl	%r14,do_signal
-	tm	__TI_flags+7(%r12),_TIF_SYSCALL
+	tm	__PT_FLAGS+7(%r11),_PIF_SYSCALL
 	jno	sysc_return
 	lmg	%r2,%r7,__PT_R2(%r11)	# load svc arguments
 	lg	%r10,__TI_sysc_table(%r12)	# address of system call table
@@ -310,10 +328,20 @@ sysc_notify_resume:
 	jg	do_notify_resume
 
 #
-# _TIF_PER_TRAP is set, call do_per_trap
+# _TIF_UPROBE is set, call uprobe_notify_resume
+#
+#ifdef CONFIG_UPROBES
+sysc_uprobe_notify:
+	lgr	%r2,%r11		# pass pointer to pt_regs
+	larl	%r14,sysc_return
+	jg	uprobe_notify_resume
+#endif
+
+#
+# _PIF_PER_TRAP is set, call do_per_trap
 #
 sysc_singlestep:
-	ni	__TI_flags+7(%r12),255-_TIF_PER_TRAP
+	ni	__PT_FLAGS+7(%r11),255-_PIF_PER_TRAP
 	lgr	%r2,%r11		# pass pointer to pt_regs
 	larl	%r14,sysc_return
 	jg	do_per_trap
@@ -340,7 +368,7 @@ sysc_tracego:
 	basr	%r14,%r9		# call sys_xxx
 	stg	%r2,__PT_R2(%r11)	# store return value
 sysc_tracenogo:
-	tm	__TI_flags+6(%r12),_TIF_TRACE >> 8
+	tm	__TI_flags+7(%r12),_TIF_TRACE
 	jz	sysc_return
 	lgr	%r2,%r11		# pass pointer to pt_regs
 	larl	%r14,sysc_return
@@ -399,15 +427,16 @@ ENTRY(pgm_check_handler)
 	stmg	%r8,%r9,__PT_PSW(%r11)
 	mvc	__PT_INT_CODE(4,%r11),__LC_PGM_ILC
 	mvc	__PT_INT_PARM_LONG(8,%r11),__LC_TRANS_EXC_CODE
+	xc	__PT_FLAGS(8,%r11),__PT_FLAGS(%r11)
 	stg	%r10,__PT_ARGS(%r11)
 	tm	__LC_PGM_ILC+3,0x80	# check for per exception
 	jz	0f
 	tmhh	%r8,0x0001		# kernel per event ?
 	jz	pgm_kprobe
-	oi	__TI_flags+7(%r12),_TIF_PER_TRAP
+	oi	__PT_FLAGS+7(%r11),_PIF_PER_TRAP
 	mvc	__THREAD_per_address(8,%r14),__LC_PER_ADDRESS
-	mvc	__THREAD_per_cause(2,%r14),__LC_PER_CAUSE
-	mvc	__THREAD_per_paid(1,%r14),__LC_PER_PAID
+	mvc	__THREAD_per_cause(2,%r14),__LC_PER_CODE
+	mvc	__THREAD_per_paid(1,%r14),__LC_PER_ACCESS_ID
 0:	REENABLE_IRQS
 	xc	__SF_BACKCHAIN(8,%r15),__SF_BACKCHAIN(%r15)
 	larl	%r1,pgm_check_table
@@ -434,10 +463,10 @@ pgm_kprobe:
 # single stepped system call
 #
 pgm_svcper:
-	oi	__TI_flags+7(%r12),_TIF_PER_TRAP
 	mvc	__LC_RETURN_PSW(8),__LC_SVC_NEW_PSW
 	larl	%r14,sysc_per
 	stg	%r14,__LC_RETURN_PSW+8
+	lghi	%r14,_PIF_SYSCALL | _PIF_PER_TRAP
 	lpswe	__LC_RETURN_PSW		# branch to sysc_per and enable irqs
 
 /*
@@ -451,7 +480,7 @@ ENTRY(io_int_handler)
 	lg	%r12,__LC_THREAD_INFO
 	larl	%r13,system_call
 	lmg	%r8,%r9,__LC_IO_OLD_PSW
-	HANDLE_SIE_INTERCEPT %r14,0
+	HANDLE_SIE_INTERCEPT %r14,2
 	SWITCH_ASYNC __LC_SAVE_AREA_ASYNC,__LC_ASYNC_STACK,STACK_SHIFT
 	tmhh	%r8,0x0001		# interrupting from user?
 	jz	io_skip
@@ -461,16 +490,32 @@ io_skip:
 	stmg	%r0,%r7,__PT_R0(%r11)
 	mvc	__PT_R8(64,%r11),__LC_SAVE_AREA_ASYNC
 	stmg	%r8,%r9,__PT_PSW(%r11)
+	mvc	__PT_INT_CODE(12,%r11),__LC_SUBCHANNEL_ID
+	xc	__PT_FLAGS(8,%r11),__PT_FLAGS(%r11)
 	TRACE_IRQS_OFF
 	xc	__SF_BACKCHAIN(8,%r15),__SF_BACKCHAIN(%r15)
+io_loop:
 	lgr	%r2,%r11		# pass pointer to pt_regs
+	lghi	%r3,IO_INTERRUPT
+	tm	__PT_INT_CODE+8(%r11),0x80	# adapter interrupt ?
+	jz	io_call
+	lghi	%r3,THIN_INTERRUPT
+io_call:
 	brasl	%r14,do_IRQ
+	tm	__LC_MACHINE_FLAGS+6,0x10	# MACHINE_FLAG_LPAR
+	jz	io_return
+	tpi	0
+	jz	io_return
+	mvc	__PT_INT_CODE(12,%r11),__LC_SUBCHANNEL_ID
+	j	io_loop
 io_return:
 	LOCKDEP_SYS_EXIT
 	TRACE_IRQS_ON
 io_tif:
-	tm	__TI_flags+7(%r12),_TIF_WORK_INT
+	tm	__TI_flags+7(%r12),_TIF_WORK
 	jnz	io_work 		# there is work to do (signals etc.)
+	tm	__LC_CPU_FLAGS+7,_CIF_WORK
+	jnz	io_work
 io_restore:
 	lg	%r14,__LC_VDSO_PER_CPU
 	lmg	%r0,%r10,__PT_R0(%r11)
@@ -483,7 +528,7 @@ io_done:
 
 #
 # There is work todo, find out in which context we have been interrupted:
-# 1) if we return to user space we can do all _TIF_WORK_INT work
+# 1) if we return to user space we can do all _TIF_WORK work
 # 2) if we return to kernel code and kvm is enabled check if we need to
 #    modify the psw to leave SIE
 # 3) if we return to kernel code and preemptive scheduling is enabled check
@@ -527,11 +572,9 @@ io_work_user:
 
 #
 # One of the work bits is on. Find out which one.
-# Checked are: _TIF_SIGPENDING, _TIF_NOTIFY_RESUME, _TIF_NEED_RESCHED
-#	       and _TIF_MCCK_PENDING
 #
 io_work_tif:
-	tm	__TI_flags+7(%r12),_TIF_MCCK_PENDING
+	tm	__LC_CPU_FLAGS+7,_CIF_MCCK_PENDING
 	jo	io_mcck_pending
 	tm	__TI_flags+7(%r12),_TIF_NEED_RESCHED
 	jo	io_reschedule
@@ -539,15 +582,25 @@ io_work_tif:
 	jo	io_sigpending
 	tm	__TI_flags+7(%r12),_TIF_NOTIFY_RESUME
 	jo	io_notify_resume
+	tm	__LC_CPU_FLAGS+7,_CIF_ASCE
+	jo	io_uaccess
 	j	io_return		# beware of critical section cleanup
 
 #
-# _TIF_MCCK_PENDING is set, call handler
+# _CIF_MCCK_PENDING is set, call handler
 #
 io_mcck_pending:
 	# TRACE_IRQS_ON already done at io_return
 	brasl	%r14,s390_handle_mcck	# TIF bit will be cleared by handler
 	TRACE_IRQS_OFF
+	j	io_return
+
+#
+# _CIF_ASCE is set, load user space asce
+#
+io_uaccess:
+	ni	__LC_CPU_FLAGS+7,255-_CIF_ASCE
+	lctlg	%c1,%c1,__LC_USER_ASCE		# load primary asce
 	j	io_return
 
 #
@@ -596,7 +649,7 @@ ENTRY(ext_int_handler)
 	lg	%r12,__LC_THREAD_INFO
 	larl	%r13,system_call
 	lmg	%r8,%r9,__LC_EXT_OLD_PSW
-	HANDLE_SIE_INTERCEPT %r14,0
+	HANDLE_SIE_INTERCEPT %r14,3
 	SWITCH_ASYNC __LC_SAVE_AREA_ASYNC,__LC_ASYNC_STACK,STACK_SHIFT
 	tmhh	%r8,0x0001		# interrupting from user ?
 	jz	ext_skip
@@ -606,14 +659,16 @@ ext_skip:
 	stmg	%r0,%r7,__PT_R0(%r11)
 	mvc	__PT_R8(64,%r11),__LC_SAVE_AREA_ASYNC
 	stmg	%r8,%r9,__PT_PSW(%r11)
+	lghi	%r1,__LC_EXT_PARAMS2
+	mvc	__PT_INT_CODE(4,%r11),__LC_EXT_CPU_ADDR
+	mvc	__PT_INT_PARM(4,%r11),__LC_EXT_PARAMS
+	mvc	__PT_INT_PARM_LONG(8,%r11),0(%r1)
+	xc	__PT_FLAGS(8,%r11),__PT_FLAGS(%r11)
 	TRACE_IRQS_OFF
 	xc	__SF_BACKCHAIN(8,%r15),__SF_BACKCHAIN(%r15)
-	lghi	%r1,4096
 	lgr	%r2,%r11		# pass pointer to pt_regs
-	llgf	%r3,__LC_EXT_CPU_ADDR	# get cpu address + interruption code
-	llgf	%r4,__LC_EXT_PARAMS	# get external parameter
-	lg	%r5,__LC_EXT_PARAMS2-4096(%r1)	# get 64 bit external parameter
-	brasl	%r14,do_extint
+	lghi	%r3,EXT_INTERRUPT
+	brasl	%r14,do_IRQ
 	j	io_return
 
 /*
@@ -644,7 +699,7 @@ ENTRY(mcck_int_handler)
 	lg	%r12,__LC_THREAD_INFO
 	larl	%r13,system_call
 	lmg	%r8,%r9,__LC_MCK_OLD_PSW
-	HANDLE_SIE_INTERCEPT %r14,0
+	HANDLE_SIE_INTERCEPT %r14,4
 	tm	__LC_MCCK_CODE,0x80	# system damage?
 	jo	mcck_panic		# yes -> rest of mcck code invalid
 	lghi	%r14,__LC_CPU_TIMER_SAVE_AREA
@@ -675,6 +730,7 @@ mcck_skip:
 	stmg	%r0,%r7,__PT_R0(%r11)
 	mvc	__PT_R8(64,%r11),0(%r14)
 	stmg	%r8,%r9,__PT_PSW(%r11)
+	xc	__PT_FLAGS(8,%r11),__PT_FLAGS(%r11)
 	xc	__SF_BACKCHAIN(8,%r15),__SF_BACKCHAIN(%r15)
 	lgr	%r2,%r11		# pass pointer to pt_regs
 	brasl	%r14,s390_do_machine_check
@@ -686,7 +742,7 @@ mcck_skip:
 	la	%r11,STACK_FRAME_OVERHEAD(%r1)
 	lgr	%r15,%r1
 	ssm	__LC_PGM_NEW_PSW	# turn dat on, keep irqs off
-	tm	__TI_flags+7(%r12),_TIF_MCCK_PENDING
+	tm	__LC_CPU_FLAGS+7,_CIF_MCCK_PENDING
 	jno	mcck_return
 	TRACE_IRQS_OFF
 	brasl	%r14,s390_handle_mcck
@@ -843,6 +899,8 @@ cleanup_system_call:
 	stmg	%r0,%r7,__PT_R0(%r9)
 	mvc	__PT_PSW(16,%r9),__LC_SVC_OLD_PSW
 	mvc	__PT_INT_CODE(4,%r9),__LC_SVC_ILC
+	xc	__PT_FLAGS(8,%r9),__PT_FLAGS(%r9)
+	mvi	__PT_FLAGS+7(%r9),_PIF_SYSCALL
 	# setup saved register r15
 	stg	%r15,56(%r11)		# r15 stack pointer
 	# set new psw address and exit
@@ -912,7 +970,7 @@ cleanup_idle:
 	stg	%r9,__LC_SYSTEM_TIMER
 	mvc	__LC_LAST_UPDATE_TIMER(8),__TIMER_IDLE_EXIT(%r2)
 	# prepare return psw
-	nihh	%r8,0xfffd		# clear wait state bit
+	nihh	%r8,0xfcfd		# clear irq & wait state bits
 	lg	%r9,48(%r11)		# return from psw_idle
 	br	%r14
 cleanup_idle_insn:
@@ -928,7 +986,7 @@ cleanup_idle_insn:
 	.quad	__critical_end - __critical_start
 
 
-#if defined(CONFIG_KVM) || defined(CONFIG_KVM_MODULE)
+#if IS_ENABLED(CONFIG_KVM)
 /*
  * sie64a calling convention:
  * %r2 pointer to sie control block
@@ -938,56 +996,50 @@ ENTRY(sie64a)
 	stmg	%r6,%r14,__SF_GPRS(%r15)	# save kernel registers
 	stg	%r2,__SF_EMPTY(%r15)		# save control block pointer
 	stg	%r3,__SF_EMPTY+8(%r15)		# save guest register save area
-	xc	__SF_EMPTY+16(8,%r15),__SF_EMPTY+16(%r15) # host id == 0
+	xc	__SF_EMPTY+16(16,%r15),__SF_EMPTY+16(%r15) # host id & reason
 	lmg	%r0,%r13,0(%r3)			# load guest gprs 0-13
-# some program checks are suppressing. C code (e.g. do_protection_exception)
-# will rewind the PSW by the ILC, which is 4 bytes in case of SIE. Other
-# instructions in the sie_loop should not cause program interrupts. So
-# lets use a nop (47 00 00 00) as a landing pad.
-# See also HANDLE_SIE_INTERCEPT
-rewind_pad:
-	nop	0
-sie_loop:
-	lg	%r14,__LC_THREAD_INFO		# pointer thread_info struct
-	tm	__TI_flags+7(%r14),_TIF_EXIT_SIE
-	jnz	sie_exit
 	lg	%r14,__LC_GMAP			# get gmap pointer
 	ltgr	%r14,%r14
 	jz	sie_gmap
 	lctlg	%c1,%c1,__GMAP_ASCE(%r14)	# load primary asce
 sie_gmap:
 	lg	%r14,__SF_EMPTY(%r15)		# get control block pointer
+	oi	__SIE_PROG0C+3(%r14),1		# we are going into SIE now
+	tm	__SIE_PROG20+3(%r14),1		# last exit...
+	jnz	sie_done
 	LPP	__SF_EMPTY(%r15)		# set guest id
 	sie	0(%r14)
 sie_done:
 	LPP	__SF_EMPTY+16(%r15)		# set host id
-	lg	%r14,__LC_THREAD_INFO		# pointer thread_info struct
-sie_exit:
+	ni	__SIE_PROG0C+3(%r14),0xfe	# no longer in SIE
 	lctlg	%c1,%c1,__LC_USER_ASCE		# load primary asce
+# some program checks are suppressing. C code (e.g. do_protection_exception)
+# will rewind the PSW by the ILC, which is 4 bytes in case of SIE. Other
+# instructions between sie64a and sie_done should not cause program
+# interrupts. So lets use a nop (47 00 00 00) as a landing pad.
+# See also HANDLE_SIE_INTERCEPT
+rewind_pad:
+	nop	0
+	.globl sie_exit
+sie_exit:
 	lg	%r14,__SF_EMPTY+8(%r15)		# load guest register save area
 	stmg	%r0,%r13,0(%r14)		# save guest gprs 0-13
 	lmg	%r6,%r14,__SF_GPRS(%r15)	# restore kernel registers
-	lghi	%r2,0
+	lg	%r2,__SF_EMPTY+24(%r15)		# return exit reason code
 	br	%r14
 sie_fault:
-	lctlg	%c1,%c1,__LC_USER_ASCE		# load primary asce
-	lg	%r14,__LC_THREAD_INFO		# pointer thread_info struct
-	lg	%r14,__SF_EMPTY+8(%r15)		# load guest register save area
-	stmg	%r0,%r13,0(%r14)		# save guest gprs 0-13
-	lmg	%r6,%r14,__SF_GPRS(%r15)	# restore kernel registers
-	lghi	%r2,-EFAULT
-	br	%r14
+	lghi	%r14,-EFAULT
+	stg	%r14,__SF_EMPTY+24(%r15)	# set exit reason code
+	j	sie_exit
 
 	.align	8
-.Lsie_loop:
-	.quad	sie_loop
-.Lsie_length:
-	.quad	sie_done - sie_loop
-.Lhost_id:
-	.quad	0
+.Lsie_critical:
+	.quad	sie_gmap
+.Lsie_critical_length:
+	.quad	sie_done - sie_gmap
 
 	EX_TABLE(rewind_pad,sie_fault)
-	EX_TABLE(sie_loop,sie_fault)
+	EX_TABLE(sie_exit,sie_fault)
 #endif
 
 		.section .rodata, "a"

@@ -83,11 +83,6 @@ real_mode:
 	mtspr	SPRN_RPR, r9
 	mtspr	SPRN_SDR1, r10
 
-	/* Wait for thread 0 to tell us the TB sync is done */
-2:	lbz	r4, 0(r3)
-	cmpdi	r4, SYNC_STEP_TB_DONE
-	bne	2b
-
 	LOAD_REG_ADDR(r5, virtual_mode)
 
 	/* Get out of real mode */

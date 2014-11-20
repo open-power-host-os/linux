@@ -24,11 +24,14 @@
 #include <linux/kernel.h>
 #include <linux/slab.h>
 #include <linux/i2c.h>
+#include <linux/interrupt.h>
 #include <linux/err.h>
 #include <linux/mutex.h>
 #include <linux/delay.h>
-
+#include <linux/bitops.h>
 #include <linux/gpio.h>
+#include <linux/of_gpio.h>
+#include <linux/acpi.h>
 
 #include <linux/iio/iio.h>
 #include <linux/iio/sysfs.h>
@@ -82,6 +85,15 @@
  */
 #define AK8975_MAX_CONVERSION_TIMEOUT	500
 #define AK8975_CONVERSION_DONE_POLL_TIME 10
+#define AK8975_DATA_READY_TIMEOUT	((100*HZ)/1000)
+#define RAW_TO_GAUSS_8975(asa) ((((asa) + 128) * 3000) / 256)
+#define RAW_TO_GAUSS_8963(asa) ((((asa) + 128) * 6000) / 256)
+
+/* Compatible Asahi Kasei Compass parts */
+enum asahi_compass_chipset {
+	AK8975,
+	AK8963,
+};
 
 /*
  * Per-instance context data for the device.
@@ -94,6 +106,10 @@ struct ak8975_data {
 	long			raw_to_gauss[3];
 	u8			reg_cache[AK8975_MAX_REGS];
 	int			eoc_gpio;
+	int			eoc_irq;
+	wait_queue_head_t	data_ready_queue;
+	unsigned long		flags;
+	enum asahi_compass_chipset chipset;
 };
 
 static const int ak8975_index_to_reg[] = {
@@ -121,6 +137,51 @@ static int ak8975_write_data(struct i2c_client *client,
 
 	return 0;
 }
+
+/*
+ * Handle data ready irq
+ */
+static irqreturn_t ak8975_irq_handler(int irq, void *data)
+{
+	struct ak8975_data *ak8975 = data;
+
+	set_bit(0, &ak8975->flags);
+	wake_up(&ak8975->data_ready_queue);
+
+	return IRQ_HANDLED;
+}
+
+/*
+ * Install data ready interrupt handler
+ */
+static int ak8975_setup_irq(struct ak8975_data *data)
+{
+	struct i2c_client *client = data->client;
+	int rc;
+	int irq;
+
+	if (client->irq)
+		irq = client->irq;
+	else
+		irq = gpio_to_irq(data->eoc_gpio);
+
+	rc = devm_request_irq(&client->dev, irq, ak8975_irq_handler,
+			 IRQF_TRIGGER_RISING | IRQF_ONESHOT,
+			 dev_name(&client->dev), data);
+	if (rc < 0) {
+		dev_err(&client->dev,
+			"irq %d request failed, (gpio %d): %d\n",
+			irq, data->eoc_gpio, rc);
+		return rc;
+	}
+
+	init_waitqueue_head(&data->data_ready_queue);
+	clear_bit(0, &data->flags);
+	data->eoc_irq = irq;
+
+	return rc;
+}
+
 
 /*
  * Perform some start-of-day setup, including reading the asa calibration
@@ -170,6 +231,16 @@ static int ak8975_setup(struct i2c_client *client)
 				AK8975_REG_CNTL_MODE_POWER_DOWN,
 				AK8975_REG_CNTL_MODE_MASK,
 				AK8975_REG_CNTL_MODE_SHIFT);
+
+	if (data->eoc_gpio > 0 || client->irq) {
+		ret = ak8975_setup_irq(data);
+		if (ret < 0) {
+			dev_err(&client->dev,
+				"Error setting data ready interrupt\n");
+			return ret;
+		}
+	}
+
 	if (ret < 0) {
 		dev_err(&client->dev, "Error in setting power-down mode\n");
 		return ret;
@@ -202,17 +273,29 @@ static int ak8975_setup(struct i2c_client *client)
  *
  * HuT = H * 1229/4096, or roughly, 3/10.
  *
- * Since 1uT = 100 gauss, our final scale factor becomes:
+ * Since 1uT = 0.01 gauss, our final scale factor becomes:
  *
- * Hadj = H * ((ASA + 128) / 256) * 3/10 * 100
- * Hadj = H * ((ASA + 128) * 30 / 256
+ * Hadj = H * ((ASA + 128) / 256) * 3/10 * 1/100
+ * Hadj = H * ((ASA + 128) * 0.003) / 256
  *
  * Since ASA doesn't change, we cache the resultant scale factor into the
  * device context in ak8975_setup().
  */
-	data->raw_to_gauss[0] = ((data->asa[0] + 128) * 30) >> 8;
-	data->raw_to_gauss[1] = ((data->asa[1] + 128) * 30) >> 8;
-	data->raw_to_gauss[2] = ((data->asa[2] + 128) * 30) >> 8;
+	if (data->chipset == AK8963) {
+		/*
+		 * H range is +-8190 and magnetometer range is +-4912.
+		 * So HuT using the above explanation for 8975,
+		 * 4912/8190 = ~ 6/10.
+		 * So the Hadj should use 6/10 instead of 3/10.
+		 */
+		data->raw_to_gauss[0] = RAW_TO_GAUSS_8963(data->asa[0]);
+		data->raw_to_gauss[1] = RAW_TO_GAUSS_8963(data->asa[1]);
+		data->raw_to_gauss[2] = RAW_TO_GAUSS_8963(data->asa[2]);
+	} else {
+		data->raw_to_gauss[0] = RAW_TO_GAUSS_8975(data->asa[0]);
+		data->raw_to_gauss[1] = RAW_TO_GAUSS_8975(data->asa[1]);
+		data->raw_to_gauss[2] = RAW_TO_GAUSS_8975(data->asa[2]);
+	}
 
 	return 0;
 }
@@ -266,7 +349,21 @@ static int wait_conversion_complete_polled(struct ak8975_data *data)
 		dev_err(&client->dev, "Conversion timeout happened\n");
 		return -EINVAL;
 	}
+
 	return read_status;
+}
+
+/* Returns 0 if the end of conversion interrupt occured or -ETIME otherwise */
+static int wait_conversion_complete_interrupt(struct ak8975_data *data)
+{
+	int ret;
+
+	ret = wait_event_timeout(data->data_ready_queue,
+				 test_bit(0, &data->flags),
+				 AK8975_DATA_READY_TIMEOUT);
+	clear_bit(0, &data->flags);
+
+	return ret > 0 ? 0 : -ETIME;
 }
 
 /*
@@ -292,13 +389,16 @@ static int ak8975_read_axis(struct iio_dev *indio_dev, int index, int *val)
 	}
 
 	/* Wait for the conversion to complete. */
-	if (gpio_is_valid(data->eoc_gpio))
+	if (data->eoc_irq)
+		ret = wait_conversion_complete_interrupt(data);
+	else if (gpio_is_valid(data->eoc_gpio))
 		ret = wait_conversion_complete_gpio(data);
 	else
 		ret = wait_conversion_complete_polled(data);
 	if (ret < 0)
 		goto exit;
 
+	/* This will be executed only for non-interrupt based waiting case */
 	if (ret & AK8975_REG_ST1_DRDY_MASK) {
 		ret = i2c_smbus_read_byte_data(client, AK8975_REG_ST2);
 		if (ret < 0) {
@@ -343,8 +443,9 @@ static int ak8975_read_raw(struct iio_dev *indio_dev,
 	case IIO_CHAN_INFO_RAW:
 		return ak8975_read_axis(indio_dev, chan->address, val);
 	case IIO_CHAN_INFO_SCALE:
-		*val = data->raw_to_gauss[chan->address];
-		return IIO_VAL_INT;
+		*val = 0;
+		*val2 = data->raw_to_gauss[chan->address];
+		return IIO_VAL_INT_PLUS_MICRO;
 	}
 	return -EINVAL;
 }
@@ -368,6 +469,27 @@ static const struct iio_info ak8975_info = {
 	.driver_module = THIS_MODULE,
 };
 
+static const struct acpi_device_id ak_acpi_match[] = {
+	{"AK8975", AK8975},
+	{"AK8963", AK8963},
+	{"INVN6500", AK8963},
+	{ },
+};
+MODULE_DEVICE_TABLE(acpi, ak_acpi_match);
+
+static const char *ak8975_match_acpi_device(struct device *dev,
+					    enum asahi_compass_chipset *chipset)
+{
+	const struct acpi_device_id *id;
+
+	id = acpi_match_device(dev->driver->acpi_match_table, dev);
+	if (!id)
+		return NULL;
+	*chipset = (int)id->driver_data;
+
+	return dev_name(dev);
+}
+
 static int ak8975_probe(struct i2c_client *client,
 			const struct i2c_device_id *id)
 {
@@ -375,38 +497,61 @@ static int ak8975_probe(struct i2c_client *client,
 	struct iio_dev *indio_dev;
 	int eoc_gpio;
 	int err;
+	const char *name = NULL;
 
 	/* Grab and set up the supplied GPIO. */
-	if (client->dev.platform_data == NULL)
-		eoc_gpio = -1;
-	else
+	if (client->dev.platform_data)
 		eoc_gpio = *(int *)(client->dev.platform_data);
+	else if (client->dev.of_node)
+		eoc_gpio = of_get_gpio(client->dev.of_node, 0);
+	else
+		eoc_gpio = -1;
+
+	if (eoc_gpio == -EPROBE_DEFER)
+		return -EPROBE_DEFER;
 
 	/* We may not have a GPIO based IRQ to scan, that is fine, we will
 	   poll if so */
 	if (gpio_is_valid(eoc_gpio)) {
-		err = gpio_request_one(eoc_gpio, GPIOF_IN, "ak_8975");
+		err = devm_gpio_request_one(&client->dev, eoc_gpio,
+							GPIOF_IN, "ak_8975");
 		if (err < 0) {
 			dev_err(&client->dev,
 				"failed to request GPIO %d, error %d\n",
 							eoc_gpio, err);
-			goto exit;
+			return err;
 		}
 	}
 
 	/* Register with IIO */
-	indio_dev = iio_device_alloc(sizeof(*data));
-	if (indio_dev == NULL) {
-		err = -ENOMEM;
-		goto exit_gpio;
-	}
+	indio_dev = devm_iio_device_alloc(&client->dev, sizeof(*data));
+	if (indio_dev == NULL)
+		return -ENOMEM;
+
 	data = iio_priv(indio_dev);
 	i2c_set_clientdata(client, indio_dev);
+
+	data->client = client;
+	data->eoc_gpio = eoc_gpio;
+	data->eoc_irq = 0;
+
+	/* id will be NULL when enumerated via ACPI */
+	if (id) {
+		data->chipset =
+			(enum asahi_compass_chipset)(id->driver_data);
+		name = id->name;
+	} else if (ACPI_HANDLE(&client->dev))
+		name = ak8975_match_acpi_device(&client->dev, &data->chipset);
+	else
+		return -ENOSYS;
+
+	dev_dbg(&client->dev, "Asahi compass chip %s\n", name);
+
 	/* Perform some basic start-of-day setup of the device. */
 	err = ak8975_setup(client);
 	if (err < 0) {
 		dev_err(&client->dev, "AK8975 initialization fails\n");
-		goto exit_free_iio;
+		return err;
 	}
 
 	data->client = client;
@@ -417,39 +562,17 @@ static int ak8975_probe(struct i2c_client *client,
 	indio_dev->num_channels = ARRAY_SIZE(ak8975_channels);
 	indio_dev->info = &ak8975_info;
 	indio_dev->modes = INDIO_DIRECT_MODE;
-
-	err = iio_device_register(indio_dev);
+	indio_dev->name = name;
+	err = devm_iio_device_register(&client->dev, indio_dev);
 	if (err < 0)
-		goto exit_free_iio;
-
-	return 0;
-
-exit_free_iio:
-	iio_device_free(indio_dev);
-exit_gpio:
-	if (gpio_is_valid(eoc_gpio))
-		gpio_free(eoc_gpio);
-exit:
-	return err;
-}
-
-static int ak8975_remove(struct i2c_client *client)
-{
-	struct iio_dev *indio_dev = i2c_get_clientdata(client);
-	struct ak8975_data *data = iio_priv(indio_dev);
-
-	iio_device_unregister(indio_dev);
-
-	if (gpio_is_valid(data->eoc_gpio))
-		gpio_free(data->eoc_gpio);
-
-	iio_device_free(indio_dev);
+		return err;
 
 	return 0;
 }
 
 static const struct i2c_device_id ak8975_id[] = {
-	{"ak8975", 0},
+	{"ak8975", AK8975},
+	{"ak8963", AK8963},
 	{}
 };
 
@@ -466,9 +589,9 @@ static struct i2c_driver ak8975_driver = {
 	.driver = {
 		.name	= "ak8975",
 		.of_match_table = ak8975_of_match,
+		.acpi_match_table = ACPI_PTR(ak_acpi_match),
 	},
 	.probe		= ak8975_probe,
-	.remove		= ak8975_remove,
 	.id_table	= ak8975_id,
 };
 module_i2c_driver(ak8975_driver);

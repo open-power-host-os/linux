@@ -5,7 +5,7 @@
  *****************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2013, Intel Corp.
+ * Copyright (C) 2000 - 2014, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -629,24 +629,28 @@ static union acpi_parse_object *acpi_ps_get_next_field(struct acpi_parse_state
 
 				switch (opcode) {
 				case AML_BYTE_OP:	/* AML_BYTEDATA_ARG */
+
 					buffer_length =
 					    ACPI_GET8(parser_state->aml);
 					parser_state->aml += 1;
 					break;
 
 				case AML_WORD_OP:	/* AML_WORDDATA_ARG */
+
 					buffer_length =
 					    ACPI_GET16(parser_state->aml);
 					parser_state->aml += 2;
 					break;
 
 				case AML_DWORD_OP:	/* AML_DWORDATA_ARG */
+
 					buffer_length =
 					    ACPI_GET32(parser_state->aml);
 					parser_state->aml += 4;
 					break;
 
 				default:
+
 					buffer_length = 0;
 					break;
 				}

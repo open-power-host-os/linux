@@ -275,17 +275,7 @@ static int __init hvc_opal_init(void)
 	/* Register as a vio device to receive callbacks */
 	return platform_driver_register(&hvc_opal_driver);
 }
-module_init(hvc_opal_init);
-
-static void __exit hvc_opal_exit(void)
-{
-	if (hvc_opal_event_registered)
-		opal_notifier_unregister(&hvc_opal_console_nb);
-	hvc_opal_event_registered = false;
-
-	platform_driver_unregister(&hvc_opal_driver);
-}
-module_exit(hvc_opal_exit);
+device_initcall(hvc_opal_init);
 
 static void udbg_opal_putc(char c)
 {
@@ -352,22 +342,13 @@ static void udbg_init_opal_common(void)
 
 void __init hvc_opal_init_early(void)
 {
-	struct device_node *stdout_node = NULL;
-	const u32 *termno;
-	const char *name = NULL;
+	struct device_node *stdout_node = of_node_get(of_stdout);
+	const __be32 *termno;
 	const struct hv_ops *ops;
 	u32 index;
 
-	/* find the boot console from /chosen/stdout */
-	if (of_chosen)
-		name = of_get_property(of_chosen, "linux,stdout-path", NULL);
-	if (name) {
-		stdout_node = of_find_node_by_path(name);
-		if (!stdout_node) {
-			pr_err("hvc_opal: Failed to locate default console!\n");
-			return;
-		}
-	} else {
+	/* If the console wasn't in /chosen, try /ibm,opal */
+	if (!stdout_node) {
 		struct device_node *opal, *np;
 
 		/* Current OPAL takeover doesn't provide the stdout
@@ -395,7 +376,7 @@ void __init hvc_opal_init_early(void)
 	if (!stdout_node)
 		return;
 	termno = of_get_property(stdout_node, "reg", NULL);
-	index = termno ? *termno : 0;
+	index = termno ? be32_to_cpup(termno) : 0;
 	if (index >= MAX_NR_HVC_CONSOLES)
 		return;
 	hvc_opal_privs[index] = &hvc_opal_boot_priv;

@@ -143,13 +143,30 @@ static void eeh_disable_irq(struct pci_dev *dev)
 static void eeh_enable_irq(struct pci_dev *dev)
 {
 	struct eeh_dev *edev = pci_dev_to_eeh_dev(dev);
-	struct irq_desc *desc;
 
 	if ((edev->mode) & EEH_DEV_IRQ_DISABLED) {
 		edev->mode &= ~EEH_DEV_IRQ_DISABLED;
-
-		desc = irq_to_desc(dev->irq);
-		if (desc && desc->depth > 0)
+		/*
+		 * FIXME !!!!!
+		 *
+		 * This is just ass backwards. This maze has
+		 * unbalanced irq_enable/disable calls. So instead of
+		 * finding the root cause it works around the warning
+		 * in the irq_enable code by conditionally calling
+		 * into it.
+		 *
+		 * That's just wrong.The warning in the core code is
+		 * there to tell people to fix their assymetries in
+		 * their own code, not by abusing the core information
+		 * to avoid it.
+		 *
+		 * I so wish that the assymetry would be the other way
+		 * round and a few more irq_disable calls render that
+		 * shit unusable forever.
+		 *
+		 *	tglx
+		 */
+		if (irqd_irq_disabled(irq_get_irq_data(dev->irq)))
 			enable_irq(dev->irq);
 	}
 }
@@ -432,7 +449,9 @@ static void *eeh_rmv_device(void *data, void *userdata)
 	edev->mode |= EEH_DEV_DISCONNECTED;
 	(*removed)++;
 
+	pci_lock_rescan_remove();
 	pci_stop_and_remove_bus_device(dev);
+	pci_unlock_rescan_remove();
 
 	return NULL;
 }
@@ -565,10 +584,13 @@ static int eeh_reset_device(struct eeh_pe *pe, struct pci_bus *bus)
 	 * into pcibios_add_pci_devices().
 	 */
 	eeh_pe_state_mark(pe, EEH_PE_KEEP);
-	if (bus)
+	if (bus) {
+		pci_lock_rescan_remove();
 		pcibios_remove_pci_devices(bus);
-	else if (frozen_bus)
+		pci_unlock_rescan_remove();
+	} else if (frozen_bus) {
 		eeh_pe_dev_traverse(pe, eeh_rmv_device, &removed);
+	}
 
 	/*
 	 * Reset the pci controller. (Asserts RST#; resets config space).
@@ -585,6 +607,8 @@ static int eeh_reset_device(struct eeh_pe *pe, struct pci_bus *bus)
 		eeh_pe_state_clear(pe, EEH_PE_CFG_BLOCKED);
 		return rc;
 	}
+
+	pci_lock_rescan_remove();
 
 	/* Restore PE */
 	eeh_ops->configure_bridge(pe);
@@ -625,6 +649,7 @@ static int eeh_reset_device(struct eeh_pe *pe, struct pci_bus *bus)
 	pe->tstamp = tstamp;
 	pe->freeze_count = cnt;
 
+	pci_unlock_rescan_remove();
 	return 0;
 }
 
@@ -796,7 +821,10 @@ perm_error:
 	 */
 	if (frozen_bus) {
 		eeh_pe_dev_mode_mark(pe, EEH_DEV_REMOVED);
+
+		pci_lock_rescan_remove();
 		pcibios_remove_pci_devices(frozen_bus);
+		pci_unlock_rescan_remove();
 	}
 }
 
@@ -864,7 +892,9 @@ static void eeh_handle_special_event(void)
 		if (rc == EEH_NEXT_ERR_FROZEN_PE ||
 		    rc == EEH_NEXT_ERR_FENCED_PHB) {
 			eeh_handle_normal_event(pe);
+			eeh_pe_state_clear(pe, EEH_PE_RECOVERING);
 		} else {
+			pci_lock_rescan_remove();
 			list_for_each_entry(hose, &hose_list, list_node) {
 				phb_pe = eeh_phb_pe_get(hose);
 				if (!phb_pe ||
@@ -878,6 +908,7 @@ static void eeh_handle_special_event(void)
 					eeh_report_failure, NULL);
 				pcibios_remove_pci_devices(bus);
 			}
+			pci_unlock_rescan_remove();
 		}
 
 		/*

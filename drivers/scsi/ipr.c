@@ -2394,12 +2394,12 @@ static void ipr_log_sis64_device_error(struct ipr_ioa_cfg *ioa_cfg,
 	error->second_problem_desc[sizeof(error->second_problem_desc) - 1] = '\0';
 	ipr_err("Primary Problem Description: %s\n", error->primary_problem_desc);
 	ipr_err("Secondary Problem Description:  %s\n", error->second_problem_desc);
-	ipr_err("SCSI Sense Data: \n");
+	ipr_err("SCSI Sense Data:\n");
 	ipr_log_hex_data(ioa_cfg, error->sense_data, sizeof(error->sense_data));
 	ipr_err("SCSI Command Descriptor Block: \n");
 	ipr_log_hex_data(ioa_cfg, error->cdb, sizeof(error->cdb));
 
-	ipr_err("Additional IOA Data: \n");
+	ipr_err("Additional IOA Data:\n");
 	ipr_log_hex_data(ioa_cfg, error->ioa_data, be32_to_cpu(error->length_of_error));
 }
 
@@ -2440,6 +2440,7 @@ static void ipr_handle_log_data(struct ipr_ioa_cfg *ioa_cfg,
 {
 	u32 ioasc;
 	int error_index;
+	struct ipr_hostrcb_type_21_error *error;
 
 	if (hostrcb->hcam.notify_type != IPR_HOST_RCB_NOTIF_TYPE_ERROR_LOG_ENTRY)
 		return;
@@ -2463,6 +2464,15 @@ static void ipr_handle_log_data(struct ipr_ioa_cfg *ioa_cfg,
 
 	if (!ipr_error_table[error_index].log_hcam)
 		return;
+
+	if (ioasc == IPR_IOASC_HW_CMD_FAILED &&
+	    hostrcb->hcam.overlay_id == IPR_HOST_RCB_OVERLAY_ID_21) {
+		error = &hostrcb->hcam.u.error64.u.type_21_error;
+
+		if (((be32_to_cpu(error->sense_data[0]) & 0x0000ff00) >> 8) == ILLEGAL_REQUEST &&
+			ioa_cfg->log_level <= IPR_DEFAULT_LOG_LEVEL)
+				return;
+	}
 
 	ipr_hcam_err(hostrcb, "%s\n", ipr_error_table[error_index].error);
 
@@ -3670,16 +3680,14 @@ static ssize_t ipr_store_iopoll_weight(struct device *dev,
 		return strlen(buf);
 	}
 
-	if (blk_iopoll_enabled && ioa_cfg->iopoll_weight &&
-			ioa_cfg->sis64 && ioa_cfg->nvectors > 1) {
+	if (ioa_cfg->iopoll_weight && ioa_cfg->sis64 && ioa_cfg->nvectors > 1) {
 		for (i = 1; i < ioa_cfg->hrrq_num; i++)
 			blk_iopoll_disable(&ioa_cfg->hrrq[i].iopoll);
 	}
 
 	spin_lock_irqsave(shost->host_lock, lock_flags);
 	ioa_cfg->iopoll_weight = user_iopoll_weight;
-	if (blk_iopoll_enabled && ioa_cfg->iopoll_weight &&
-			ioa_cfg->sis64 && ioa_cfg->nvectors > 1) {
+	if (ioa_cfg->iopoll_weight && ioa_cfg->sis64 && ioa_cfg->nvectors > 1) {
 		for (i = 1; i < ioa_cfg->hrrq_num; i++) {
 			blk_iopoll_init(&ioa_cfg->hrrq[i].iopoll,
 					ioa_cfg->iopoll_weight, ipr_iopoll);
@@ -5525,8 +5533,7 @@ static irqreturn_t ipr_isr_mhrrq(int irq, void *devp)
 		return IRQ_NONE;
 	}
 
-	if (blk_iopoll_enabled && ioa_cfg->iopoll_weight &&
-			ioa_cfg->sis64 && ioa_cfg->nvectors > 1) {
+	if (ioa_cfg->iopoll_weight && ioa_cfg->sis64 && ioa_cfg->nvectors > 1) {
 		if ((be32_to_cpu(*hrrq->hrrq_curr) & IPR_HRRQ_TOGGLE_BIT) ==
 		       hrrq->toggle_bit) {
 			if (!blk_iopoll_sched_prep(&hrrq->iopoll))
@@ -9204,7 +9211,7 @@ static void ipr_initialize_bus_attr(struct ipr_ioa_cfg *ioa_cfg)
  * @ioa_cfg:	ioa config struct
  *
  * Return value:
- * 	none
+ *	none
  **/
 static void ipr_init_regs(struct ipr_ioa_cfg *ioa_cfg)
 {
@@ -9356,51 +9363,40 @@ static void ipr_wait_for_pci_err_recovery(struct ipr_ioa_cfg *ioa_cfg)
 static int ipr_enable_msix(struct ipr_ioa_cfg *ioa_cfg)
 {
 	struct msix_entry entries[IPR_MAX_MSIX_VECTORS];
-	int i, err, vectors;
+	int i, vectors;
 
 	for (i = 0; i < ARRAY_SIZE(entries); ++i)
 		entries[i].entry = i;
 
-	vectors = ipr_number_of_msix;
-
-	while ((err = pci_enable_msix(ioa_cfg->pdev, entries, vectors)) > 0)
-			vectors = err;
-
-	if (err < 0) {
+	vectors = pci_enable_msix_range(ioa_cfg->pdev,
+					entries, 1, ipr_number_of_msix);
+	if (vectors < 0) {
 		ipr_wait_for_pci_err_recovery(ioa_cfg);
-		return err;
+		return vectors;
 	}
 
-	if (!err) {
-		for (i = 0; i < vectors; i++)
-			ioa_cfg->vectors_info[i].vec = entries[i].vector;
-		ioa_cfg->nvectors = vectors;
-	}
+	for (i = 0; i < vectors; i++)
+		ioa_cfg->vectors_info[i].vec = entries[i].vector;
+	ioa_cfg->nvectors = vectors;
 
-	return err;
+	return 0;
 }
 
 static int ipr_enable_msi(struct ipr_ioa_cfg *ioa_cfg)
 {
-	int i, err, vectors;
+	int i, vectors;
 
-	vectors = ipr_number_of_msix;
-
-	while ((err = pci_enable_msi_block(ioa_cfg->pdev, vectors)) > 0)
-			vectors = err;
-
-	if (err < 0) {
+	vectors = pci_enable_msi_range(ioa_cfg->pdev, 1, ipr_number_of_msix);
+	if (vectors < 0) {
 		ipr_wait_for_pci_err_recovery(ioa_cfg);
-		return err;
+		return vectors;
 	}
 
-	if (!err) {
-		for (i = 0; i < vectors; i++)
-			ioa_cfg->vectors_info[i].vec = ioa_cfg->pdev->irq + i;
-		ioa_cfg->nvectors = vectors;
-	}
+	for (i = 0; i < vectors; i++)
+		ioa_cfg->vectors_info[i].vec = ioa_cfg->pdev->irq + i;
+	ioa_cfg->nvectors = vectors;
 
-	return err;
+	return 0;
 }
 
 static void name_msi_vectors(struct ipr_ioa_cfg *ioa_cfg)
@@ -9465,7 +9461,7 @@ static irqreturn_t ipr_test_intr(int irq, void *devp)
  * ipr_test_msi - Test for Message Signaled Interrupt (MSI) support.
  * @pdev:		PCI device struct
  *
- * Description: The return value from pci_enable_msi() can not always be
+ * Description: The return value from pci_enable_msi_range() can not always be
  * trusted.  This routine sets up and initiates a test interrupt to determine
  * if the interrupt is received via the ipr_test_intr() service routine.
  * If the tests fails, the driver will fall back to LSI.
@@ -9986,8 +9982,7 @@ static int ipr_probe(struct pci_dev *pdev, const struct pci_device_id *dev_id)
 	ioa_cfg->host->max_channel = IPR_VSET_BUS;
 	ioa_cfg->iopoll_weight = ioa_cfg->chip_cfg->iopoll_weight;
 
-	if (blk_iopoll_enabled && ioa_cfg->iopoll_weight &&
-			ioa_cfg->sis64 && ioa_cfg->nvectors > 1) {
+	if (ioa_cfg->iopoll_weight && ioa_cfg->sis64 && ioa_cfg->nvectors > 1) {
 		for (i = 1; i < ioa_cfg->hrrq_num; i++) {
 			blk_iopoll_init(&ioa_cfg->hrrq[i].iopoll,
 					ioa_cfg->iopoll_weight, ipr_iopoll);
@@ -10016,8 +10011,7 @@ static void ipr_shutdown(struct pci_dev *pdev)
 	int i;
 
 	spin_lock_irqsave(ioa_cfg->host->host_lock, lock_flags);
-	if (blk_iopoll_enabled && ioa_cfg->iopoll_weight &&
-			ioa_cfg->sis64 && ioa_cfg->nvectors > 1) {
+	if (ioa_cfg->iopoll_weight && ioa_cfg->sis64 && ioa_cfg->nvectors > 1) {
 		ioa_cfg->iopoll_weight = 0;
 		for (i = 1; i < ioa_cfg->hrrq_num; i++)
 			blk_iopoll_disable(&ioa_cfg->hrrq[i].iopoll);

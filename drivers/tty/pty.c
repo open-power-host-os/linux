@@ -24,6 +24,7 @@
 #include <linux/devpts_fs.h>
 #include <linux/slab.h>
 #include <linux/mutex.h>
+#include <linux/poll.h>
 
 
 #ifdef CONFIG_UNIX98_PTYS
@@ -89,17 +90,13 @@ static void pty_unthrottle(struct tty_struct *tty)
  *	pty_space	-	report space left for writing
  *	@to: tty we are writing into
  *
- *	The tty buffers allow 64K but we sneak a peak and clip at 8K this
- *	allows a lot of overspill room for echo and other fun messes to
- *	be handled properly
+ *	Limit the buffer space used by ptys to 8k.
  */
 
 static int pty_space(struct tty_struct *to)
 {
-	int n = 8192 - to->port->buf.memory_used;
-	if (n < 0)
-		return 0;
-	return n;
+	int n = tty_buffer_space_avail(to->port);
+	return min(n, 8192);
 }
 
 /**
@@ -125,10 +122,8 @@ static int pty_write(struct tty_struct *tty, const unsigned char *buf, int c)
 		/* Stuff the data into the input queue of the other end */
 		c = tty_insert_flip_string(to->port, buf, c);
 		/* And shovel */
-		if (c) {
+		if (c)
 			tty_flip_buffer_push(to->port);
-			tty_wakeup(tty);
-		}
 	}
 	return c;
 }
@@ -287,7 +282,7 @@ static int pty_resize(struct tty_struct *tty,  struct winsize *ws)
 	struct tty_struct *pty = tty->link;
 
 	/* For a PTY we need to lock the tty side */
-	mutex_lock(&tty->termios_mutex);
+	mutex_lock(&tty->winsize_mutex);
 	if (!memcmp(ws, &tty->winsize, sizeof(*ws)))
 		goto done;
 
@@ -314,15 +309,51 @@ static int pty_resize(struct tty_struct *tty,  struct winsize *ws)
 	tty->winsize = *ws;
 	pty->winsize = *ws;	/* Never used so will go away soon */
 done:
-	mutex_unlock(&tty->termios_mutex);
+	mutex_unlock(&tty->winsize_mutex);
 	return 0;
+}
+
+/**
+ *	pty_start - start() handler
+ *	pty_stop  - stop() handler
+ *	@tty: tty being flow-controlled
+ *
+ *	Propagates the TIOCPKT status to the master pty.
+ *
+ *	NB: only the master pty can be in packet mode so only the slave
+ *	    needs start()/stop() handlers
+ */
+static void pty_start(struct tty_struct *tty)
+{
+	unsigned long flags;
+
+	spin_lock_irqsave(&tty->ctrl_lock, flags);
+	if (tty->link && tty->link->packet) {
+		tty->ctrl_status &= ~TIOCPKT_STOP;
+		tty->ctrl_status |= TIOCPKT_START;
+		wake_up_interruptible_poll(&tty->link->read_wait, POLLIN);
+	}
+	spin_unlock_irqrestore(&tty->ctrl_lock, flags);
+}
+
+static void pty_stop(struct tty_struct *tty)
+{
+	unsigned long flags;
+
+	spin_lock_irqsave(&tty->ctrl_lock, flags);
+	if (tty->link && tty->link->packet) {
+		tty->ctrl_status &= ~TIOCPKT_START;
+		tty->ctrl_status |= TIOCPKT_STOP;
+		wake_up_interruptible_poll(&tty->link->read_wait, POLLIN);
+	}
+	spin_unlock_irqrestore(&tty->ctrl_lock, flags);
 }
 
 /**
  *	pty_common_install		-	set up the pty pair
  *	@driver: the pty driver
  *	@tty: the tty being instantiated
- *	@bool: legacy, true if this is BSD style
+ *	@legacy: true if this is BSD style
  *
  *	Perform the initial set up for the tty/pty pair. Called from the
  *	tty layer when the port is first opened.
@@ -337,18 +368,17 @@ static int pty_common_install(struct tty_driver *driver, struct tty_struct *tty,
 	int idx = tty->index;
 	int retval = -ENOMEM;
 
-	o_tty = alloc_tty_struct();
-	if (!o_tty)
-		goto err;
 	ports[0] = kmalloc(sizeof **ports, GFP_KERNEL);
 	ports[1] = kmalloc(sizeof **ports, GFP_KERNEL);
 	if (!ports[0] || !ports[1])
-		goto err_free_tty;
+		goto err;
 	if (!try_module_get(driver->other->owner)) {
 		/* This cannot in fact currently happen */
-		goto err_free_tty;
+		goto err;
 	}
-	initialize_tty_struct(o_tty, driver->other, idx);
+	o_tty = alloc_tty_struct(driver->other, idx);
+	if (!o_tty)
+		goto err_put_module;
 
 	if (legacy) {
 		/* We always use new tty termios data so we can do this
@@ -393,12 +423,12 @@ err_free_termios:
 		tty_free_termios(tty);
 err_deinit_tty:
 	deinitialize_tty_struct(o_tty);
-	module_put(o_tty->driver->owner);
-err_free_tty:
+	free_tty_struct(o_tty);
+err_put_module:
+	module_put(driver->other->owner);
+err:
 	kfree(ports[0]);
 	kfree(ports[1]);
-	free_tty_struct(o_tty);
-err:
 	return retval;
 }
 
@@ -478,6 +508,8 @@ static const struct tty_operations slave_pty_ops_bsd = {
 	.set_termios = pty_set_termios,
 	.cleanup = pty_cleanup,
 	.resize = pty_resize,
+	.start = pty_start,
+	.stop = pty_stop,
 	.remove = pty_remove
 };
 
@@ -653,6 +685,8 @@ static const struct tty_operations pty_unix98_ops = {
 	.chars_in_buffer = pty_chars_in_buffer,
 	.unthrottle = pty_unthrottle,
 	.set_termios = pty_set_termios,
+	.start = pty_start,
+	.stop = pty_stop,
 	.shutdown = pty_unix98_shutdown,
 	.cleanup = pty_cleanup,
 };

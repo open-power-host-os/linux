@@ -1,7 +1,7 @@
  /*******************************************************************
  * This file is part of the Emulex Linux Device Driver for         *
  * Fibre Channel Host Bus Adapters.                                *
- * Copyright (C) 2004-2012 Emulex.  All rights reserved.           *
+ * Copyright (C) 2004-2013 Emulex.  All rights reserved.           *
  * EMULEX and SLI are trademarks of Emulex.                        *
  * www.emulex.com                                                  *
  * Portions Copyright (C) 2004-2005 Christoph Hellwig              *
@@ -702,11 +702,15 @@ lpfc_rcv_prli(struct lpfc_vport *vport, struct lpfc_nodelist *ndlp,
 
 	ndlp->nlp_type &= ~(NLP_FCP_TARGET | NLP_FCP_INITIATOR);
 	ndlp->nlp_fcp_info &= ~NLP_FCP_2_DEVICE;
+	ndlp->nlp_flag &= ~NLP_FIRSTBURST;
 	if (npr->prliType == PRLI_FCP_TYPE) {
 		if (npr->initiatorFunc)
 			ndlp->nlp_type |= NLP_FCP_INITIATOR;
-		if (npr->targetFunc)
+		if (npr->targetFunc) {
 			ndlp->nlp_type |= NLP_FCP_TARGET;
+			if (npr->writeXferRdyDis)
+				ndlp->nlp_flag |= NLP_FIRSTBURST;
+		}
 		if (npr->Retry)
 			ndlp->nlp_fcp_info |= NLP_FCP_2_DEVICE;
 	}
@@ -1027,6 +1031,8 @@ lpfc_cmpl_plogi_plogi_issue(struct lpfc_vport *vport,
 	pcmd = (struct lpfc_dmabuf *) cmdiocb->context2;
 
 	prsp = list_get_first(&pcmd->list, struct lpfc_dmabuf, list);
+	if (!prsp)
+		goto out;
 
 	lp = (uint32_t *) prsp->virt;
 	sp = (struct serv_parm *) ((uint8_t *) lp + sizeof (uint32_t));
@@ -1688,12 +1694,16 @@ lpfc_cmpl_prli_prli_issue(struct lpfc_vport *vport, struct lpfc_nodelist *ndlp,
 	/* Check out PRLI rsp */
 	ndlp->nlp_type &= ~(NLP_FCP_TARGET | NLP_FCP_INITIATOR);
 	ndlp->nlp_fcp_info &= ~NLP_FCP_2_DEVICE;
+	ndlp->nlp_flag &= ~NLP_FIRSTBURST;
 	if ((npr->acceptRspCode == PRLI_REQ_EXECUTED) &&
 	    (npr->prliType == PRLI_FCP_TYPE)) {
 		if (npr->initiatorFunc)
 			ndlp->nlp_type |= NLP_FCP_INITIATOR;
-		if (npr->targetFunc)
+		if (npr->targetFunc) {
 			ndlp->nlp_type |= NLP_FCP_TARGET;
+			if (npr->writeXferRdyDis)
+				ndlp->nlp_flag |= NLP_FIRSTBURST;
+		}
 		if (npr->Retry)
 			ndlp->nlp_fcp_info |= NLP_FCP_2_DEVICE;
 	}

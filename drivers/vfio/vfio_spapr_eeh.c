@@ -11,15 +11,12 @@
 
 #include <linux/module.h>
 #include <linux/uaccess.h>
-#include <linux/pci.h>
 #include <linux/vfio.h>
 #include <asm/eeh.h>
 
-#ifdef CONFIG_EEH
-
-#define DRIVER_VERSION "0.1"
-#define DRIVER_AUTHOR  "Gavin Shan, IBM Corporation"
-#define DRIVER_DESC    "VFIO IOMMU SPAPR EEH"
+#define DRIVER_VERSION	"0.1"
+#define DRIVER_AUTHOR	"Gavin Shan, IBM Corporation"
+#define DRIVER_DESC	"VFIO IOMMU SPAPR EEH"
 
 /* We might build address mapping here for "fast" path later */
 void vfio_spapr_pci_eeh_open(struct pci_dev *pdev)
@@ -101,5 +98,3 @@ MODULE_VERSION(DRIVER_VERSION);
 MODULE_LICENSE("GPL v2");
 MODULE_AUTHOR(DRIVER_AUTHOR);
 MODULE_DESCRIPTION(DRIVER_DESC);
-
-#endif /* CONFIG_EEH */

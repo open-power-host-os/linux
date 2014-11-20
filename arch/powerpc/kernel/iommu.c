@@ -105,7 +105,7 @@ static int __init fail_iommu_debugfs(void)
 	struct dentry *dir = fault_create_debugfs_attr("fail_iommu",
 						       NULL, &fail_iommu);
 
-	return PTR_RET(dir);
+	return PTR_ERR_OR_ZERO(dir);
 }
 late_initcall(fail_iommu_debugfs);
 
@@ -935,7 +935,7 @@ void iommu_register_group(struct iommu_table *tbl,
 	kfree(name);
 }
 
-static enum dma_data_direction iommu_tce_direction(unsigned long tce)
+enum dma_data_direction iommu_tce_direction(unsigned long tce)
 {
 	if ((tce & TCE_PCI_READ) && (tce & TCE_PCI_WRITE))
 		return DMA_BIDIRECTIONAL;
@@ -946,6 +946,7 @@ static enum dma_data_direction iommu_tce_direction(unsigned long tce)
 	else
 		return DMA_NONE;
 }
+EXPORT_SYMBOL_GPL(iommu_tce_direction);
 
 void iommu_flush_tce(struct iommu_table *tbl)
 {

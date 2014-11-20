@@ -147,12 +147,11 @@ static int cp_tm1217_read(struct cp_tm1217_device *ts,
 	msleep(WAIT_FOR_RESPONSE);
 	for (i = 0; i < MAX_RETRIES; i++) {
 		retval = i2c_master_recv(ts->client, &req[1], size);
-		if (retval == size) {
+		if (retval == size)
 			break;
-		} else {
-			msleep(INCREMENTAL_DELAY);
-			dev_dbg(ts->dev, "cp_tm1217: Retry count is %d\n", i);
-		}
+
+		msleep(INCREMENTAL_DELAY);
+		dev_dbg(ts->dev, "cp_tm1217: Retry count is %d\n", i);
 	}
 	if (retval != size)
 		dev_err(ts->dev, "cp_tm1217: Read from device failed\n");
@@ -288,10 +287,10 @@ static irqreturn_t cp_tm1217_sample_thread(int irq, void *handle)
 	if (ts->thread_running == 1) {
 		mutex_unlock(&ts->thread_mutex);
 		return IRQ_HANDLED;
-	} else {
-		ts->thread_running = 1;
-		mutex_unlock(&ts->thread_mutex);
 	}
+
+	ts->thread_running = 1;
+	mutex_unlock(&ts->thread_mutex);
 
 	/* Mask the interrupts */
 	retval = cp_tm1217_mask_interrupt(ts);
@@ -457,8 +456,6 @@ static int cp_tm1217_probe(struct i2c_client *client,
 	for (i = 0; i < TOUCH_SUPPORTED; i++) {
 		input_dev = input_allocate_device();
 		if (input_dev == NULL) {
-			dev_err(ts->dev,
-				"cp_tm1217:Input Device Struct alloc failed\n");
 			retval = -ENOMEM;
 			goto fail;
 		}
@@ -547,10 +544,8 @@ fail_gpio:
 fail:
 	/* Clean up before returning failure */
 	for (i = 0; i < TOUCH_SUPPORTED; i++) {
-		if (ts->cp_input_info[i].input) {
+		if (ts->cp_input_info[i].input)
 			input_unregister_device(ts->cp_input_info[i].input);
-			input_free_device(ts->cp_input_info[i].input);
-		}
 	}
 	kfree(ts);
 	return retval;

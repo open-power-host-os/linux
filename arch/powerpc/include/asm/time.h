@@ -24,14 +24,11 @@ extern unsigned long tb_ticks_per_jiffy;
 extern unsigned long tb_ticks_per_usec;
 extern unsigned long tb_ticks_per_sec;
 extern struct clock_event_device decrementer_clockevent;
-extern struct clock_event_device broadcast_clockevent;
-extern struct clock_event_device bc_timer;
 
 struct rtc_time;
 extern void to_tm(int tim, struct rtc_time * tm);
 extern void GregorianDay(struct rtc_time *tm);
-extern void decrementer_timer_interrupt(void);
-extern void broadcast_irq_entry(void);
+extern void tick_broadcast_ipi_handler(void);
 
 extern void generic_calibrate_decr(void);
 

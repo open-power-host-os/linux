@@ -255,7 +255,6 @@ static int mxs_gpio_probe(struct platform_device *pdev)
 	struct device_node *parent;
 	static void __iomem *base;
 	struct mxs_gpio_port *port;
-	struct resource *iores = NULL;
 	int irq_base;
 	int err;
 
@@ -263,16 +262,10 @@ static int mxs_gpio_probe(struct platform_device *pdev)
 	if (!port)
 		return -ENOMEM;
 
-	if (np) {
-		port->id = of_alias_get_id(np, "gpio");
-		if (port->id < 0)
-			return port->id;
-		port->devid = (enum mxs_gpio_id) of_id->data;
-	} else {
-		port->id = pdev->id;
-		port->devid = pdev->id_entry->driver_data;
-	}
-
+	port->id = of_alias_get_id(np, "gpio");
+	if (port->id < 0)
+		return port->id;
+	port->devid = (enum mxs_gpio_id) of_id->data;
 	port->irq = platform_get_irq(pdev, 0);
 	if (port->irq < 0)
 		return port->irq;
@@ -282,18 +275,11 @@ static int mxs_gpio_probe(struct platform_device *pdev)
 	 * share the same one
 	 */
 	if (!base) {
-		if (np) {
-			parent = of_get_parent(np);
-			base = of_iomap(parent, 0);
-			of_node_put(parent);
-			if (!base)
-				return -EADDRNOTAVAIL;
-		} else {
-			iores = platform_get_resource(pdev, IORESOURCE_MEM, 0);
-			base = devm_ioremap_resource(&pdev->dev, iores);
-			if (IS_ERR(base))
-				return PTR_ERR(base);
-		}
+		parent = of_get_parent(np);
+		base = of_iomap(parent, 0);
+		of_node_put(parent);
+		if (!base)
+			return -EADDRNOTAVAIL;
 	}
 	port->base = base;
 

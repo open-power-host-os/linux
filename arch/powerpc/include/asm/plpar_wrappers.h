@@ -256,30 +256,6 @@ static inline long plpar_tce_stuff(unsigned long liobn, unsigned long ioba,
 	return plpar_hcall_norets(H_STUFF_TCE, liobn, ioba, tceval, count);
 }
 
-static inline long plpar_get_term_char(unsigned long termno,
-		unsigned long *len_ret, char *buf_ret)
-{
-	long rc;
-	unsigned long retbuf[PLPAR_HCALL_BUFSIZE];
-	unsigned long *lbuf = (unsigned long *)buf_ret;	/* TODO: alignment? */
-
-	rc = plpar_hcall(H_GET_TERM_CHAR, retbuf, termno);
-
-	*len_ret = retbuf[0];
-	lbuf[0] = retbuf[1];
-	lbuf[1] = retbuf[2];
-
-	return rc;
-}
-
-static inline long plpar_put_term_char(unsigned long termno, unsigned long len,
-		const char *buffer)
-{
-	unsigned long *lbuf = (unsigned long *)buffer;	/* TODO: alignment? */
-	return plpar_hcall_norets(H_PUT_TERM_CHAR, termno, len, lbuf[0],
-			lbuf[1]);
-}
-
 /* Set various resource mode parameters */
 static inline long plpar_set_mode(unsigned long mflags, unsigned long resource,
 		unsigned long value1, unsigned long value2)
@@ -297,7 +273,7 @@ static inline long plpar_set_mode(unsigned long mflags, unsigned long resource,
 static inline long enable_reloc_on_exceptions(void)
 {
 	/* mflags = 3: Exceptions at 0xC000000000004000 */
-	return plpar_set_mode(3, 3, 0, 0);
+	return plpar_set_mode(3, H_SET_MODE_RESOURCE_ADDR_TRANS_MODE, 0, 0);
 }
 
 /*
@@ -308,17 +284,43 @@ static inline long enable_reloc_on_exceptions(void)
  * returns H_SUCCESS.
  */
 static inline long disable_reloc_on_exceptions(void) {
-	return plpar_set_mode(0, 3, 0, 0);
+	return plpar_set_mode(0, H_SET_MODE_RESOURCE_ADDR_TRANS_MODE, 0, 0);
+}
+
+/*
+ * Take exceptions in big endian mode on this partition
+ *
+ * Note: this call has a partition wide scope and can take a while to complete.
+ * If it returns H_LONG_BUSY_* it should be retried periodically until it
+ * returns H_SUCCESS.
+ */
+static inline long enable_big_endian_exceptions(void)
+{
+	/* mflags = 0: big endian exceptions */
+	return plpar_set_mode(0, H_SET_MODE_RESOURCE_LE, 0, 0);
+}
+
+/*
+ * Take exceptions in little endian mode on this partition
+ *
+ * Note: this call has a partition wide scope and can take a while to complete.
+ * If it returns H_LONG_BUSY_* it should be retried periodically until it
+ * returns H_SUCCESS.
+ */
+static inline long enable_little_endian_exceptions(void)
+{
+	/* mflags = 1: little endian exceptions */
+	return plpar_set_mode(1, H_SET_MODE_RESOURCE_LE, 0, 0);
 }
 
 static inline long plapr_set_ciabr(unsigned long ciabr)
 {
-	return plpar_set_mode(0, 1, ciabr, 0);
+	return plpar_set_mode(0, H_SET_MODE_RESOURCE_SET_CIABR, ciabr, 0);
 }
 
 static inline long plapr_set_watchpoint0(unsigned long dawr0, unsigned long dawrx0)
 {
-	return plpar_set_mode(0, 2, dawr0, dawrx0);
+	return plpar_set_mode(0, H_SET_MODE_RESOURCE_SET_DAWR, dawr0, dawrx0);
 }
 
 #endif /* _ASM_POWERPC_PLPAR_WRAPPERS_H */

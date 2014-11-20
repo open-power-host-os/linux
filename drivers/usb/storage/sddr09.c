@@ -219,11 +219,7 @@ static void nand_init_ecc(void) {
 /* compute 3-byte ecc on 256 bytes */
 static void nand_compute_ecc(unsigned char *data, unsigned char *ecc) {
 	int i, j, a;
-	unsigned char par, bit, bits[8];
-
-	par = 0;
-	for (j = 0; j < 8; j++)
-		bits[j] = 0;
+	unsigned char par = 0, bit, bits[8] = {0};
 
 	/* collect 16 checksum bits */
 	for (i = 0; i < 256; i++) {
@@ -1159,8 +1155,7 @@ sddr09_get_cardinfo(struct us_data *us, unsigned char flags) {
 		return NULL;
 	}
 
-	sprintf(blurbtxt, "sddr09: Found Flash card, ID = %02X %02X %02X %02X",
-		deviceID[0], deviceID[1], deviceID[2], deviceID[3]);
+	sprintf(blurbtxt, "sddr09: Found Flash card, ID = %4ph", deviceID);
 
 	/* Byte 0 is the manufacturer */
 	sprintf(blurbtxt + strlen(blurbtxt),
@@ -1502,7 +1497,7 @@ static int dpcm_transport(struct scsi_cmnd *srb, struct us_data *us)
 {
 	int ret;
 
-	usb_stor_dbg(us, "LUN=%d\n", srb->device->lun);
+	usb_stor_dbg(us, "LUN=%d\n", (u8)srb->device->lun);
 
 	switch (srb->device->lun) {
 	case 0:
@@ -1528,7 +1523,7 @@ static int dpcm_transport(struct scsi_cmnd *srb, struct us_data *us)
 		break;
 
 	default:
-		usb_stor_dbg(us, "Invalid LUN %d\n", srb->device->lun);
+	    usb_stor_dbg(us, "Invalid LUN %d\n", (u8)srb->device->lun);
 		ret = USB_STOR_TRANSPORT_ERROR;
 		break;
 	}

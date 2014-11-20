@@ -212,13 +212,6 @@ extern void iommu_init_early_pSeries(void);
 extern void iommu_init_early_dart(void);
 extern void iommu_init_early_pasemi(void);
 
-#ifdef CONFIG_PCI
-extern void pci_iommu_init(void);
-extern void pci_direct_iommu_init(void);
-#else
-static inline void pci_iommu_init(void) { }
-#endif
-
 extern void alloc_dart_table(void);
 #if defined(CONFIG_PPC64) && defined(CONFIG_PM)
 static inline void iommu_save(void)
@@ -252,6 +245,8 @@ extern int iommu_put_tce_user_mode(struct iommu_table *tbl,
 extern void iommu_flush_tce(struct iommu_table *tbl);
 extern int iommu_take_ownership(struct iommu_table *tbl);
 extern void iommu_release_ownership(struct iommu_table *tbl);
+
+extern enum dma_data_direction iommu_tce_direction(unsigned long tce);
 
 #endif /* __KERNEL__ */
 #endif /* _ASM_IOMMU_H */

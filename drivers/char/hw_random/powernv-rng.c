@@ -56,7 +56,7 @@ static int powernv_rng_probe(struct platform_device *pdev)
 		return rc;
 	}
 
-	pr_info("registered powernv hwrng.\n");
+	pr_info("Registered powernv hwrng.\n");
 
 	return 0;
 }

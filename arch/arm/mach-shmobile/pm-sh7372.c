@@ -21,13 +21,15 @@
 #include <linux/irq.h>
 #include <linux/bitrev.h>
 #include <linux/console.h>
+
 #include <asm/cpuidle.h>
 #include <asm/io.h>
 #include <asm/tlbflush.h>
 #include <asm/suspend.h>
-#include <mach/common.h>
-#include <mach/sh7372.h>
-#include <mach/pm-rmobile.h>
+
+#include "common.h"
+#include "pm-rmobile.h"
+#include "sh7372.h"
 
 /* DBG */
 #define DBGREG1 IOMEM(0xe6100020)
@@ -351,6 +353,9 @@ static void sh7372_enter_a4s_common(int pllc0_on)
 
 static void sh7372_pm_setup_smfram(void)
 {
+	/* pass physical address of cpu_resume() to assembly resume code */
+	sh7372_cpu_resume = virt_to_phys(cpu_resume);
+
 	memcpy((void *)SMFRAM, sh7372_resume_core_standby_sysc, 0x100);
 }
 #else

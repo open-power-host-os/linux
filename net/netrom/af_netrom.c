@@ -30,7 +30,7 @@
 #include <linux/skbuff.h>
 #include <net/net_namespace.h>
 #include <net/sock.h>
-#include <asm/uaccess.h>
+#include <linux/uaccess.h>
 #include <linux/fcntl.h>
 #include <linux/termios.h>	/* For TIOCINQ/OUTQ */
 #include <linux/mm.h>
@@ -117,7 +117,7 @@ static void nr_kill_by_device(struct net_device *dev)
  */
 static int nr_device_event(struct notifier_block *this, unsigned long event, void *ptr)
 {
-	struct net_device *dev = (struct net_device *)ptr;
+	struct net_device *dev = netdev_notifier_info_to_dev(ptr);
 
 	if (!net_eq(dev_net(dev), &init_net))
 		return NOTIFY_DONE;
@@ -1011,7 +1011,7 @@ int nr_rx_frame(struct sk_buff *skb, struct net_device *dev)
 	skb_queue_head(&sk->sk_receive_queue, skb);
 
 	if (!sock_flag(sk, SOCK_DEAD))
-		sk->sk_data_ready(sk, skb->len);
+		sk->sk_data_ready(sk);
 
 	bh_unlock_sock(sk);
 
@@ -1028,7 +1028,7 @@ static int nr_sendmsg(struct kiocb *iocb, struct socket *sock,
 {
 	struct sock *sk = sock->sk;
 	struct nr_sock *nr = nr_sk(sk);
-	struct sockaddr_ax25 *usax = (struct sockaddr_ax25 *)msg->msg_name;
+	DECLARE_SOCKADDR(struct sockaddr_ax25 *, usax, msg->msg_name);
 	int err;
 	struct sockaddr_ax25 sax;
 	struct sk_buff *skb;
@@ -1137,7 +1137,7 @@ static int nr_recvmsg(struct kiocb *iocb, struct socket *sock,
 		      struct msghdr *msg, size_t size, int flags)
 {
 	struct sock *sk = sock->sk;
-	struct sockaddr_ax25 *sax = (struct sockaddr_ax25 *)msg->msg_name;
+	DECLARE_SOCKADDR(struct sockaddr_ax25 *, sax, msg->msg_name);
 	size_t copied;
 	struct sk_buff *skb;
 	int er;
@@ -1418,7 +1418,7 @@ static int __init nr_proto_init(void)
 		struct net_device *dev;
 
 		sprintf(name, "nr%d", i);
-		dev = alloc_netdev(0, name, nr_setup);
+		dev = alloc_netdev(0, name, NET_NAME_UNKNOWN, nr_setup);
 		if (!dev) {
 			printk(KERN_ERR "NET/ROM: nr_proto_init - unable to allocate device structure\n");
 			goto fail;

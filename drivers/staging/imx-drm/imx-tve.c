@@ -20,9 +20,9 @@
 
 #include <linux/clk.h>
 #include <linux/clk-provider.h>
+#include <linux/component.h>
 #include <linux/module.h>
-#include <linux/of_i2c.h>
-#include <linux/pinctrl/consumer.h>
+#include <linux/i2c.h>
 #include <linux/regmap.h>
 #include <linux/regulator/consumer.h>
 #include <linux/spinlock.h>
@@ -30,6 +30,7 @@
 #include <drm/drmP.h>
 #include <drm/drm_fb_helper.h>
 #include <drm/drm_crtc_helper.h>
+#include <video/imx-ipu-v3.h>
 
 #include "imx-drm.h"
 
@@ -111,11 +112,8 @@ enum {
 
 struct imx_tve {
 	struct drm_connector connector;
-	struct imx_drm_connector *imx_drm_connector;
 	struct drm_encoder encoder;
-	struct imx_drm_encoder *imx_drm_encoder;
 	struct device *dev;
-	spinlock_t enable_lock;	/* serializes tve_enable/disable */
 	spinlock_t lock;	/* register lock */
 	bool enabled;
 	int mode;
@@ -132,25 +130,27 @@ struct imx_tve {
 };
 
 static void tve_lock(void *__tve)
+__acquires(&tve->lock)
 {
 	struct imx_tve *tve = __tve;
+
 	spin_lock(&tve->lock);
 }
 
 static void tve_unlock(void *__tve)
+__releases(&tve->lock)
 {
 	struct imx_tve *tve = __tve;
+
 	spin_unlock(&tve->lock);
 }
 
 static void tve_enable(struct imx_tve *tve)
 {
-	unsigned long flags;
 	int ret;
 
-	spin_lock_irqsave(&tve->enable_lock, flags);
 	if (!tve->enabled) {
-		tve->enabled = 1;
+		tve->enabled = true;
 		clk_prepare_enable(tve->clk);
 		ret = regmap_update_bits(tve->regmap, TVE_COM_CONF_REG,
 					 TVE_IPU_CLK_EN | TVE_EN,
@@ -165,23 +165,21 @@ static void tve_enable(struct imx_tve *tve)
 		regmap_write(tve->regmap, TVE_INT_CONT_REG, 0);
 	else
 		regmap_write(tve->regmap, TVE_INT_CONT_REG,
-			     TVE_CD_SM_IEN | TVE_CD_LM_IEN | TVE_CD_MON_END_IEN);
-	spin_unlock_irqrestore(&tve->enable_lock, flags);
+			     TVE_CD_SM_IEN |
+			     TVE_CD_LM_IEN |
+			     TVE_CD_MON_END_IEN);
 }
 
 static void tve_disable(struct imx_tve *tve)
 {
-	unsigned long flags;
 	int ret;
 
-	spin_lock_irqsave(&tve->enable_lock, flags);
 	if (tve->enabled) {
-		tve->enabled = 0;
+		tve->enabled = false;
 		ret = regmap_update_bits(tve->regmap, TVE_COM_CONF_REG,
 					 TVE_IPU_CLK_EN | TVE_EN, 0);
 		clk_disable_unprepare(tve->clk);
 	}
-	spin_unlock_irqrestore(&tve->enable_lock, flags);
 }
 
 static int tve_setup_tvout(struct imx_tve *tve)
@@ -227,11 +225,6 @@ static enum drm_connector_status imx_tve_connector_detect(
 				struct drm_connector *connector, bool force)
 {
 	return connector_status_connected;
-}
-
-static void imx_tve_connector_destroy(struct drm_connector *connector)
-{
-	/* do not free here */
 }
 
 static int imx_tve_connector_get_modes(struct drm_connector *connector)
@@ -309,13 +302,11 @@ static void imx_tve_encoder_prepare(struct drm_encoder *encoder)
 
 	switch (tve->mode) {
 	case TVE_MODE_VGA:
-		imx_drm_crtc_panel_format_pins(encoder->crtc,
-				DRM_MODE_ENCODER_DAC, IPU_PIX_FMT_GBR24,
+		imx_drm_panel_format_pins(encoder, IPU_PIX_FMT_GBR24,
 				tve->hsync_pin, tve->vsync_pin);
 		break;
 	case TVE_MODE_TVOUT:
-		imx_drm_crtc_panel_format(encoder->crtc, DRM_MODE_ENCODER_TVDAC,
-					  V4L2_PIX_FMT_YUV444);
+		imx_drm_panel_format(encoder, V4L2_PIX_FMT_YUV444);
 		break;
 	}
 }
@@ -368,16 +359,11 @@ static void imx_tve_encoder_disable(struct drm_encoder *encoder)
 	tve_disable(tve);
 }
 
-static void imx_tve_encoder_destroy(struct drm_encoder *encoder)
-{
-	/* do not free here */
-}
-
 static struct drm_connector_funcs imx_tve_connector_funcs = {
 	.dpms = drm_helper_connector_dpms,
 	.fill_modes = drm_helper_probe_single_connector_modes,
 	.detect = imx_tve_connector_detect,
-	.destroy = imx_tve_connector_destroy,
+	.destroy = imx_drm_connector_destroy,
 };
 
 static struct drm_connector_helper_funcs imx_tve_connector_helper_funcs = {
@@ -387,7 +373,7 @@ static struct drm_connector_helper_funcs imx_tve_connector_helper_funcs = {
 };
 
 static struct drm_encoder_funcs imx_tve_encoder_funcs = {
-	.destroy = imx_tve_encoder_destroy,
+	.destroy = imx_drm_encoder_destroy,
 };
 
 static struct drm_encoder_helper_funcs imx_tve_encoder_helper_funcs = {
@@ -446,8 +432,7 @@ static long clk_tve_di_round_rate(struct clk_hw *hw, unsigned long rate,
 		return *prate / 4;
 	else if (div >= 2)
 		return *prate / 2;
-	else
-		return *prate;
+	return *prate;
 }
 
 static int clk_tve_di_set_rate(struct clk_hw *hw, unsigned long rate,
@@ -466,7 +451,9 @@ static int clk_tve_di_set_rate(struct clk_hw *hw, unsigned long rate,
 	else
 		val = TVE_DAC_FULL_RATE;
 
-	ret = regmap_update_bits(tve->regmap, TVE_COM_CONF_REG, TVE_DAC_SAMP_RATE_MASK, val);
+	ret = regmap_update_bits(tve->regmap, TVE_COM_CONF_REG,
+				 TVE_DAC_SAMP_RATE_MASK, val);
+
 	if (ret < 0) {
 		dev_err(tve->dev, "failed to set divider: %d\n", ret);
 		return ret;
@@ -505,34 +492,27 @@ static int tve_clk_init(struct imx_tve *tve, void __iomem *base)
 	return 0;
 }
 
-static int imx_tve_register(struct imx_tve *tve)
+static int imx_tve_register(struct drm_device *drm, struct imx_tve *tve)
 {
+	int encoder_type;
 	int ret;
 
-	tve->connector.funcs = &imx_tve_connector_funcs;
-	tve->encoder.funcs = &imx_tve_encoder_funcs;
+	encoder_type = tve->mode == TVE_MODE_VGA ?
+				DRM_MODE_ENCODER_DAC : DRM_MODE_ENCODER_TVDAC;
 
-	tve->encoder.encoder_type = DRM_MODE_ENCODER_NONE;
-	tve->connector.connector_type = DRM_MODE_CONNECTOR_VGA;
+	ret = imx_drm_encoder_parse_of(drm, &tve->encoder,
+				       tve->dev->of_node);
+	if (ret)
+		return ret;
 
 	drm_encoder_helper_add(&tve->encoder, &imx_tve_encoder_helper_funcs);
-	ret = imx_drm_add_encoder(&tve->encoder, &tve->imx_drm_encoder,
-			THIS_MODULE);
-	if (ret) {
-		dev_err(tve->dev, "adding encoder failed with %d\n", ret);
-		return ret;
-	}
+	drm_encoder_init(drm, &tve->encoder, &imx_tve_encoder_funcs,
+			 encoder_type);
 
 	drm_connector_helper_add(&tve->connector,
 			&imx_tve_connector_helper_funcs);
-
-	ret = imx_drm_add_connector(&tve->connector,
-			&tve->imx_drm_connector, THIS_MODULE);
-	if (ret) {
-		imx_drm_remove_encoder(tve->imx_drm_encoder);
-		dev_err(tve->dev, "adding connector failed with %d\n", ret);
-		return ret;
-	}
+	drm_connector_init(drm, &tve->connector, &imx_tve_connector_funcs,
+			   DRM_MODE_CONNECTOR_VGA);
 
 	drm_mode_connector_attach_encoder(&tve->connector, &tve->encoder);
 
@@ -557,12 +537,12 @@ static struct regmap_config tve_regmap_config = {
 	.max_register = 0xdc,
 };
 
-static const char *imx_tve_modes[] = {
+static const char * const imx_tve_modes[] = {
 	[TVE_MODE_TVOUT]  = "tvout",
 	[TVE_MODE_VGA] = "vga",
 };
 
-const int of_get_tve_mode(struct device_node *np)
+static const int of_get_tve_mode(struct device_node *np)
 {
 	const char *bm;
 	int ret, i;
@@ -578,9 +558,11 @@ const int of_get_tve_mode(struct device_node *np)
 	return -EINVAL;
 }
 
-static int imx_tve_probe(struct platform_device *pdev)
+static int imx_tve_bind(struct device *dev, struct device *master, void *data)
 {
-	struct device_node *np = pdev->dev.of_node;
+	struct platform_device *pdev = to_platform_device(dev);
+	struct drm_device *drm = data;
+	struct device_node *np = dev->of_node;
 	struct device_node *ddc_node;
 	struct imx_tve *tve;
 	struct resource *res;
@@ -589,15 +571,14 @@ static int imx_tve_probe(struct platform_device *pdev)
 	int irq;
 	int ret;
 
-	tve = devm_kzalloc(&pdev->dev, sizeof(*tve), GFP_KERNEL);
+	tve = devm_kzalloc(dev, sizeof(*tve), GFP_KERNEL);
 	if (!tve)
 		return -ENOMEM;
 
-	tve->dev = &pdev->dev;
+	tve->dev = dev;
 	spin_lock_init(&tve->lock);
-	spin_lock_init(&tve->enable_lock);
 
-	ddc_node = of_parse_phandle(np, "ddc", 0);
+	ddc_node = of_parse_phandle(np, "ddc-i2c-bus", 0);
 	if (ddc_node) {
 		tve->ddc = of_find_i2c_adapter_by_node(ddc_node);
 		of_node_put(ddc_node);
@@ -605,69 +586,57 @@ static int imx_tve_probe(struct platform_device *pdev)
 
 	tve->mode = of_get_tve_mode(np);
 	if (tve->mode != TVE_MODE_VGA) {
-		dev_err(&pdev->dev, "only VGA mode supported, currently\n");
+		dev_err(dev, "only VGA mode supported, currently\n");
 		return -EINVAL;
 	}
 
 	if (tve->mode == TVE_MODE_VGA) {
-		struct pinctrl *pinctrl;
+		ret = of_property_read_u32(np, "fsl,hsync-pin",
+					   &tve->hsync_pin);
 
-		pinctrl = devm_pinctrl_get_select_default(&pdev->dev);
-		if (IS_ERR(pinctrl)) {
-			ret = PTR_ERR(pinctrl);
-			dev_warn(&pdev->dev, "failed to setup pinctrl: %d", ret);
+		if (ret < 0) {
+			dev_err(dev, "failed to get vsync pin\n");
 			return ret;
 		}
 
-		ret = of_property_read_u32(np, "fsl,hsync-pin", &tve->hsync_pin);
-		if (ret < 0) {
-			dev_err(&pdev->dev, "failed to get vsync pin\n");
-			return ret;
-		}
+		ret |= of_property_read_u32(np, "fsl,vsync-pin",
+					    &tve->vsync_pin);
 
-		ret |= of_property_read_u32(np, "fsl,vsync-pin", &tve->vsync_pin);
 		if (ret < 0) {
-			dev_err(&pdev->dev, "failed to get vsync pin\n");
+			dev_err(dev, "failed to get vsync pin\n");
 			return ret;
 		}
 	}
 
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
-	if (!res) {
-		dev_err(&pdev->dev, "failed to get memory region\n");
-		return -ENOENT;
-	}
-
-	base = devm_request_and_ioremap(&pdev->dev, res);
-	if (!base) {
-		dev_err(&pdev->dev, "failed to remap memory region\n");
-		return -ENOENT;
-	}
+	base = devm_ioremap_resource(dev, res);
+	if (IS_ERR(base))
+		return PTR_ERR(base);
 
 	tve_regmap_config.lock_arg = tve;
-	tve->regmap = devm_regmap_init_mmio_clk(&pdev->dev, "tve", base,
+	tve->regmap = devm_regmap_init_mmio_clk(dev, "tve", base,
 						&tve_regmap_config);
 	if (IS_ERR(tve->regmap)) {
-		dev_err(&pdev->dev, "failed to init regmap: %ld\n",
+		dev_err(dev, "failed to init regmap: %ld\n",
 			PTR_ERR(tve->regmap));
 		return PTR_ERR(tve->regmap);
 	}
 
 	irq = platform_get_irq(pdev, 0);
 	if (irq < 0) {
-		dev_err(&pdev->dev, "failed to get irq\n");
+		dev_err(dev, "failed to get irq\n");
 		return irq;
 	}
 
-	ret = devm_request_threaded_irq(&pdev->dev, irq, NULL,
+	ret = devm_request_threaded_irq(dev, irq, NULL,
 					imx_tve_irq_handler, IRQF_ONESHOT,
 					"imx-tve", tve);
 	if (ret < 0) {
-		dev_err(&pdev->dev, "failed to request irq: %d\n", ret);
+		dev_err(dev, "failed to request irq: %d\n", ret);
 		return ret;
 	}
 
-	tve->dac_reg = devm_regulator_get(&pdev->dev, "dac");
+	tve->dac_reg = devm_regulator_get(dev, "dac");
 	if (!IS_ERR(tve->dac_reg)) {
 		regulator_set_voltage(tve->dac_reg, 2750000, 2750000);
 		ret = regulator_enable(tve->dac_reg);
@@ -675,17 +644,17 @@ static int imx_tve_probe(struct platform_device *pdev)
 			return ret;
 	}
 
-	tve->clk = devm_clk_get(&pdev->dev, "tve");
+	tve->clk = devm_clk_get(dev, "tve");
 	if (IS_ERR(tve->clk)) {
-		dev_err(&pdev->dev, "failed to get high speed tve clock: %ld\n",
+		dev_err(dev, "failed to get high speed tve clock: %ld\n",
 			PTR_ERR(tve->clk));
 		return PTR_ERR(tve->clk);
 	}
 
 	/* this is the IPU DI clock input selector, can be parented to tve_di */
-	tve->di_sel_clk = devm_clk_get(&pdev->dev, "di_sel");
+	tve->di_sel_clk = devm_clk_get(dev, "di_sel");
 	if (IS_ERR(tve->di_sel_clk)) {
-		dev_err(&pdev->dev, "failed to get ipu di mux clock: %ld\n",
+		dev_err(dev, "failed to get ipu di mux clock: %ld\n",
 			PTR_ERR(tve->di_sel_clk));
 		return PTR_ERR(tve->di_sel_clk);
 	}
@@ -696,42 +665,51 @@ static int imx_tve_probe(struct platform_device *pdev)
 
 	ret = regmap_read(tve->regmap, TVE_COM_CONF_REG, &val);
 	if (ret < 0) {
-		dev_err(&pdev->dev, "failed to read configuration register: %d\n", ret);
+		dev_err(dev, "failed to read configuration register: %d\n", ret);
 		return ret;
 	}
 	if (val != 0x00100000) {
-		dev_err(&pdev->dev, "configuration register default value indicates this is not a TVEv2\n");
+		dev_err(dev, "configuration register default value indicates this is not a TVEv2\n");
 		return -ENODEV;
-	};
+	}
 
 	/* disable cable detection for VGA mode */
 	ret = regmap_write(tve->regmap, TVE_CD_CONT_REG, 0);
 
-	ret = imx_tve_register(tve);
+	ret = imx_tve_register(drm, tve);
 	if (ret)
 		return ret;
 
-	ret = imx_drm_encoder_add_possible_crtcs(tve->imx_drm_encoder, np);
-
-	platform_set_drvdata(pdev, tve);
+	dev_set_drvdata(dev, tve);
 
 	return 0;
 }
 
-static int imx_tve_remove(struct platform_device *pdev)
+static void imx_tve_unbind(struct device *dev, struct device *master,
+	void *data)
 {
-	struct imx_tve *tve = platform_get_drvdata(pdev);
-	struct drm_connector *connector = &tve->connector;
-	struct drm_encoder *encoder = &tve->encoder;
+	struct imx_tve *tve = dev_get_drvdata(dev);
 
-	drm_mode_connector_detach_encoder(connector, encoder);
-
-	imx_drm_remove_connector(tve->imx_drm_connector);
-	imx_drm_remove_encoder(tve->imx_drm_encoder);
+	tve->connector.funcs->destroy(&tve->connector);
+	tve->encoder.funcs->destroy(&tve->encoder);
 
 	if (!IS_ERR(tve->dac_reg))
 		regulator_disable(tve->dac_reg);
+}
 
+static const struct component_ops imx_tve_ops = {
+	.bind	= imx_tve_bind,
+	.unbind	= imx_tve_unbind,
+};
+
+static int imx_tve_probe(struct platform_device *pdev)
+{
+	return component_add(&pdev->dev, &imx_tve_ops);
+}
+
+static int imx_tve_remove(struct platform_device *pdev)
+{
+	component_del(&pdev->dev, &imx_tve_ops);
 	return 0;
 }
 
@@ -755,3 +733,4 @@ module_platform_driver(imx_tve_driver);
 MODULE_DESCRIPTION("i.MX Television Encoder driver");
 MODULE_AUTHOR("Philipp Zabel, Pengutronix");
 MODULE_LICENSE("GPL");
+MODULE_ALIAS("platform:imx-tve");

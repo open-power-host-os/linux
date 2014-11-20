@@ -61,8 +61,6 @@ extern long do_no_restart_syscall(struct restart_block *parm);
 # define THREADINFO_GFP		(GFP_KERNEL | __GFP_NOTRACK)
 #endif
 
-#define THREADINFO_GFP_ACCOUNTED (THREADINFO_GFP | __GFP_KMEMCG)
-
 /*
  * flag set/clear/test wrappers
  * - pass TIF_xxxx constants to these functions
@@ -103,9 +101,6 @@ static inline int test_ti_thread_flag(struct thread_info *ti, int flag)
 	test_and_clear_ti_thread_flag(current_thread_info(), flag)
 #define test_thread_flag(flag) \
 	test_ti_thread_flag(current_thread_info(), flag)
-
-#define set_need_resched()	set_thread_flag(TIF_NEED_RESCHED)
-#define clear_need_resched()	clear_thread_flag(TIF_NEED_RESCHED)
 
 #define tif_need_resched() test_thread_flag(TIF_NEED_RESCHED)
 

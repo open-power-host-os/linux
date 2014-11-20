@@ -147,6 +147,11 @@ static inline struct pci_dev *eeh_dev_to_pci_dev(struct eeh_dev *edev)
 	return edev ? edev->pdev : NULL;
 }
 
+static inline struct eeh_pe *eeh_dev_to_pe(struct eeh_dev* edev)
+{
+	return edev ? edev->pe : NULL;
+}
+
 /* Return values from eeh_ops::next_error */
 enum {
 	EEH_NEXT_ERR_NONE = 0,
@@ -200,7 +205,7 @@ struct eeh_ops {
 	int (*wait_state)(struct eeh_pe *pe, int max_wait);
 	int (*get_log)(struct eeh_pe *pe, int severity, char *drv_log, unsigned long len);
 	int (*configure_bridge)(struct eeh_pe *pe);
-	int (*err_inject)(struct eeh_pe *pe, int type, int function,
+	int (*err_inject)(struct eeh_pe *pe, int type, int func,
 			  unsigned long addr, unsigned long mask);
 	int (*read_config)(struct device_node *dn, int where, int size, u32 *val);
 	int (*write_config)(struct device_node *dn, int where, int size, u32 val);

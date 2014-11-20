@@ -30,9 +30,9 @@
 #include <linux/kprobes.h>
 #include <linux/kdebug.h>
 #include <linux/perf_event.h>
-#include <linux/magic.h>
 #include <linux/ratelimit.h>
 #include <linux/context_tracking.h>
+#include <linux/hugetlb.h>
 
 #include <asm/firmware.h>
 #include <asm/page.h>
@@ -114,22 +114,37 @@ static int store_updates_sp(struct pt_regs *regs)
 #define MM_FAULT_CONTINUE	-1
 #define MM_FAULT_ERR(sig)	(sig)
 
-static int do_sigbus(struct pt_regs *regs, unsigned long address)
+static int do_sigbus(struct pt_regs *regs, unsigned long address,
+		     unsigned int fault)
 {
 	siginfo_t info;
+	unsigned int lsb = 0;
 
 	up_read(&current->mm->mmap_sem);
 
-	if (user_mode(regs)) {
-		current->thread.trap_nr = BUS_ADRERR;
-		info.si_signo = SIGBUS;
-		info.si_errno = 0;
-		info.si_code = BUS_ADRERR;
-		info.si_addr = (void __user *)address;
-		force_sig_info(SIGBUS, &info, current);
-		return MM_FAULT_RETURN;
+	if (!user_mode(regs))
+		return MM_FAULT_ERR(SIGBUS);
+
+	current->thread.trap_nr = BUS_ADRERR;
+	info.si_signo = SIGBUS;
+	info.si_errno = 0;
+	info.si_code = BUS_ADRERR;
+	info.si_addr = (void __user *)address;
+#ifdef CONFIG_MEMORY_FAILURE
+	if (fault & (VM_FAULT_HWPOISON|VM_FAULT_HWPOISON_LARGE)) {
+		pr_err("MCE: Killing %s:%d due to hardware memory corruption fault at %lx\n",
+			current->comm, current->pid, address);
+		info.si_code = BUS_MCEERR_AR;
 	}
-	return MM_FAULT_ERR(SIGBUS);
+
+	if (fault & VM_FAULT_HWPOISON_LARGE)
+		lsb = hstate_index_to_shift(VM_FAULT_GET_HINDEX(fault));
+	if (fault & VM_FAULT_HWPOISON)
+		lsb = PAGE_SHIFT;
+#endif
+	info.si_addr_lsb = lsb;
+	force_sig_info(SIGBUS, &info, current);
+	return MM_FAULT_RETURN;
 }
 
 static int mm_fault_error(struct pt_regs *regs, unsigned long addr, int fault)
@@ -170,11 +185,8 @@ static int mm_fault_error(struct pt_regs *regs, unsigned long addr, int fault)
 		return MM_FAULT_RETURN;
 	}
 
-	/* Bus error. x86 handles HWPOISON here, we'll add this if/when
-	 * we support the feature in HW
-	 */
-	if (fault & VM_FAULT_SIGBUS)
-		return do_sigbus(regs, addr);
+	if (fault & (VM_FAULT_SIGBUS|VM_FAULT_HWPOISON|VM_FAULT_HWPOISON_LARGE))
+		return do_sigbus(regs, addr, fault);
 
 	/* We don't understand the fault code, this is fatal */
 	BUG();
@@ -222,9 +234,6 @@ int __kprobes do_page_fault(struct pt_regs *regs, unsigned long address,
 #else
 	is_write = error_code & ESR_DST;
 #endif /* CONFIG_4xx || CONFIG_BOOKE */
-
-	if (is_write)
-		flags |= FAULT_FLAG_WRITE;
 
 #ifdef CONFIG_PPC_ICSWX
 	/*
@@ -287,6 +296,9 @@ int __kprobes do_page_fault(struct pt_regs *regs, unsigned long address,
 	 */
 	if (user_mode(regs))
 		store_update_sp = store_updates_sp(regs);
+
+	if (user_mode(regs))
+		flags |= FAULT_FLAG_USER;
 
 	/* When running in the kernel we expect faults to occur only to
 	 * addresses in user space.  All other faults represent errors in the
@@ -415,6 +427,7 @@ good_area:
 	} else if (is_write) {
 		if (!(vma->vm_flags & VM_WRITE))
 			goto bad_area;
+		flags |= FAULT_FLAG_WRITE;
 	/* a read */
 	} else {
 		/* protection fault */
@@ -450,8 +463,12 @@ good_area:
 				      regs, address);
 #ifdef CONFIG_PPC_SMLPAR
 			if (firmware_has_feature(FW_FEATURE_CMO)) {
+				u32 page_ins;
+
 				preempt_disable();
-				get_lppaca()->page_ins += (1 << PAGE_FACTOR);
+				page_ins = be32_to_cpu(get_lppaca()->page_ins);
+				page_ins += 1 << PAGE_FACTOR;
+				get_lppaca()->page_ins = cpu_to_be32(page_ins);
 				preempt_enable();
 			}
 #endif /* CONFIG_PPC_SMLPAR */
@@ -503,7 +520,6 @@ bail:
 void bad_page_fault(struct pt_regs *regs, unsigned long address, int sig)
 {
 	const struct exception_table_entry *entry;
-	unsigned long *stackend;
 
 	/* Are we prepared to handle this fault?  */
 	if ((entry = search_exception_tables(regs->nip)) != NULL) {
@@ -532,8 +548,7 @@ void bad_page_fault(struct pt_regs *regs, unsigned long address, int sig)
 	printk(KERN_ALERT "Faulting instruction address: 0x%08lx\n",
 		regs->nip);
 
-	stackend = end_of_stack(current);
-	if (current != &init_task && *stackend != STACK_END_MAGIC)
+	if (task_stack_end_corrupted(current))
 		printk(KERN_ALERT "Thread overran stack, or stack corrupted\n");
 
 	die("Kernel access of bad area", regs, sig);

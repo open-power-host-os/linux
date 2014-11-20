@@ -35,8 +35,8 @@
 #include <asm/ptrace.h>
 #include <linux/atomic.h>
 #include <asm/irq.h>
-#include <asm/kvm_ppc.h>
 #include <asm/hw_irq.h>
+#include <asm/kvm_ppc.h>
 #include <asm/page.h>
 #include <asm/pgtable.h>
 #include <asm/prom.h>
@@ -52,6 +52,7 @@
 #endif
 #include <asm/vdso.h>
 #include <asm/debug.h>
+#include <asm/kexec.h>
 
 #ifdef DEBUG
 #include <asm/udbg.h>
@@ -82,6 +83,28 @@ volatile unsigned int cpu_callin_map[NR_CPUS];
 int smt_enabled_at_boot = 1;
 
 static void (*crash_ipi_function_ptr)(struct pt_regs *) = NULL;
+
+/*
+ * Returns 1 if the specified cpu should be brought up during boot.
+ * Used to inhibit booting threads if they've been disabled or
+ * limited on the command line
+ */
+int smp_generic_cpu_bootable(unsigned int nr)
+{
+	/* Special case - we inhibit secondary thread startup
+	 * during boot if the user requests it.
+	 */
+	if (system_state == SYSTEM_BOOTING && cpu_has_feature(CPU_FTR_SMT)) {
+		if (!smt_enabled_at_boot && cpu_thread_in_core(nr) != 0)
+			return 0;
+		if (smt_enabled_at_boot
+		    && cpu_thread_in_core(nr) >= smt_enabled_at_boot)
+			return 0;
+	}
+
+	return 1;
+}
+
 
 #ifdef CONFIG_PPC64
 int smp_generic_kick_cpu(int nr)
@@ -125,9 +148,9 @@ static irqreturn_t reschedule_action(int irq, void *data)
 	return IRQ_HANDLED;
 }
 
-static irqreturn_t timer_action(int irq, void *data)
+static irqreturn_t tick_broadcast_ipi_action(int irq, void *data)
 {
-	decrementer_timer_interrupt();
+	tick_broadcast_ipi_handler();
 	return IRQ_HANDLED;
 }
 
@@ -148,14 +171,14 @@ static irqreturn_t debug_ipi_action(int irq, void *data)
 static irq_handler_t smp_ipi_action[] = {
 	[PPC_MSG_CALL_FUNCTION] =  call_function_action,
 	[PPC_MSG_RESCHEDULE] = reschedule_action,
-	[PPC_MSG_TIMER] = timer_action,
+	[PPC_MSG_TICK_BROADCAST] = tick_broadcast_ipi_action,
 	[PPC_MSG_DEBUGGER_BREAK] = debug_ipi_action,
 };
 
 const char *smp_ipi_name[] = {
 	[PPC_MSG_CALL_FUNCTION] =  "ipi call function",
 	[PPC_MSG_RESCHEDULE] = "ipi reschedule",
-	[PPC_MSG_TIMER] = "ipi timer",
+	[PPC_MSG_TICK_BROADCAST] = "ipi tick-broadcast",
 	[PPC_MSG_DEBUGGER_BREAK] = "ipi debugger",
 };
 
@@ -174,7 +197,7 @@ int smp_request_message_ipi(int virq, int msg)
 #endif
 	err = request_irq(virq, smp_ipi_action[msg],
 			  IRQF_PERCPU | IRQF_NO_THREAD | IRQF_NO_SUSPEND,
-			  smp_ipi_name[msg], 0);
+			  smp_ipi_name[msg], NULL);
 	WARN(err < 0, "unable to request_irq %d for %s (rc %d)\n",
 		virq, smp_ipi_name[msg], err);
 
@@ -212,6 +235,12 @@ void smp_muxed_ipi_message_pass(int cpu, int msg)
 	smp_ops->cause_ipi(cpu, info->data);
 }
 
+#ifdef __BIG_ENDIAN__
+#define IPI_MESSAGE(A) (1 << (24 - 8 * (A)))
+#else
+#define IPI_MESSAGE(A) (1 << (8 * (A)))
+#endif
+
 irqreturn_t smp_ipi_demux(void)
 {
 	struct cpu_messages *info = &__get_cpu_var(ipi_message);
@@ -221,19 +250,14 @@ irqreturn_t smp_ipi_demux(void)
 
 	do {
 		all = xchg(&info->messages, 0);
-
-#ifdef __BIG_ENDIAN
-		if (all & (1 << (24 - 8 * PPC_MSG_CALL_FUNCTION)))
+		if (all & IPI_MESSAGE(PPC_MSG_CALL_FUNCTION))
 			generic_smp_call_function_interrupt();
-		if (all & (1 << (24 - 8 * PPC_MSG_RESCHEDULE)))
+		if (all & IPI_MESSAGE(PPC_MSG_RESCHEDULE))
 			scheduler_ipi();
-		if (all & (1 << (24 - 8 * PPC_MSG_TIMER)))
-			decrementer_timer_interrupt();
-		if (all & (1 << (24 - 8 * PPC_MSG_DEBUGGER_BREAK)))
+		if (all & IPI_MESSAGE(PPC_MSG_TICK_BROADCAST))
+			tick_broadcast_ipi_handler();
+		if (all & IPI_MESSAGE(PPC_MSG_DEBUGGER_BREAK))
 			debug_ipi_action(0, NULL);
-#else
-#error Unsupported ENDIAN
-#endif
 	} while (info->messages);
 
 	return IRQ_HANDLED;
@@ -270,13 +294,15 @@ void arch_send_call_function_ipi_mask(const struct cpumask *mask)
 		do_message_pass(cpu, PPC_MSG_CALL_FUNCTION);
 }
 
-void arch_send_tick_broadcast(const struct cpumask *mask)
+#ifdef CONFIG_GENERIC_CLOCKEVENTS_BROADCAST
+void tick_broadcast(const struct cpumask *mask)
 {
 	unsigned int cpu;
 
 	for_each_cpu(cpu, mask)
-		do_message_pass(cpu, PPC_MSG_TIMER);
+		do_message_pass(cpu, PPC_MSG_TICK_BROADCAST);
 }
+#endif
 
 #if defined(CONFIG_DEBUGGER) || defined(CONFIG_KEXEC)
 void smp_send_debugger_break(void)
@@ -351,18 +377,21 @@ void __init smp_prepare_cpus(unsigned int max_cpus)
 					GFP_KERNEL, cpu_to_node(cpu));
 		zalloc_cpumask_var_node(&per_cpu(cpu_core_map, cpu),
 					GFP_KERNEL, cpu_to_node(cpu));
+		/*
+		 * numa_node_id() works after this.
+		 */
+		if (cpu_present(cpu)) {
+			set_cpu_numa_node(cpu, numa_cpu_lookup_table[cpu]);
+			set_cpu_numa_mem(cpu,
+				local_memory_node(numa_cpu_lookup_table[cpu]));
+		}
 	}
 
 	cpumask_set_cpu(boot_cpuid, cpu_sibling_mask(boot_cpuid));
 	cpumask_set_cpu(boot_cpuid, cpu_core_mask(boot_cpuid));
 
-	if (smp_ops)
-		if (smp_ops->probe)
-			max_cpus = smp_ops->probe();
-		else
-			max_cpus = NR_CPUS;
-	else
-		max_cpus = 1;
+	if (smp_ops && smp_ops->probe)
+		smp_ops->probe();
 }
 
 void smp_prepare_boot_cpu(void)
@@ -462,7 +491,7 @@ static void cpu_idle_thread_init(unsigned int cpu, struct task_struct *idle)
 	secondary_ti = current_set[cpu] = ti;
 }
 
-int __cpuinit __cpu_up(unsigned int cpu, struct task_struct *tidle)
+int __cpu_up(unsigned int cpu, struct task_struct *tidle)
 {
 	int rc, c;
 
@@ -539,7 +568,7 @@ int __cpuinit __cpu_up(unsigned int cpu, struct task_struct *tidle)
 int cpu_to_core_id(int cpu)
 {
 	struct device_node *np;
-	const int *reg;
+	const __be32 *reg;
 	int id = -1;
 
 	np = of_get_cpu_node(cpu, NULL);
@@ -550,27 +579,11 @@ int cpu_to_core_id(int cpu)
 	if (!reg)
 		goto out;
 
-	id = *reg;
+	id = be32_to_cpup(reg);
 out:
 	of_node_put(np);
 	return id;
 }
-
-/* Return the value of the chip-id property corresponding
- * to the given logical cpu.
- */
-int cpu_to_chip_id(int cpu)
-{
-	struct device_node *np;
-
-	np = of_get_cpu_node(cpu, NULL);
-	if (!np)
-		return -1;
-
-	of_node_put(np);
-	return of_get_ibm_chip_id(np);
-}
-EXPORT_SYMBOL(cpu_to_chip_id);
 
 /* Helper routines for cpu to core mapping */
 int cpu_core_index_of_thread(int cpu)
@@ -676,7 +689,7 @@ static void traverse_core_siblings(int cpu, bool add)
 }
 
 /* Activate a secondary processor. */
-__cpuinit void start_secondary(void *unused)
+void start_secondary(void *unused)
 {
 	unsigned int cpu = smp_processor_id();
 	int i, base;
@@ -719,9 +732,6 @@ __cpuinit void start_secondary(void *unused)
 	}
 	traverse_core_siblings(cpu, true);
 
-	/*
-	 * numa_node_id() works after this.
-	 */
 	set_numa_node(numa_cpu_lookup_table[cpu]);
 	set_numa_mem(local_memory_node(numa_cpu_lookup_table[cpu]));
 
@@ -740,6 +750,28 @@ int setup_profiling_timer(unsigned int multiplier)
 {
 	return 0;
 }
+
+#ifdef CONFIG_SCHED_SMT
+/* cpumask of CPUs with asymetric SMT dependancy */
+static int powerpc_smt_flags(void)
+{
+	int flags = SD_SHARE_CPUCAPACITY | SD_SHARE_PKG_RESOURCES;
+
+	if (cpu_has_feature(CPU_FTR_ASYM_SMT)) {
+		printk_once(KERN_INFO "Enabling Asymmetric SMT scheduling\n");
+		flags |= SD_ASYM_PACKING;
+	}
+	return flags;
+}
+#endif
+
+static struct sched_domain_topology_level powerpc_topology[] = {
+#ifdef CONFIG_SCHED_SMT
+	{ cpu_smt_mask, powerpc_smt_flags, SD_INIT_NAME(SMT) },
+#endif
+	{ cpu_cpu_mask, SD_INIT_NAME(DIE) },
+	{ NULL, },
+};
 
 void __init smp_cpus_done(unsigned int max_cpus)
 {
@@ -765,15 +797,8 @@ void __init smp_cpus_done(unsigned int max_cpus)
 
 	dump_numa_cpu_topology();
 
-}
+	set_sched_topology(powerpc_topology);
 
-int arch_sd_sibling_asym_packing(void)
-{
-	if (cpu_has_feature(CPU_FTR_ASYM_SMT)) {
-		printk_once(KERN_INFO "Enabling Asymmetric SMT scheduling\n");
-		return SD_ASYM_PACKING;
-	}
-	return 0;
 }
 
 #ifdef CONFIG_HOTPLUG_CPU
@@ -807,18 +832,6 @@ void __cpu_die(unsigned int cpu)
 {
 	if (smp_ops->cpu_die)
 		smp_ops->cpu_die(cpu);
-}
-
-static DEFINE_MUTEX(powerpc_cpu_hotplug_driver_mutex);
-
-void cpu_hotplug_driver_lock()
-{
-	mutex_lock(&powerpc_cpu_hotplug_driver_mutex);
-}
-
-void cpu_hotplug_driver_unlock()
-{
-	mutex_unlock(&powerpc_cpu_hotplug_driver_mutex);
 }
 
 void cpu_die(void)

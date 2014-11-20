@@ -65,7 +65,7 @@ static ssize_t opal_get_sys_param(u32 param_id, u32 length, void *buffer)
 		goto out_token;
 	}
 
-	ret = msg.params[1];
+	ret = be64_to_cpu(msg.params[1]);
 
 out_token:
 	opal_async_release_token(token);
@@ -99,7 +99,7 @@ static int opal_set_sys_param(u32 param_id, u32 length, void *buffer)
 		goto out_token;
 	}
 
-	ret = msg.params[1];
+	ret = be64_to_cpu(msg.params[1]);
 
 out_token:
 	opal_async_release_token(token);
@@ -246,7 +246,8 @@ void __init opal_sys_param_init(void)
 				"exceeds buffer length\n", i);
 			continue;
 		}
- 		sysfs_attr_init(&attr[i].kobj_attr.attr);
+
+		sysfs_attr_init(&attr[i].kobj_attr.attr);
 		attr[i].param_id = id[i];
 		attr[i].param_size = size[i];
 		if (of_property_read_string_index(sysparam, "param-name", i,
@@ -259,10 +260,10 @@ void __init opal_sys_param_init(void)
 			attr[i].kobj_attr.attr.mode = S_IRUGO;
 			break;
 		case OPAL_SYSPARAM_WRITE:
-			attr[i].kobj_attr.attr.mode = S_IWUGO;
+			attr[i].kobj_attr.attr.mode = S_IWUSR;
 			break;
 		case OPAL_SYSPARAM_RW:
-			attr[i].kobj_attr.attr.mode = S_IRUGO | S_IWUGO;
+			attr[i].kobj_attr.attr.mode = S_IRUGO | S_IWUSR;
 			break;
 		default:
 			break;

@@ -33,9 +33,6 @@
 #include <asm/edac.h>
 #include "edac_core.h"
 #include "edac_module.h"
-
-#define CREATE_TRACE_POINTS
-#define TRACE_INCLUDE_PATH ../../include/ras
 #include <ras/ras_event.h>
 
 /* lock to memory controller's control array */
@@ -131,7 +128,7 @@ static void edac_mc_dump_mci(struct mem_ctl_info *mci)
 /*
  * keep those in sync with the enum mem_type
  */
-const char *edac_mem_types[] = {
+const char * const edac_mem_types[] = {
 	"Empty csrow",
 	"Reserved csrow type",
 	"Unknown csrow type",
@@ -791,8 +788,10 @@ int edac_mc_add_mc(struct mem_ctl_info *mci)
 	}
 
 	/* Report action taken */
-	edac_mc_printk(mci, KERN_INFO, "Giving out device to '%s' '%s':"
-		" DEV %s\n", mci->mod_name, mci->ctl_name, edac_dev_name(mci));
+	edac_mc_printk(mci, KERN_INFO,
+		"Giving out device to module %s controller %s: DEV %s (%s)\n",
+		mci->mod_name, mci->ctl_name, mci->dev_name,
+		edac_op_state_to_string(mci->op_state));
 
 	edac_mc_owner = mci->mod_name;
 
@@ -1016,7 +1015,7 @@ static void edac_ce_error(struct mem_ctl_info *mci,
 	}
 	edac_inc_ce_error(mci, enable_per_layer_report, pos, error_count);
 
-	if (mci->scrub_mode & SCRUB_SW_SRC) {
+	if (mci->scrub_mode == SCRUB_SW_SRC) {
 		/*
 			* Some memory controllers (called MCs below) can remap
 			* memory so that it is still available at a different

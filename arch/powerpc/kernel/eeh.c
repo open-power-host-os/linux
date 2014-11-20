@@ -37,6 +37,7 @@
 #include <linux/of.h>
 
 #include <linux/atomic.h>
+#include <asm/debug.h>
 #include <asm/eeh.h>
 #include <asm/eeh_event.h>
 #include <asm/io.h>
@@ -317,10 +318,15 @@ static inline unsigned long eeh_token_to_phys(unsigned long token)
 {
 	pte_t *ptep;
 	unsigned long pa;
+	int hugepage_shift;
 
-	ptep = find_linux_pte(init_mm.pgd, token);
+	/*
+	 * We won't find hugepages here, iomem
+	 */
+	ptep = find_linux_pte_or_hugepte(init_mm.pgd, token, &hugepage_shift);
 	if (!ptep)
 		return token;
+	WARN_ON(hugepage_shift);
 	pa = pte_pfn(*ptep) << PAGE_SHIFT;
 
 	return pa | (token & (PAGE_SIZE-1));
@@ -416,7 +422,7 @@ int eeh_dev_check_failure(struct eeh_dev *edev)
 	}
 	dn = eeh_dev_to_of_node(edev);
 	dev = eeh_dev_to_pci_dev(edev);
-	pe = edev->pe;
+	pe = eeh_dev_to_pe(edev);
 
 	/* Access to IO BARs might get this far and still not want checking. */
 	if (!pe) {
@@ -663,7 +669,7 @@ int eeh_pci_enable(struct eeh_pe *pe, int function)
 int pcibios_set_pcie_reset_state(struct pci_dev *dev, enum pcie_reset_state state)
 {
 	struct eeh_dev *edev = pci_dev_to_eeh_dev(dev);
-	struct eeh_pe *pe = edev->pe;
+	struct eeh_pe *pe = eeh_dev_to_pe(edev);
 
 	if (!pe) {
 		pr_err("%s: No PE found on PCI device %s\n",
@@ -1212,7 +1218,6 @@ static int eeh_pe_change_owner(struct eeh_pe *pe)
 	struct pci_dev *pdev;
 	struct pci_device_id *id;
 	int flags, ret;
-	bool need_reset = false;
 
 	/* Check PE state */
 	flags = (EEH_STATE_MMIO_ACTIVE | EEH_STATE_DMA_ACTIVE);
@@ -1244,21 +1249,13 @@ static int eeh_pe_change_owner(struct eeh_pe *pe)
 			    id->subdevice != pdev->subsystem_device)
 				continue;
 
-			need_reset = true;
-			break;
+			goto reset;
 		}
-
-		/* Any one device in the PE requires PE reset,
-		 * we should do that.
-		 */
-		if (need_reset)
-			break;
 	}
 
-	/* Unfroze the PE if reset isn't required */
-	if (!need_reset)
-		return eeh_unfreeze_pe(pe, true);
+	return eeh_unfreeze_pe(pe, true);
 
+reset:
 	return eeh_pe_reset_and_recover(pe);
 }
 
@@ -1284,11 +1281,8 @@ int eeh_dev_open(struct pci_dev *pdev)
 
 	/* No EEH device or PE ? */
 	edev = pci_dev_to_eeh_dev(pdev);
-	if (!edev || !edev->pe) {
-		pr_warn_once("%s: PCI device %s not supported\n",
-			     __func__, pci_name(pdev));
+	if (!edev || !edev->pe)
 		goto out;
-	}
 
 	/*
 	 * The PE might have been put into frozen state, but we
@@ -1343,6 +1337,8 @@ out:
 }
 EXPORT_SYMBOL(eeh_dev_release);
 
+#ifdef CONFIG_IOMMU_API
+
 static int dev_has_iommu_table(struct device *dev, void *data)
 {
 	struct pci_dev *pdev = to_pci_dev(dev);
@@ -1389,6 +1385,8 @@ struct eeh_pe *eeh_iommu_group_to_pe(struct iommu_group *group)
 	return edev->pe;
 }
 EXPORT_SYMBOL_GPL(eeh_iommu_group_to_pe);
+
+#endif /* CONFIG_IOMMU_API */
 
 /**
  * eeh_pe_set_option - Set options for the indicated PE

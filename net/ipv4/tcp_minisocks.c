@@ -232,7 +232,7 @@ kill:
 		u32 isn = tcptw->tw_snd_nxt + 65535 + 2;
 		if (isn == 0)
 			isn++;
-		TCP_SKB_CB(skb)->when = isn;
+		TCP_SKB_CB(skb)->tcp_tw_isn = isn;
 		return TCP_TW_SYN;
 	}
 
@@ -293,14 +293,12 @@ void tcp_time_wait(struct sock *sk, int state, int timeo)
 #if IS_ENABLED(CONFIG_IPV6)
 		if (tw->tw_family == PF_INET6) {
 			struct ipv6_pinfo *np = inet6_sk(sk);
-			struct inet6_timewait_sock *tw6;
 
-			tw->tw_ipv6_offset = inet6_tw_offset(sk->sk_prot);
-			tw6 = inet6_twsk((struct sock *)tw);
-			tw6->tw_v6_daddr = np->daddr;
-			tw6->tw_v6_rcv_saddr = np->rcv_saddr;
+			tw->tw_v6_daddr = sk->sk_v6_daddr;
+			tw->tw_v6_rcv_saddr = sk->sk_v6_rcv_saddr;
 			tw->tw_tclass = np->tclass;
-			tw->tw_ipv6only = np->ipv6only;
+			tw->tw_flowlabel = np->flow_label >> 12;
+			tw->tw_ipv6only = sk->sk_ipv6only;
 		}
 #endif
 
@@ -317,7 +315,7 @@ void tcp_time_wait(struct sock *sk, int state, int timeo)
 			key = tp->af_specific->md5_lookup(sk, sk);
 			if (key != NULL) {
 				tcptw->tw_md5_key = kmemdup(key, sizeof(*key), GFP_ATOMIC);
-				if (tcptw->tw_md5_key && tcp_alloc_md5sig_pool(sk) == NULL)
+				if (tcptw->tw_md5_key && !tcp_alloc_md5sig_pool())
 					BUG();
 			}
 		} while (0);
@@ -358,16 +356,45 @@ void tcp_twsk_destructor(struct sock *sk)
 #ifdef CONFIG_TCP_MD5SIG
 	struct tcp_timewait_sock *twsk = tcp_twsk(sk);
 
-	if (twsk->tw_md5_key) {
-		tcp_free_md5sig_pool();
+	if (twsk->tw_md5_key)
 		kfree_rcu(twsk->tw_md5_key, rcu);
-	}
 #endif
 }
 EXPORT_SYMBOL_GPL(tcp_twsk_destructor);
 
-static inline void TCP_ECN_openreq_child(struct tcp_sock *tp,
-					 struct request_sock *req)
+void tcp_openreq_init_rwin(struct request_sock *req,
+			   struct sock *sk, struct dst_entry *dst)
+{
+	struct inet_request_sock *ireq = inet_rsk(req);
+	struct tcp_sock *tp = tcp_sk(sk);
+	__u8 rcv_wscale;
+	int mss = dst_metric_advmss(dst);
+
+	if (tp->rx_opt.user_mss && tp->rx_opt.user_mss < mss)
+		mss = tp->rx_opt.user_mss;
+
+	/* Set this up on the first call only */
+	req->window_clamp = tp->window_clamp ? : dst_metric(dst, RTAX_WINDOW);
+
+	/* limit the window selection if the user enforce a smaller rx buffer */
+	if (sk->sk_userlocks & SOCK_RCVBUF_LOCK &&
+	    (req->window_clamp > tcp_full_space(sk) || req->window_clamp == 0))
+		req->window_clamp = tcp_full_space(sk);
+
+	/* tcp_full_space because it is guaranteed to be the first packet */
+	tcp_select_initial_window(tcp_full_space(sk),
+		mss - (ireq->tstamp_ok ? TCPOLEN_TSTAMP_ALIGNED : 0),
+		&req->rcv_wnd,
+		&req->window_clamp,
+		ireq->wscale_ok,
+		&rcv_wscale,
+		dst_metric(dst, RTAX_INITRWND));
+	ireq->rcv_wscale = rcv_wscale;
+}
+EXPORT_SYMBOL(tcp_openreq_init_rwin);
+
+static void tcp_ecn_openreq_child(struct tcp_sock *tp,
+				  const struct request_sock *req)
 {
 	tp->ecn_flags = inet_rsk(req)->ecn_ok ? TCP_ECN_OK : 0;
 }
@@ -402,8 +429,8 @@ struct sock *tcp_create_openreq_child(struct sock *sk, struct request_sock *req,
 
 		tcp_init_wl(newtp, treq->rcv_isn);
 
-		newtp->srtt = 0;
-		newtp->mdev = TCP_TIMEOUT_INIT;
+		newtp->srtt_us = 0;
+		newtp->mdev_us = jiffies_to_usecs(TCP_TIMEOUT_INIT);
 		newicsk->icsk_rto = TCP_TIMEOUT_INIT;
 
 		newtp->packets_out = 0;
@@ -413,6 +440,8 @@ struct sock *tcp_create_openreq_child(struct sock *sk, struct request_sock *req,
 		newtp->snd_ssthresh = TCP_INFINITE_SSTHRESH;
 		tcp_enable_early_retrans(newtp);
 		newtp->tlp_high_seq = 0;
+		newtp->lsndtime = treq->snt_synack;
+		newtp->total_retrans = req->num_retrans;
 
 		/* So many TCP implementations out there (incorrectly) count the
 		 * initial SYN frame in their delayed-ACK and congestion control
@@ -422,13 +451,12 @@ struct sock *tcp_create_openreq_child(struct sock *sk, struct request_sock *req,
 		newtp->snd_cwnd = TCP_INIT_CWND;
 		newtp->snd_cwnd_cnt = 0;
 
-		if (newicsk->icsk_ca_ops != &tcp_init_congestion_ops &&
-		    !try_module_get(newicsk->icsk_ca_ops->owner))
-			newicsk->icsk_ca_ops = &tcp_init_congestion_ops;
+		if (!try_module_get(newicsk->icsk_ca_ops->owner))
+			tcp_assign_congestion_control(newsk);
 
 		tcp_set_ca_state(newsk, TCP_CA_Open);
 		tcp_init_xmit_timers(newsk);
-		skb_queue_head_init(&newtp->out_of_order_queue);
+		__skb_queue_head_init(&newtp->out_of_order_queue);
 		newtp->write_seq = newtp->pushed_seq = treq->snt_isn + 1;
 
 		newtp->rx_opt.saw_tstamp = 0;
@@ -479,7 +507,7 @@ struct sock *tcp_create_openreq_child(struct sock *sk, struct request_sock *req,
 		if (skb->len >= TCP_MSS_DEFAULT + newtp->tcp_header_len)
 			newicsk->icsk_ack.last_seg_size = skb->len - newtp->tcp_header_len;
 		newtp->rx_opt.mss_clamp = req->mss;
-		TCP_ECN_openreq_child(newtp, req);
+		tcp_ecn_openreq_child(newtp, req);
 		newtp->fastopen_rsk = NULL;
 		newtp->syn_data_acked = 0;
 
@@ -668,12 +696,6 @@ struct sock *tcp_check_req(struct sock *sk, struct sk_buff *skb,
 	if (!(flg & TCP_FLAG_ACK))
 		return NULL;
 
-	/* Got ACK for our SYNACK, so update baseline for SYNACK RTT sample. */
-	if (tmp_opt.saw_tstamp && tmp_opt.rcv_tsecr)
-		tcp_rsk(req)->snt_synack = tmp_opt.rcv_tsecr;
-	else if (req->num_retrans) /* don't take RTT sample if retrans && ~TS */
-		tcp_rsk(req)->snt_synack = 0;
-
 	/* For Fast Open no more processing is needed (sk is the
 	 * child socket).
 	 */
@@ -753,7 +775,7 @@ int tcp_child_process(struct sock *parent, struct sock *child,
 					    skb->len);
 		/* Wakeup parent, send SIGIO */
 		if (state == TCP_SYN_RECV && child->sk_state != state)
-			parent->sk_data_ready(parent, 0);
+			parent->sk_data_ready(parent);
 	} else {
 		/* Alas, it is possible again, because we do lookup
 		 * in main socket hash table and lock on listening

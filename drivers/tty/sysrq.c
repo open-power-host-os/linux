@@ -44,12 +44,15 @@
 #include <linux/uaccess.h>
 #include <linux/moduleparam.h>
 #include <linux/jiffies.h>
+#include <linux/syscalls.h>
+#include <linux/of.h>
+#include <linux/rcupdate.h>
 
 #include <asm/ptrace.h>
 #include <asm/irq_regs.h>
 
 /* Whether we react on sysrq keys or just ignore them */
-static int __read_mostly sysrq_enabled = SYSRQ_DEFAULT_ENABLE;
+static int __read_mostly sysrq_enabled = CONFIG_MAGIC_SYSRQ_DEFAULT_ENABLE;
 static bool __read_mostly sysrq_always_enabled;
 
 unsigned short platform_sysrq_reset_seq[] __weak = { KEY_RESERVED };
@@ -86,7 +89,7 @@ static void sysrq_handle_loglevel(int key)
 	int i;
 
 	i = key - '0';
-	console_loglevel = 7;
+	console_loglevel = CONSOLE_LOGLEVEL_DEFAULT;
 	printk("Loglevel set to %d\n", i);
 	console_loglevel = i;
 }
@@ -341,7 +344,7 @@ static void send_sig_all(int sig)
 static void sysrq_handle_term(int key)
 {
 	send_sig_all(SIGTERM);
-	console_loglevel = 8;
+	console_loglevel = CONSOLE_LOGLEVEL_DEBUG;
 }
 static struct sysrq_key_op sysrq_term_op = {
 	.handler	= sysrq_handle_term,
@@ -352,7 +355,7 @@ static struct sysrq_key_op sysrq_term_op = {
 
 static void moom_callback(struct work_struct *ignored)
 {
-	out_of_memory(node_zonelist(first_online_node, GFP_KERNEL), GFP_KERNEL,
+	out_of_memory(node_zonelist(first_memory_node, GFP_KERNEL), GFP_KERNEL,
 		      0, NULL, true);
 }
 
@@ -385,7 +388,7 @@ static struct sysrq_key_op sysrq_thaw_op = {
 static void sysrq_handle_kill(int key)
 {
 	send_sig_all(SIGKILL);
-	console_loglevel = 8;
+	console_loglevel = CONSOLE_LOGLEVEL_DEBUG;
 }
 static struct sysrq_key_op sysrq_kill_op = {
 	.handler	= sysrq_handle_kill,
@@ -508,9 +511,9 @@ void __handle_sysrq(int key, bool check_mask)
 	struct sysrq_key_op *op_p;
 	int orig_log_level;
 	int i;
-	unsigned long flags;
 
-	spin_lock_irqsave(&sysrq_key_table_lock, flags);
+	rcu_sysrq_start();
+	rcu_read_lock();
 	/*
 	 * Raise the apparent loglevel to maximum so that the sysrq header
 	 * is shown to provide the user with positive feedback.  We do not
@@ -518,7 +521,7 @@ void __handle_sysrq(int key, bool check_mask)
 	 * routing in the consumers of /proc/kmsg.
 	 */
 	orig_log_level = console_loglevel;
-	console_loglevel = 7;
+	console_loglevel = CONSOLE_LOGLEVEL_DEFAULT;
 	printk(KERN_INFO "SysRq : ");
 
         op_p = __sysrq_get_key_op(key);
@@ -552,7 +555,8 @@ void __handle_sysrq(int key, bool check_mask)
 		printk("\n");
 		console_loglevel = orig_log_level;
 	}
-	spin_unlock_irqrestore(&sysrq_key_table_lock, flags);
+	rcu_read_unlock();
+	rcu_sysrq_end();
 }
 
 void handle_sysrq(int key)
@@ -586,6 +590,7 @@ struct sysrq_state {
 
 	/* reset sequence handling */
 	bool reset_canceled;
+	bool reset_requested;
 	unsigned long reset_keybit[BITS_TO_LONGS(KEY_CNT)];
 	int reset_seq_len;
 	int reset_seq_cnt;
@@ -624,18 +629,26 @@ static void sysrq_parse_reset_sequence(struct sysrq_state *state)
 	state->reset_seq_version = sysrq_reset_seq_version;
 }
 
-static void sysrq_do_reset(unsigned long dummy)
+static void sysrq_do_reset(unsigned long _state)
 {
-	__handle_sysrq(sysrq_xlate[KEY_B], false);
+	struct sysrq_state *state = (struct sysrq_state *) _state;
+
+	state->reset_requested = true;
+
+	sys_sync();
+	kernel_restart(NULL);
 }
 
 static void sysrq_handle_reset_request(struct sysrq_state *state)
 {
+	if (state->reset_requested)
+		__handle_sysrq(sysrq_xlate[KEY_B], false);
+
 	if (sysrq_reset_downtime_ms)
 		mod_timer(&state->keyreset_timer,
 			jiffies + msecs_to_jiffies(sysrq_reset_downtime_ms));
 	else
-		sysrq_do_reset(0);
+		sysrq_do_reset((unsigned long)state);
 }
 
 static void sysrq_detect_reset_sequence(struct sysrq_state *state,
@@ -670,6 +683,40 @@ static void sysrq_detect_reset_sequence(struct sysrq_state *state,
 		}
 	}
 }
+
+#ifdef CONFIG_OF
+static void sysrq_of_get_keyreset_config(void)
+{
+	u32 key;
+	struct device_node *np;
+	struct property *prop;
+	const __be32 *p;
+
+	np = of_find_node_by_path("/chosen/linux,sysrq-reset-seq");
+	if (!np) {
+		pr_debug("No sysrq node found");
+		return;
+	}
+
+	/* Reset in case a __weak definition was present */
+	sysrq_reset_seq_len = 0;
+
+	of_property_for_each_u32(np, "keyset", prop, p, key) {
+		if (key == KEY_RESERVED || key > KEY_MAX ||
+		    sysrq_reset_seq_len == SYSRQ_KEY_RESET_MAX)
+			break;
+
+		sysrq_reset_seq[sysrq_reset_seq_len++] = (unsigned short)key;
+	}
+
+	/* Get reset timeout if any. */
+	of_property_read_u32(np, "timeout-ms", &sysrq_reset_downtime_ms);
+}
+#else
+static void sysrq_of_get_keyreset_config(void)
+{
+}
+#endif
 
 static void sysrq_reinject_alt_sysrq(struct work_struct *work)
 {
@@ -837,7 +884,8 @@ static int sysrq_connect(struct input_handler *handler,
 	sysrq->handle.handler = handler;
 	sysrq->handle.name = "sysrq";
 	sysrq->handle.private = sysrq;
-	setup_timer(&sysrq->keyreset_timer, sysrq_do_reset, 0);
+	setup_timer(&sysrq->keyreset_timer,
+		    sysrq_do_reset, (unsigned long)sysrq);
 
 	error = input_register_handle(&sysrq->handle);
 	if (error) {
@@ -903,6 +951,7 @@ static inline void sysrq_register_handler(void)
 	int error;
 	int i;
 
+	/* First check if a __weak interface was instantiated. */
 	for (i = 0; i < ARRAY_SIZE(sysrq_reset_seq); i++) {
 		key = platform_sysrq_reset_seq[i];
 		if (key == KEY_RESERVED || key > KEY_MAX)
@@ -910,6 +959,12 @@ static inline void sysrq_register_handler(void)
 
 		sysrq_reset_seq[sysrq_reset_seq_len++] = key;
 	}
+
+	/*
+	 * DT configuration takes precedence over anything that would
+	 * have been defined via the __weak interface.
+	 */
+	sysrq_of_get_keyreset_config();
 
 	error = input_register_handler(&sysrq_handler);
 	if (error)
@@ -932,7 +987,7 @@ static int sysrq_reset_seq_param_set(const char *buffer,
 	unsigned long val;
 	int error;
 
-	error = strict_strtoul(buffer, 0, &val);
+	error = kstrtoul(buffer, 0, &val);
 	if (error < 0)
 		return error;
 
@@ -990,16 +1045,23 @@ static int __sysrq_swap_key_ops(int key, struct sysrq_key_op *insert_op_p,
                                 struct sysrq_key_op *remove_op_p)
 {
 	int retval;
-	unsigned long flags;
 
-	spin_lock_irqsave(&sysrq_key_table_lock, flags);
+	spin_lock(&sysrq_key_table_lock);
 	if (__sysrq_get_key_op(key) == remove_op_p) {
 		__sysrq_put_key_op(key, insert_op_p);
 		retval = 0;
 	} else {
 		retval = -1;
 	}
-	spin_unlock_irqrestore(&sysrq_key_table_lock, flags);
+	spin_unlock(&sysrq_key_table_lock);
+
+	/*
+	 * A concurrent __handle_sysrq either got the old op or the new op.
+	 * Wait for it to go away before returning, so the code for an old
+	 * op is not freed (eg. on module unload) while it is in use.
+	 */
+	synchronize_rcu();
+
 	return retval;
 }
 

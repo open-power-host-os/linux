@@ -426,7 +426,6 @@ int kvmppc_rm_h_eoi(struct kvm_vcpu *vcpu, unsigned long xirr)
 		icp->rm_action |= XICS_RM_NOTIFY_EOI;
 		icp->rm_eoied_irq = irq;
 	}
-
  bail:
 	return check_too_hard(xics, icp);
 }

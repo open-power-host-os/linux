@@ -19,6 +19,7 @@
  *      Prabhakar Lad <prabhakar.lad@ti.com>
  */
 
+#include <linux/delay.h>
 #include "dm365_isif.h"
 #include "vpfe_mc_capture.h"
 
@@ -439,14 +440,12 @@ static int isif_validate_df_csc_params(struct vpfe_isif_df_csc *df_csc)
 {
 	struct vpfe_isif_color_space_conv *csc;
 	int err = -EINVAL;
-	int csc_df_en;
 	int i;
 
 	if (!df_csc->df_or_csc) {
 		/* csc configuration */
 		csc = &df_csc->csc;
 		if (csc->en) {
-			csc_df_en = 1;
 			for (i = 0; i < VPFE_ISIF_CSC_NUM_COEFF; i++)
 				if (csc->coeff[i].integer >
 				    ISIF_CSC_COEF_INTEG_MASK ||
@@ -918,7 +917,7 @@ isif_config_dfc(struct vpfe_isif_device *isif, struct vpfe_isif_dfc *vdfc)
 		   (0 << ISIF_VDFC_EN_SHIFT), DFCCTL);
 
 	isif_write(isif->isif_cfg.base_addr, 0x6, DFCMEMCTL);
-	for (i = 0 ; i < vdfc->num_vdefects; i++) {
+	for (i = 0; i < vdfc->num_vdefects; i++) {
 		count = DFC_WRITE_WAIT_COUNT;
 		while (count &&
 			(isif_read(isif->isif_cfg.base_addr, DFCMEMCTL) & 0x2))
@@ -1750,10 +1749,10 @@ static const struct media_entity_operations isif_media_ops = {
 void vpfe_isif_unregister_entities(struct vpfe_isif_device *isif)
 {
 	vpfe_video_unregister(&isif->video_out);
-	/* cleanup entity */
-	media_entity_cleanup(&isif->subdev.entity);
 	/* unregister subdev */
 	v4l2_device_unregister_subdev(&isif->subdev);
+	/* cleanup entity */
+	media_entity_cleanup(&isif->subdev.entity);
 }
 
 static void isif_restore_defaults(struct vpfe_isif_device *isif)

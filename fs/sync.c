@@ -65,7 +65,7 @@ int sync_filesystem(struct super_block *sb)
 		return ret;
 	return __sync_filesystem(sb, 1);
 }
-EXPORT_SYMBOL_GPL(sync_filesystem);
+EXPORT_SYMBOL(sync_filesystem);
 
 static void sync_inodes_one_sb(struct super_block *sb, void *arg)
 {
@@ -177,7 +177,7 @@ SYSCALL_DEFINE1(syncfs, int, fd)
  */
 int vfs_fsync_range(struct file *file, loff_t start, loff_t end, int datasync)
 {
-	if (!file->f_op || !file->f_op->fsync)
+	if (!file->f_op->fsync)
 		return -EINVAL;
 	return file->f_op->fsync(file, start, end, datasync);
 }
@@ -218,23 +218,6 @@ SYSCALL_DEFINE1(fdatasync, unsigned int, fd)
 {
 	return do_fsync(fd, 1);
 }
-
-/**
- * generic_write_sync - perform syncing after a write if file / inode is sync
- * @file:	file to which the write happened
- * @pos:	offset where the write started
- * @count:	length of the write
- *
- * This is just a simple wrapper about our general syncing function.
- */
-int generic_write_sync(struct file *file, loff_t pos, loff_t count)
-{
-	if (!(file->f_flags & O_DSYNC) && !IS_SYNC(file->f_mapping->host))
-		return 0;
-	return vfs_fsync_range(file, pos, pos + count - 1,
-			       (file->f_flags & __O_SYNC) ? 0 : 1);
-}
-EXPORT_SYMBOL(generic_write_sync);
 
 /*
  * sys_sync_file_range() permits finely controlled syncing over a segment of

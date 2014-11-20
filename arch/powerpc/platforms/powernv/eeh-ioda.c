@@ -14,7 +14,6 @@
 #include <linux/bootmem.h>
 #include <linux/debugfs.h>
 #include <linux/delay.h>
-#include <linux/init.h>
 #include <linux/io.h>
 #include <linux/irq.h>
 #include <linux/kernel.h>
@@ -171,18 +170,6 @@ DEFINE_SIMPLE_ATTRIBUTE(ioda_eeh_inbB_dbgfs_ops, ioda_eeh_inbB_dbgfs_get,
 			ioda_eeh_inbB_dbgfs_set, "0x%llx\n");
 #endif /* CONFIG_DEBUG_FS */
 
-static void ioda_eeh_phb_diag(struct eeh_pe *pe)
-{
-	struct pnv_phb *phb = pe->phb->private_data;
-	long rc;
-
-	rc = opal_pci_get_phb_diag_data2(phb->opal_id, pe->data,
-					 PNV_PCI_DIAG_BUF_SIZE);
-	if (rc != OPAL_SUCCESS)
-		pr_warn("%s: Failed to get diag-data for PHB#%x (%ld)\n",
-			__func__, pe->phb->global_number, rc);
-
-}
 
 /**
  * ioda_eeh_post_init - Chip dependent post initialization
@@ -324,6 +311,18 @@ static int ioda_eeh_set_option(struct eeh_pe *pe, int option)
 	return ret;
 }
 
+static void ioda_eeh_phb_diag(struct eeh_pe *pe)
+{
+	struct pnv_phb *phb = pe->phb->private_data;
+	long rc;
+
+	rc = opal_pci_get_phb_diag_data2(phb->opal_id, pe->data,
+					 PNV_PCI_DIAG_BUF_SIZE);
+	if (rc != OPAL_SUCCESS)
+		pr_warn("%s: Failed to get diag-data for PHB#%x (%ld)\n",
+			__func__, pe->phb->global_number, rc);
+}
+
 static int ioda_eeh_get_phb_state(struct eeh_pe *pe)
 {
 	struct pnv_phb *phb = pe->phb->private_data;
@@ -340,8 +339,8 @@ static int ioda_eeh_get_phb_state(struct eeh_pe *pe)
 	if (rc != OPAL_SUCCESS) {
 		pr_warn("%s: Failure %lld getting PHB#%x state\n",
 			__func__, rc, phb->hose->global_number);
-                return EEH_STATE_NOT_SUPPORT;
-        }
+		return EEH_STATE_NOT_SUPPORT;
+	}
 
 	/*
 	 * Check PHB state. If the PHB is frozen for the
@@ -623,7 +622,7 @@ static int ioda_eeh_bridge_reset(struct pci_dev *dev, int option)
 		if (aer) {
 			eeh_ops->read_config(dn, aer + PCI_ERR_UNCOR_MASK,
 					     4, &ctrl);
-			ctrl &= ~PCI_ERR_UNCOR_MASK;
+			ctrl &= ~PCI_ERR_UNC_SURPDN;
 			eeh_ops->write_config(dn, aer + PCI_ERR_UNCOR_MASK,
 					      4, ctrl);
 		}
@@ -769,8 +768,8 @@ static int ioda_eeh_reset(struct eeh_pe *pe, int option)
  * Retrieve error log, which contains log from device driver
  * and firmware.
  */
-int ioda_eeh_get_log(struct eeh_pe *pe, int severity,
-		     char *drv_log, unsigned long len)
+static int ioda_eeh_get_log(struct eeh_pe *pe, int severity,
+			    char *drv_log, unsigned long len)
 {
 	pnv_pci_dump_phb_diag_data(pe->phb, pe->data);
 
@@ -791,7 +790,7 @@ static int ioda_eeh_configure_bridge(struct eeh_pe *pe)
 	return 0;
 }
 
-static int ioda_eeh_err_inject(struct eeh_pe *pe, int type, int function,
+static int ioda_eeh_err_inject(struct eeh_pe *pe, int type, int func,
 			       unsigned long addr, unsigned long mask)
 {
 	struct pci_controller *hose = pe->phb;
@@ -799,29 +798,35 @@ static int ioda_eeh_err_inject(struct eeh_pe *pe, int type, int function,
 	s64 ret;
 
 	/* Sanity check on error type */
-	if (type < OpalErrinjctTypeIoaBusError   ||
-	    type > OpalErrinjctTypeIoaBusError64 ||
-	    function < OpalEjtIoaLoadMemAddr     ||
-	    function > OpalEjtIoaDmaWriteMemTarget) {
-		pr_warn("%s: Invalid error type %d-%d\n",
-			__func__, type, function);
+	if (type != OPAL_ERR_INJECT_TYPE_IOA_BUS_ERR &&
+	    type != OPAL_ERR_INJECT_TYPE_IOA_BUS_ERR64) {
+		pr_warn("%s: Invalid error type %d\n",
+			__func__, type);
+		return -ERANGE;
+	}
+
+	if (func < OPAL_ERR_INJECT_FUNC_IOA_LD_MEM_ADDR ||
+	    func > OPAL_ERR_INJECT_FUNC_IOA_DMA_WR_TARGET) {
+		pr_warn("%s: Invalid error function %d\n",
+			__func__, func);
 		return -ERANGE;
 	}
 
 	/* Firmware supports error injection ? */
-	ret = opal_check_token(OPAL_PCI_ERR_INJCT);
-	if (ret != OPAL_TOKEN_PRESENT) {
-		pr_warn("%s: Firmware not support error injection (%lld)\n",
-			__func__, ret);
+	if (!opal_check_token(OPAL_PCI_ERR_INJECT)) {
+		pr_warn("%s: Firmware doesn't support error injection\n",
+			__func__);
 		return -ENXIO;
 	}
 
 	/* Do error injection */
 	ret = opal_pci_err_inject(phb->opal_id, pe->addr,
-				  type, function, addr, mask);
+				  type, func, addr, mask);
 	if (ret != OPAL_SUCCESS) {
-		pr_warn("%s: Failure %lld injecting error to PHB#%x-PE#%x\n",
-			__func__, ret, hose->global_number, pe->addr);
+		pr_warn("%s: Failure %lld injecting error "
+			"%d-%d to PHB#%x-PE#%x\n",
+			__func__, ret, type, func,
+			hose->global_number, pe->addr);
 		return -EIO;
 	}
 
@@ -986,9 +991,9 @@ static int ioda_eeh_next_error(struct eeh_pe **pe)
 	struct pci_controller *hose;
 	struct pnv_phb *phb;
 	struct eeh_pe *phb_pe, *parent_pe;
-	u64 frozen_pe_no;
+	__be64 frozen_pe_no;
+	__be16 err_type, severity;
 	int active_flags = (EEH_STATE_MMIO_ACTIVE | EEH_STATE_DMA_ACTIVE);
-	u16 err_type, severity;
 	long rc;
 	int state, ret = EEH_NEXT_ERR_NONE;
 
@@ -1023,8 +1028,8 @@ static int ioda_eeh_next_error(struct eeh_pe **pe)
 		}
 
 		/* If the PHB doesn't have error, stop processing */
-		if (err_type == OPAL_EEH_NO_ERROR ||
-		    severity == OPAL_EEH_SEV_NO_ERROR) {
+		if (be16_to_cpu(err_type) == OPAL_EEH_NO_ERROR ||
+		    be16_to_cpu(severity) == OPAL_EEH_SEV_NO_ERROR) {
 			pr_devel("%s: No error found on PHB#%x\n",
 				 __func__, hose->global_number);
 			continue;
@@ -1036,14 +1041,14 @@ static int ioda_eeh_next_error(struct eeh_pe **pe)
 		 * specific PHB.
 		 */
 		pr_devel("%s: Error (%d, %d, %llu) on PHB#%x\n",
-			 __func__, err_type, severity,
-			 frozen_pe_no, hose->global_number);
-		switch (err_type) {
+			 __func__, be16_to_cpu(err_type), be16_to_cpu(severity),
+			 be64_to_cpu(frozen_pe_no), hose->global_number);
+		switch (be16_to_cpu(err_type)) {
 		case OPAL_EEH_IOC_ERROR:
-			if (severity == OPAL_EEH_SEV_IOC_DEAD) {
+			if (be16_to_cpu(severity) == OPAL_EEH_SEV_IOC_DEAD) {
 				pr_err("EEH: dead IOC detected\n");
 				ret = EEH_NEXT_ERR_DEAD_IOC;
-			} else if (severity == OPAL_EEH_SEV_INF) {
+			} else if (be16_to_cpu(severity) == OPAL_EEH_SEV_INF) {
 				pr_info("EEH: IOC informative error "
 					"detected\n");
 				ioda_eeh_hub_diag(hose);
@@ -1052,18 +1057,22 @@ static int ioda_eeh_next_error(struct eeh_pe **pe)
 
 			break;
 		case OPAL_EEH_PHB_ERROR:
-			if (severity == OPAL_EEH_SEV_PHB_DEAD) {
+			if (be16_to_cpu(severity) == OPAL_EEH_SEV_PHB_DEAD) {
 				*pe = phb_pe;
-				pr_err("EEH: dead PHB#%x detected, location: %s\n",
-					hose->global_number, eeh_pe_loc_get(phb_pe));
+				pr_err("EEH: dead PHB#%x detected, "
+				       "location: %s\n",
+				       hose->global_number,
+				       eeh_pe_loc_get(phb_pe));
 				ret = EEH_NEXT_ERR_DEAD_PHB;
-			} else if (severity == OPAL_EEH_SEV_PHB_FENCED) {
+			} else if (be16_to_cpu(severity) ==
+						OPAL_EEH_SEV_PHB_FENCED) {
 				*pe = phb_pe;
-				pr_err("EEH: Fenced PHB#%x detected, location: %s\n",
-					hose->global_number,
-					eeh_pe_loc_get(phb_pe));
+				pr_err("EEH: Fenced PHB#%x detected, "
+				       "location: %s\n",
+				       hose->global_number,
+				       eeh_pe_loc_get(phb_pe));
 				ret = EEH_NEXT_ERR_FENCED_PHB;
-			} else if (severity == OPAL_EEH_SEV_INF) {
+			} else if (be16_to_cpu(severity) == OPAL_EEH_SEV_INF) {
 				pr_info("EEH: PHB#%x informative error "
 					"detected, location: %s\n",
 					hose->global_number,
@@ -1076,23 +1085,18 @@ static int ioda_eeh_next_error(struct eeh_pe **pe)
 			break;
 		case OPAL_EEH_PE_ERROR:
 			/*
-			 * If we can't find the corresponding PE, the
-			 * PEEV / PEST would be messy. So we force an
-			 * fenced PHB so that it can be recovered.
-			 *
-			 * If the PE has been marked as isolated, that
-			 * should have been removed permanently or in
-			 * progress with recovery. We needn't report
-			 * it again.
+			 * If we can't find the corresponding PE, we
+			 * just try to unfreeze.
 			 */
-			if (ioda_eeh_get_pe(hose, frozen_pe_no, pe)) {
+			if (ioda_eeh_get_pe(hose,
+					    be64_to_cpu(frozen_pe_no), pe)) {
 				/* Try best to clear it */
 				pr_info("EEH: Clear non-existing PHB#%x-PE#%llx\n",
 					hose->global_number, frozen_pe_no);
 				pr_info("EEH: PHB location: %s\n",
 					eeh_pe_loc_get(phb_pe));
 				opal_pci_eeh_freeze_clear(phb->opal_id, frozen_pe_no,
-						OPAL_EEH_ACTION_CLEAR_FREEZE_ALL);
+					OPAL_EEH_ACTION_CLEAR_FREEZE_ALL);
 				ret = EEH_NEXT_ERR_NONE;
 			} else if ((*pe)->state & EEH_PE_ISOLATED ||
 				   eeh_pe_passed(*pe)) {
@@ -1108,7 +1112,7 @@ static int ioda_eeh_next_error(struct eeh_pe **pe)
 			break;
 		default:
 			pr_warn("%s: Unexpected error type %d\n",
-				__func__, err_type);
+				__func__, be16_to_cpu(err_type));
 		}
 
 		/*

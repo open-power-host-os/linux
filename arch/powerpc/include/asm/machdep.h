@@ -36,13 +36,13 @@ struct machdep_calls {
 #ifdef CONFIG_PPC64
 	void            (*hpte_invalidate)(unsigned long slot,
 					   unsigned long vpn,
-					   int psize, int ssize,
-					   int local);
+					   int bpsize, int apsize,
+					   int ssize, int local);
 	long		(*hpte_updatepp)(unsigned long slot, 
 					 unsigned long newpp, 
 					 unsigned long vpn,
-					 int psize, int ssize,
-					 int local);
+					 int bpsize, int apsize,
+					 int ssize, int local);
 	void            (*hpte_updateboltedpp)(unsigned long newpp, 
 					       unsigned long ea,
 					       int psize, int ssize);
@@ -57,7 +57,10 @@ struct machdep_calls {
 	void            (*hpte_removebolted)(unsigned long ea,
 					     int psize, int ssize);
 	void		(*flush_hash_range)(unsigned long number, int local);
-
+	void		(*hugepage_invalidate)(unsigned long vsid,
+					       unsigned long addr,
+					       unsigned char *hpte_slot_array,
+					       int psize, int ssize);
 	/* special for kexec, to be called in real mode, linear mapping is
 	 * destroyed as well */
 	void		(*hpte_clear_all)(void);
@@ -69,6 +72,9 @@ struct machdep_calls {
 #ifdef CONFIG_PM
 	void		(*iommu_save)(void);
 	void		(*iommu_restore)(void);
+#endif
+#ifdef CONFIG_MEMORY_HOTPLUG_SPARSE
+	unsigned long	(*memory_block_size)(void);
 #endif
 #endif /* CONFIG_PPC64 */
 
@@ -105,8 +111,6 @@ struct machdep_calls {
 	int		(*pci_setup_phb)(struct pci_controller *host);
 
 #ifdef CONFIG_PCI_MSI
-	int		(*msi_check_device)(struct pci_dev* dev,
-					    int nvec, int type);
 	int		(*setup_msi_irqs)(struct pci_dev *dev,
 					  int nvec, int type);
 	void		(*teardown_msi_irqs)(struct pci_dev *dev);
@@ -277,6 +281,10 @@ struct machdep_calls {
 	void 		(*setup_idle)(void);
 	unsigned long	(*power7_sleep)(void);
 	unsigned long	(*power7_winkle)(void);
+
+#ifdef CONFIG_MEMORY_HOTREMOVE
+	int (*remove_memory)(u64, u64);
+#endif
 };
 
 extern void e500_idle(void);
@@ -308,8 +316,6 @@ extern struct machdep_calls *machine_id;
 	})
 
 extern void probe_machine(void);
-
-extern char cmd_line[COMMAND_LINE_SIZE];
 
 #ifdef CONFIG_PPC_PMAC
 /*
@@ -349,6 +355,7 @@ static inline void log_error(char *buf, unsigned int err_type, int fatal)
 	} \
 	__define_initcall(__machine_initcall_##mach##_##fn, id);
 
+#define machine_early_initcall(mach, fn)	__define_machine_initcall(mach, fn, early)
 #define machine_core_initcall(mach, fn)		__define_machine_initcall(mach, fn, 1)
 #define machine_core_initcall_sync(mach, fn)	__define_machine_initcall(mach, fn, 1s)
 #define machine_postcore_initcall(mach, fn)	__define_machine_initcall(mach, fn, 2)

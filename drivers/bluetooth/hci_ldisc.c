@@ -245,20 +245,12 @@ static int hci_uart_close(struct hci_dev *hdev)
 }
 
 /* Send frames from HCI layer */
-static int hci_uart_send_frame(struct sk_buff *skb)
+static int hci_uart_send_frame(struct hci_dev *hdev, struct sk_buff *skb)
 {
-	struct hci_dev* hdev = (struct hci_dev *) skb->dev;
-	struct hci_uart *hu;
-
-	if (!hdev) {
-		BT_ERR("Frame for unknown device (hdev=NULL)");
-		return -ENODEV;
-	}
+	struct hci_uart *hu = hci_get_drvdata(hdev);
 
 	if (!test_bit(HCI_RUNNING, &hdev->flags))
 		return -EBUSY;
-
-	hu = hci_get_drvdata(hdev);
 
 	BT_DBG("%s: type %d len %d", hdev->name, bt_cb(skb)->pkt_type, skb->len);
 
@@ -290,7 +282,8 @@ static int hci_uart_tty_open(struct tty_struct *tty)
 	if (tty->ops->write == NULL)
 		return -EOPNOTSUPP;
 
-	if (!(hu = kzalloc(sizeof(struct hci_uart), GFP_KERNEL))) {
+	hu = kzalloc(sizeof(struct hci_uart), GFP_KERNEL);
+	if (!hu) {
 		BT_ERR("Can't allocate control structure");
 		return -ENFILE;
 	}
@@ -438,6 +431,9 @@ static int hci_uart_register_dev(struct hci_uart *hu)
 	if (test_bit(HCI_UART_RAW_DEVICE, &hu->hdev_flags))
 		set_bit(HCI_QUIRK_RAW_DEVICE, &hdev->quirks);
 
+	if (test_bit(HCI_UART_EXT_CONFIG, &hu->hdev_flags))
+		set_bit(HCI_QUIRK_EXTERNAL_CONFIG, &hdev->quirks);
+
 	if (!test_bit(HCI_UART_RESET_ON_INIT, &hu->hdev_flags))
 		set_bit(HCI_QUIRK_RESET_ON_CLOSE, &hdev->quirks);
 
@@ -480,6 +476,22 @@ static int hci_uart_set_proto(struct hci_uart *hu, int id)
 		p->close(hu);
 		return err;
 	}
+
+	return 0;
+}
+
+static int hci_uart_set_flags(struct hci_uart *hu, unsigned long flags)
+{
+	unsigned long valid_flags = BIT(HCI_UART_RAW_DEVICE) |
+				    BIT(HCI_UART_RESET_ON_INIT) |
+				    BIT(HCI_UART_CREATE_AMP) |
+				    BIT(HCI_UART_INIT_PENDING) |
+				    BIT(HCI_UART_EXT_CONFIG);
+
+	if ((flags & ~valid_flags))
+		return -EINVAL;
+
+	hu->hdev_flags = flags;
 
 	return 0;
 }
@@ -527,14 +539,16 @@ static int hci_uart_tty_ioctl(struct tty_struct *tty, struct file * file,
 		return -EUNATCH;
 
 	case HCIUARTGETDEVICE:
-		if (test_bit(HCI_UART_PROTO_SET, &hu->flags))
+		if (test_bit(HCI_UART_REGISTERED, &hu->flags))
 			return hu->hdev->id;
 		return -EUNATCH;
 
 	case HCIUARTSETFLAGS:
 		if (test_bit(HCI_UART_PROTO_SET, &hu->flags))
 			return -EBUSY;
-		hu->hdev_flags = arg;
+		err = hci_uart_set_flags(hu, arg);
+		if (err)
+			return err;
 		break;
 
 	case HCIUARTGETFLAGS:
@@ -591,7 +605,8 @@ static int __init hci_uart_init(void)
 	hci_uart_ldisc.write_wakeup	= hci_uart_tty_wakeup;
 	hci_uart_ldisc.owner		= THIS_MODULE;
 
-	if ((err = tty_register_ldisc(N_HCI, &hci_uart_ldisc))) {
+	err = tty_register_ldisc(N_HCI, &hci_uart_ldisc);
+	if (err) {
 		BT_ERR("HCI line discipline registration failed. (%d)", err);
 		return err;
 	}
@@ -636,7 +651,8 @@ static void __exit hci_uart_exit(void)
 #endif
 
 	/* Release tty registration of line discipline */
-	if ((err = tty_unregister_ldisc(N_HCI)))
+	err = tty_unregister_ldisc(N_HCI);
+	if (err)
 		BT_ERR("Can't unregister HCI line discipline (%d)", err);
 }
 

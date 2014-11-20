@@ -16,7 +16,6 @@
  * published by the Free Software Foundation.
  */
 
-#include <linux/init.h>
 #include <linux/slab.h>
 #include <linux/firmware.h>
 #include <linux/etherdevice.h>
@@ -670,7 +669,8 @@ static unsigned int p54_flush_count(struct p54_common *priv)
 	return total;
 }
 
-static void p54_flush(struct ieee80211_hw *dev, u32 queues, bool drop)
+static void p54_flush(struct ieee80211_hw *dev, struct ieee80211_vif *vif,
+		      u32 queues, bool drop)
 {
 	struct p54_common *priv = dev->priv;
 	unsigned int total, i;
@@ -696,7 +696,8 @@ static void p54_flush(struct ieee80211_hw *dev, u32 queues, bool drop)
 	WARN(total, "tx flush timeout, unresponsive firmware");
 }
 
-static void p54_set_coverage_class(struct ieee80211_hw *dev, u8 coverage_class)
+static void p54_set_coverage_class(struct ieee80211_hw *dev,
+				   s16 coverage_class)
 {
 	struct p54_common *priv = dev->priv;
 
@@ -757,7 +758,6 @@ struct ieee80211_hw *p54_init_common(size_t priv_data_len)
 				      BIT(NL80211_IFTYPE_AP) |
 				      BIT(NL80211_IFTYPE_MESH_POINT);
 
-	dev->channel_change_time = 1000;	/* TODO: find actual value */
 	priv->beacon_req_id = cpu_to_le32(0);
 	priv->tx_stats[P54_QUEUE_BEACON].limit = 1;
 	priv->tx_stats[P54_QUEUE_FWSCAN].limit = 1;

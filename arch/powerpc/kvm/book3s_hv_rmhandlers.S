@@ -28,7 +28,7 @@
 #include <asm/exception-64s.h>
 #include <asm/kvm_book3s_asm.h>
 #include <asm/mmu-hash64.h>
-#include <uapi/asm/tm.h>
+#include <asm/tm.h>
 
 #define VCPU_GPRS_TM(reg) (((reg) * ULONG_SIZE) + VCPU_GPR_TM)
 
@@ -44,7 +44,7 @@
  *
  * LR = return address to continue at after eventually re-enabling MMU
  */
-_GLOBAL(kvmppc_hv_entry_trampoline)
+_GLOBAL_TOC(kvmppc_hv_entry_trampoline)
 	mflr	r0
 	std	r0, PPC_LR_STKOFF(r1)
 	stdu	r1, -112(r1)
@@ -74,8 +74,8 @@ BEGIN_FTR_SECTION
 END_FTR_SECTION_IFCLR(CPU_FTR_ARCH_207S)
 
 	/* Restore SPRG3 */
-	ld	r3,PACA_SPRG3(r13)
-	mtspr	SPRN_SPRG3,r3
+	ld	r3,PACA_SPRG_VDSO(r13)
+	mtspr	SPRN_SPRG_VDSO_WRITE,r3
 
 	/* Reload the host's PMU registers */
 	ld	r3, PACALPPACAPTR(r13)	/* is the host using the PMU? */
@@ -193,12 +193,7 @@ kvmppc_primary_no_guest:
 	or	r3, r3, r0
 	stwcx.	r3, 0, r6
 	bne	1b
-	/*
-	 * Order napping_threads update vs testing entry_exit_count.
-	 * This needs to be an isync, not just an lwsync, because we
-	 * want to order the load of VCORE_ENTRY_EXIT(r5) against the
-	 * stwcx., not just the lwarx.
-	 */
+	/* order napping_threads update vs testing entry_exit_count */
 	isync
 	li	r12, 0
 	lwz	r7, VCORE_ENTRY_EXIT(r5)
@@ -297,10 +292,8 @@ kvm_start_guest:
 	beq	kvm_no_guest
 
 kvm_secondary_got_guest:
-
 	/* Set HSTATE_DSCR(r13) to something sensible */
-	LOAD_REG_ADDR(r6, dscr_default)
-	ld	r6, 0(r6)
+	ld	r6, PACA_DSCR(r13)
 	std	r6, HSTATE_DSCR(r13)
 
 	bl	kvmppc_hv_entry
@@ -530,7 +523,11 @@ toc_tlbie_lock:
 	.tc	native_tlbie_lock[TC],native_tlbie_lock
 	.previous
 	ld	r3,toc_tlbie_lock@toc(r2)
+#ifdef __BIG_ENDIAN__
 	lwz	r8,PACA_LOCK_TOKEN(r13)
+#else
+	lwz	r8,PACAPACAINDEX(r13)
+#endif
 24:	lwarx	r0,0,r3
 	cmpwi	r0,0
 	bne	24b
@@ -583,7 +580,6 @@ toc_tlbie_lock:
 	mfspr	r3,SPRN_HDEC
 	cmpwi	r3,10
 	li	r12,BOOK3S_INTERRUPT_HV_DECREMENTER
-	mr	r9,r4
 	blt	hdec_soon
 
 	/* Enable HDEC interrupts */
@@ -620,9 +616,10 @@ kvmppc_got_guest:
 	ld	r3, VCPU_VPA(r4)
 	cmpdi	r3, 0
 	beq	25f
-	lwz	r5, LPPACA_YIELDCOUNT(r3)
+	li	r6, LPPACA_YIELDCOUNT
+	LWZX_BE	r5, r3, r6
 	addi	r5, r5, 1
-	stw	r5, LPPACA_YIELDCOUNT(r3)
+	STWX_BE	r5, r3, r6
 	li	r6, 1
 	stb	r6, VCPU_VPA_DIRTY(r4)
 25:
@@ -653,7 +650,7 @@ END_FTR_SECTION_IFCLR(CPU_FTR_ARCH_207S)
 
 #ifdef CONFIG_PPC_TRANSACTIONAL_MEM
 BEGIN_FTR_SECTION
-	b	1f
+	b	skip_tm
 END_FTR_SECTION_IFCLR(CPU_FTR_TM)
 
 	/* Turn on TM/FP/VSX/VMX so we can restore them. */
@@ -662,12 +659,7 @@ END_FTR_SECTION_IFCLR(CPU_FTR_TM)
 	sldi	r6, r6, 32
 	or	r5, r5, r6
 	ori	r5, r5, MSR_FP
-BEGIN_FTR_SECTION
-	oris	r5, r5, MSR_VEC@h
-END_FTR_SECTION_IFSET(CPU_FTR_ALTIVEC)
-BEGIN_FTR_SECTION
-	oris	r5, r5, MSR_VSX@h
-END_FTR_SECTION_IFSET(CPU_FTR_VSX)
+	oris	r5, r5, (MSR_VEC | MSR_VSX)@h
 	mtmsrd	r5
 
 	/*
@@ -683,7 +675,15 @@ END_FTR_SECTION_IFSET(CPU_FTR_VSX)
 
 	ld	r5, VCPU_MSR(r4)
 	rldicl. r5, r5, 64 - MSR_TS_S_LG, 62
-	beq	1f	/* TM not active in guest */
+	beq	skip_tm	/* TM not active in guest */
+
+	/* Make sure the failure summary is set, otherwise we'll program check
+	 * when we trechkpt.  It's possible that this might have been not set
+	 * on a kvmppc_set_one_reg() call but we shouldn't let this crash the
+	 * host.
+	 */
+	oris	r7, r7, (TEXASR_FS)@h
+	mtspr	SPRN_TEXASR, r7
 
 	/*
 	 * We need to load up the checkpointed state for the guest.
@@ -693,11 +693,9 @@ END_FTR_SECTION_IFSET(CPU_FTR_VSX)
 
 	mr	r31, r4
 	addi	r3, r31, VCPU_FPRS_TM
-	bl	.load_fp_state
-BEGIN_FTR_SECTION
+	bl	load_fp_state
 	addi	r3, r31, VCPU_VRS_TM
-	bl	.load_vr_state
-END_FTR_SECTION_IFSET(CPU_FTR_ALTIVEC)
+	bl	load_vr_state
 	mr	r4, r31
 	lwz	r7, VCPU_VRSAVE_TM(r4)
 	mtspr	SPRN_VRSAVE, r7
@@ -714,7 +712,7 @@ END_FTR_SECTION_IFSET(CPU_FTR_ALTIVEC)
 	mtspr	SPRN_TAR, r9
 
 	/*
-	 * Load up PPR and DSCR values but don't put them in the actual SPRs 
+	 * Load up PPR and DSCR values but don't put them in the actual SPRs
 	 * till the last moment to avoid running with userspace PPR and DSCR for
 	 * too long.
 	 */
@@ -754,11 +752,10 @@ END_FTR_SECTION_IFSET(CPU_FTR_ALTIVEC)
 	ld	r1, HSTATE_HOST_R1(r13)
 	ld	r2, PACATMSCRATCH(r13)
 
-	/* Set the MSR RI since we have our register back. */
+	/* Set the MSR RI since we have our registers back. */
 	li	r5, MSR_RI
 	mtmsrd	r5, 1
-
-1:
+skip_tm:
 #endif
 
 	/* Load guest PMU registers */
@@ -796,14 +793,12 @@ END_FTR_SECTION_IFSET(CPU_FTR_ARCH_201)
 	ld	r3, VCPU_MMCR(r4)
 	ld	r5, VCPU_MMCR + 8(r4)
 	ld	r6, VCPU_MMCR + 16(r4)
-	mtspr	SPRN_MMCR1, r5
-	mtspr	SPRN_MMCRA, r6
-BEGIN_FTR_SECTION
 	ld	r7, VCPU_SIAR(r4)
 	ld	r8, VCPU_SDAR(r4)
+	mtspr	SPRN_MMCR1, r5
+	mtspr	SPRN_MMCRA, r6
 	mtspr	SPRN_SIAR, r7
 	mtspr	SPRN_SDAR, r8
-END_FTR_SECTION_IFSET(CPU_FTR_ARCH_206)
 BEGIN_FTR_SECTION
 	ld	r5, VCPU_MMCR + 24(r4)
 	ld	r6, VCPU_SIER(r4)
@@ -989,6 +984,13 @@ END_FTR_SECTION_IFSET(CPU_FTR_ARCH_206)
 	bl	kvmppc_msr_interrupt
 5:
 
+/*
+ * Required state:
+ * R4 = vcpu
+ * R10: value for HSRR0
+ * R11: value for HSRR1
+ * R13 = PACA
+ */
 fast_guest_return:
 	li	r0,0
 	stb	r0,VCPU_CEDED(r4)	/* cancel cede */
@@ -1437,11 +1439,9 @@ END_FTR_SECTION_IFCLR(CPU_FTR_TM)
 
 	/* Save FP/VSX. */
 	addi	r3, r9, VCPU_FPRS_TM
-	bl	.store_fp_state
-BEGIN_FTR_SECTION
+	bl	store_fp_state
 	addi	r3, r9, VCPU_VRS_TM
-	bl	.store_vr_state
-END_FTR_SECTION_IFSET(CPU_FTR_ALTIVEC)
+	bl	store_vr_state
 	mfspr	r6, SPRN_VRSAVE
 	stw	r6, VCPU_VRSAVE_TM(r9)
 1:
@@ -1464,9 +1464,10 @@ END_FTR_SECTION_IFSET(CPU_FTR_ALTIVEC)
 	ld	r8, VCPU_VPA(r9)	/* do they have a VPA? */
 	cmpdi	r8, 0
 	beq	25f
-	lwz	r3, LPPACA_YIELDCOUNT(r8)
+	li	r4, LPPACA_YIELDCOUNT
+	LWZX_BE	r3, r8, r4
 	addi	r3, r3, 1
-	stw	r3, LPPACA_YIELDCOUNT(r8)
+	STWX_BE	r3, r8, r4
 	li	r3, 1
 	stb	r3, VCPU_VPA_DIRTY(r9)
 25:
@@ -1514,18 +1515,16 @@ END_FTR_SECTION_IFSET(CPU_FTR_ARCH_206)
 	std	r3, VCPU_MMCR(r9)	/* if not, set saved MMCR0 to FC */
 	b	22f
 21:	mfspr	r5, SPRN_MMCR1
+	mfspr	r7, SPRN_SIAR
+	mfspr	r8, SPRN_SDAR
 	std	r4, VCPU_MMCR(r9)
 	std	r5, VCPU_MMCR + 8(r9)
 	std	r6, VCPU_MMCR + 16(r9)
 BEGIN_FTR_SECTION
 	std	r10, VCPU_MMCR + 24(r9)
 END_FTR_SECTION_IFSET(CPU_FTR_ARCH_207S)
-BEGIN_FTR_SECTION
-	mfspr	r7, SPRN_SIAR
-	mfspr	r8, SPRN_SDAR
 	std	r7, VCPU_SIAR(r9)
 	std	r8, VCPU_SDAR(r9)
-END_FTR_SECTION_IFSET(CPU_FTR_ARCH_206)
 	mfspr	r3, SPRN_PMC1
 	mfspr	r4, SPRN_PMC2
 	mfspr	r5, SPRN_PMC3
@@ -1709,7 +1708,11 @@ END_FTR_SECTION_IFSET(CPU_FTR_ARCH_207S)
 	ld	r4,VCORE_KVM(r5)	/* pointer to struct kvm */
 
 	/* Take the guest's tlbie_lock */
+#ifdef __BIG_ENDIAN__
 	lwz	r8,PACA_LOCK_TOKEN(r13)
+#else
+	lwz	r8,PACAPACAINDEX(r13)
+#endif
 	addi	r3,r4,KVM_TLBIE_LOCK
 24:	lwarx	r0,0,r3
 	cmpwi	r0,0
@@ -1777,8 +1780,10 @@ END_FTR_SECTION_IFSET(CPU_FTR_ARCH_207S)
 33:	ld	r8,PACA_SLBSHADOWPTR(r13)
 
 	.rept	SLB_NUM_BOLTED
-	ld	r5,SLBSHADOW_SAVEAREA(r8)
-	ld	r6,SLBSHADOW_SAVEAREA+8(r8)
+	li	r3, SLBSHADOW_SAVEAREA
+	LDX_BE	r5, r8, r3
+	addi	r3, r3, 8
+	LDX_BE	r6, r8, r3
 	andis.	r7,r5,SLB_ESID_V@h
 	beq	1f
 	slbmte	r6,r5
@@ -1818,7 +1823,7 @@ kvmppc_hdsi:
 	/* Search the hash table. */
 	mr	r3, r9			/* vcpu pointer */
 	li	r7, 1			/* data fault */
-	bl	.kvmppc_hpte_hv_fault
+	bl	kvmppc_hpte_hv_fault
 	ld	r9, HSTATE_KVM_VCPU(r13)
 	ld	r10, VCPU_PC(r9)
 	ld	r11, VCPU_MSR(r9)
@@ -1866,19 +1871,10 @@ fast_interrupt_c_return:
 	lwz	r8, 0(r10)
 	mtmsrd	r3
 
-	andi.	r0, r11, MSR_LE
-
 	/* Store the result */
 	stw	r8, VCPU_LAST_INST(r9)
 
-	beq	after_inst_store
-
-	/* Swap and store the result */
-	addi	r4, r9, VCPU_LAST_INST
-	stwbrx	r8, 0, r4
-
 	/* Unset guest mode. */
-after_inst_store:
 	li	r0, KVM_GUEST_MODE_HOST_HV
 	stb	r0, HSTATE_IN_GUEST(r13)
 	b	guest_exit_cont
@@ -1901,7 +1897,7 @@ kvmppc_hisi:
 	mr	r4, r10
 	mr	r6, r11
 	li	r7, 0			/* instruction fault */
-	bl	.kvmppc_hpte_hv_fault
+	bl	kvmppc_hpte_hv_fault
 	ld	r9, HSTATE_KVM_VCPU(r13)
 	ld	r10, VCPU_PC(r9)
 	ld	r11, VCPU_MSR(r9)
@@ -1933,16 +1929,28 @@ kvmppc_hisi:
 hcall_try_real_mode:
 	ld	r3,VCPU_GPR(R3)(r9)
 	andi.	r0,r11,MSR_PR
-	bne	guest_exit_cont
+	/* sc 1 from userspace - reflect to guest syscall */
+	bne	sc_1_fast_return
 	clrrdi	r3,r3,2
 	cmpldi	r3,hcall_real_table_end - hcall_real_table
 	bge	guest_exit_cont
+	/* See if this hcall is enabled for in-kernel handling */
+	ld	r4, VCPU_KVM(r9)
+	srdi	r0, r3, 8	/* r0 = (r3 / 4) >> 6 */
+	sldi	r0, r0, 3	/* index into kvm->arch.enabled_hcalls[] */
+	add	r4, r4, r0
+	ld	r0, KVM_ENABLED_HCALLS(r4)
+	rlwinm	r4, r3, 32-2, 0x3f	/* r4 = (r3 / 4) & 0x3f */
+	srd	r0, r0, r4
+	andi.	r0, r0, 1
+	beq	guest_exit_cont
+	/* Get pointer to handler, if any, and call it */
 	LOAD_REG_ADDR(r4, hcall_real_table)
 	lwax	r3,r3,r4
 	cmpwi	r3,0
 	beq	guest_exit_cont
-	add	r3,r3,r4
-	mtctr	r3
+	add	r12,r3,r4
+	mtctr	r12
 	mr	r3,r9		/* get vcpu pointer */
 	ld	r4,VCPU_GPR(R4)(r9)
 	bctrl
@@ -1952,6 +1960,14 @@ hcall_try_real_mode:
 	std	r3,VCPU_GPR(R3)(r4)
 	ld	r10,VCPU_PC(r4)
 	ld	r11,VCPU_MSR(r4)
+	b	fast_guest_return
+
+sc_1_fast_return:
+	mtspr	SPRN_SRR0,r10
+	mtspr	SPRN_SRR1,r11
+	li	r10, BOOK3S_INTERRUPT_SYSCALL
+	bl	kvmppc_msr_interrupt
+	mr	r4,r9
 	b	fast_guest_return
 
 	/* We've attempted a real mode hcall, but it's punted it back
@@ -1966,16 +1982,16 @@ hcall_real_fallback:
 	.globl	hcall_real_table
 hcall_real_table:
 	.long	0		/* 0 - unused */
-	.long	.kvmppc_h_remove - hcall_real_table
-	.long	.kvmppc_h_enter - hcall_real_table
-	.long	.kvmppc_h_read - hcall_real_table
+	.long	DOTSYM(kvmppc_h_remove) - hcall_real_table
+	.long	DOTSYM(kvmppc_h_enter) - hcall_real_table
+	.long	DOTSYM(kvmppc_h_read) - hcall_real_table
 	.long	0		/* 0x10 - H_CLEAR_MOD */
 	.long	0		/* 0x14 - H_CLEAR_REF */
-	.long	.kvmppc_h_protect - hcall_real_table
-	.long	0		/* 0x1c - H_GET_TCE */
-	.long	.kvmppc_rm_h_put_tce - hcall_real_table
+	.long	DOTSYM(kvmppc_h_protect) - hcall_real_table
+	.long	0
+	.long	DOTSYM(kvmppc_rm_h_put_tce) - hcall_real_table
 	.long	0		/* 0x24 - H_SET_SPRG0 */
-	.long	.kvmppc_h_set_dabr - hcall_real_table
+	.long	DOTSYM(kvmppc_h_set_dabr) - hcall_real_table
 	.long	0		/* 0x2c */
 	.long	0		/* 0x30 */
 	.long	0		/* 0x34 */
@@ -1991,11 +2007,11 @@ hcall_real_table:
 	.long	0		/* 0x5c */
 	.long	0		/* 0x60 */
 #ifdef CONFIG_KVM_XICS
-	.long	.kvmppc_rm_h_eoi - hcall_real_table
-	.long	.kvmppc_rm_h_cppr - hcall_real_table
-	.long	.kvmppc_rm_h_ipi - hcall_real_table
+	.long	DOTSYM(kvmppc_rm_h_eoi) - hcall_real_table
+	.long	DOTSYM(kvmppc_rm_h_cppr) - hcall_real_table
+	.long	DOTSYM(kvmppc_rm_h_ipi) - hcall_real_table
 	.long	0		/* 0x70 - H_IPOLL */
-	.long	.kvmppc_rm_h_xirr - hcall_real_table
+	.long	DOTSYM(kvmppc_rm_h_xirr) - hcall_real_table
 #else
 	.long	0		/* 0x64 - H_EOI */
 	.long	0		/* 0x68 - H_CPPR */
@@ -2029,8 +2045,8 @@ hcall_real_table:
 	.long	0		/* 0xd4 */
 	.long	0		/* 0xd8 */
 	.long	0		/* 0xdc */
-	.long	.kvmppc_h_cede - hcall_real_table
-	.long	.kvmppc_rm_h_confer - hcall_real_table
+	.long	DOTSYM(kvmppc_h_cede) - hcall_real_table
+	.long	DOTSYM(kvmppc_rm_h_confer) - hcall_real_table
 	.long	0		/* 0xe8 */
 	.long	0		/* 0xec */
 	.long	0		/* 0xf0 */
@@ -2046,13 +2062,13 @@ hcall_real_table:
 	.long	0		/* 0x118 */
 	.long	0		/* 0x11c */
 	.long	0		/* 0x120 */
-	.long	.kvmppc_h_bulk_remove - hcall_real_table
+	.long	DOTSYM(kvmppc_h_bulk_remove) - hcall_real_table
 	.long	0		/* 0x128 */
 	.long	0		/* 0x12c */
 	.long	0		/* 0x130 */
-	.long	.kvmppc_h_set_xdabr - hcall_real_table
-	.long	.kvmppc_rm_h_stuff_tce - hcall_real_table
-	.long	.kvmppc_rm_h_put_tce_indirect - hcall_real_table
+	.long	DOTSYM(kvmppc_h_set_xdabr) - hcall_real_table
+	.long	DOTSYM(kvmppc_rm_h_stuff_tce) - hcall_real_table
+	.long	DOTSYM(kvmppc_rm_h_put_tce_indirect) - hcall_real_table
 	.long	0		/* 0x140 */
 	.long	0		/* 0x144 */
 	.long	0		/* 0x148 */
@@ -2165,7 +2181,8 @@ hcall_real_table:
 	.long	0		/* 0x2f4 */
 	.long	0		/* 0x2f8 */
 	.long	0		/* 0x2fc */
-	.long	.kvmppc_h_random - hcall_real_table
+	.long	DOTSYM(kvmppc_h_random) - hcall_real_table
+	.globl	hcall_real_table_end
 hcall_real_table_end:
 
 ignore_hdec:
@@ -2391,7 +2408,7 @@ kvm_cede_exit:
 	/* Try to handle a machine check in real mode */
 machine_check_realmode:
 	mr	r3, r9		/* get vcpu pointer */
-	bl	.kvmppc_realmode_machine_check
+	bl	kvmppc_realmode_machine_check
 	nop
 	ld	r9, HSTATE_KVM_VCPU(r13)
 	li	r12, BOOK3S_INTERRUPT_MACHINE_CHECK
@@ -2467,7 +2484,7 @@ END_FTR_SECTION_IFSET(CPU_FTR_ARCH_207S)
 5:	lbz	r6, HSTATE_PTID(r13)
 	oris	r6, r6, (PPC_DBELL_SERVER << (63-36))@h
 	PPC_MSGSNDP(6)
- 	blr
+	blr
 
 /*
  * Determine what sort of external interrupt is pending (if any).
@@ -2489,7 +2506,18 @@ kvmppc_read_intr:
 	cmpdi	r6, 0
 	beq-	1f
 	lwzcix	r0, r6, r7
-	rlwinm.	r3, r0, 0, 0xffffff
+	/*
+	 * Save XIRR for later. Since we get in in reverse endian on LE
+	 * systems, save it byte reversed and fetch it back in host endian.
+	 */
+	li	r3, HSTATE_SAVED_XIRR
+	STWX_BE	r0, r3, r13
+#ifdef __LITTLE_ENDIAN__
+	lwz	r3, HSTATE_SAVED_XIRR(r13)
+#else
+	mr	r3, r0
+#endif
+	rlwinm.	r3, r3, 0, 0xffffff
 	sync
 	beq	1f			/* if nothing pending in the ICP */
 
@@ -2521,10 +2549,9 @@ kvmppc_read_intr:
 	li	r3, -1
 1:	blr
 
-42:	/* It's not an IPI and it's for the host, stash it in the PACA
-	 * before exit, it will be picked up by the host ICP driver
+42:	/* It's not an IPI and it's for the host. We saved a copy of XIRR in
+	 * the PACA earlier, it will be picked up by the host ICP driver
 	 */
-	stw	r0, HSTATE_SAVED_XIRR(r13)
 	li	r3, 1
 	b	1b
 
@@ -2557,12 +2584,13 @@ BEGIN_FTR_SECTION
 END_FTR_SECTION_IFSET(CPU_FTR_VSX)
 #endif
 	mtmsrd	r8
+	isync
 	addi	r3,r3,VCPU_FPRS
-	bl	.store_fp_state
+	bl	store_fp_state
 #ifdef CONFIG_ALTIVEC
 BEGIN_FTR_SECTION
 	addi	r3,r31,VCPU_VRS
-	bl	.store_vr_state
+	bl	store_vr_state
 END_FTR_SECTION_IFSET(CPU_FTR_ALTIVEC)
 #endif
 	mfspr	r6,SPRN_VRSAVE
@@ -2592,12 +2620,13 @@ BEGIN_FTR_SECTION
 END_FTR_SECTION_IFSET(CPU_FTR_VSX)
 #endif
 	mtmsrd	r8
+	isync
 	addi	r3,r4,VCPU_FPRS
-	bl	.load_fp_state
+	bl	load_fp_state
 #ifdef CONFIG_ALTIVEC
 BEGIN_FTR_SECTION
 	addi	r3,r31,VCPU_VRS
-	bl	.load_vr_state
+	bl	load_vr_state
 END_FTR_SECTION_IFSET(CPU_FTR_ALTIVEC)
 #endif
 	lwz	r7,VCPU_VRSAVE(r31)
@@ -2615,10 +2644,11 @@ kvmppc_bad_host_intr:
 	b	.
 
 /*
- * This mimics the MSR transition on IRQ delievery.  The new guest MSR is taken
+ * This mimics the MSR transition on IRQ delivery.  The new guest MSR is taken
  * from VCPU_INTR_MSR and is modified based on the required TM state changes.
- *   r11 has the guest MSR value
- *   r9 has a vcpu pointer
+ *   r11 has the guest MSR value (in/out)
+ *   r9 has a vcpu pointer (in)
+ *   r0 is used as a scratch register
  */
 kvmppc_msr_interrupt:
 	rldicl	r0, r11, 64 - MSR_TS_S_LG, 62

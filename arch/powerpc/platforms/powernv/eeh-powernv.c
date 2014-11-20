@@ -182,7 +182,7 @@ static int powernv_eeh_dev_probe(struct pci_dev *dev, void *flag)
 	 * that PE to block its config space.
 	 *
 	 * Broadcom Austin 4-ports NICs (14e4:1657)
-	 * Broadcom Shiner-T 2-ports 10G NICs (14e4:168e)
+	 * Broadcom Shiner 2-ports 10G NICs (14e4:168e)
 	 */
 	if ((dev->vendor == PCI_VENDOR_ID_BROADCOM && dev->device == 0x1657) ||
 	    (dev->vendor == PCI_VENDOR_ID_BROADCOM && dev->device == 0x168e))
@@ -382,15 +382,15 @@ static int powernv_eeh_configure_bridge(struct eeh_pe *pe)
  * powernv_pe_err_inject - Inject specified error to the indicated PE
  * @pe: the indicated PE
  * @type: error type
- * @function: specific error type
+ * @func: specific error type
  * @addr: address
  * @mask: address mask
  *
  * The routine is called to inject specified error, which is
- * determined by @type and @function, to the indicated PE for
+ * determined by @type and @func, to the indicated PE for
  * testing purpose.
  */
-static int powernv_eeh_err_inject(struct eeh_pe *pe, int type, int function,
+static int powernv_eeh_err_inject(struct eeh_pe *pe, int type, int func,
 				  unsigned long addr, unsigned long mask)
 {
 	struct pci_controller *hose = pe->phb;
@@ -398,7 +398,7 @@ static int powernv_eeh_err_inject(struct eeh_pe *pe, int type, int function,
 	int ret = -EEXIST;
 
 	if (phb->eeh_ops && phb->eeh_ops->err_inject)
-		ret = phb->eeh_ops->err_inject(pe, type, function, addr, mask);
+		ret = phb->eeh_ops->err_inject(pe, type, func, addr, mask);
 
 	return ret;
 }
@@ -515,9 +515,6 @@ static int __init eeh_powernv_init(void)
 {
 	int ret = -EINVAL;
 
-	if (!machine_is(powernv))
-		return ret;
-
 	eeh_set_pe_aux_size(PNV_PCI_DIAG_BUF_SIZE);
 	ret = eeh_ops_register(&powernv_eeh_ops);
 	if (!ret)
@@ -527,5 +524,4 @@ static int __init eeh_powernv_init(void)
 
 	return ret;
 }
-
-early_initcall(eeh_powernv_init);
+machine_early_initcall(powernv, eeh_powernv_init);

@@ -28,19 +28,6 @@
 #ifndef _PCI_HOTPLUG_H
 #define _PCI_HOTPLUG_H
 
-/* These values come from the PCI Express Spec */
-enum pcie_link_width {
-	PCIE_LNK_WIDTH_RESRV	= 0x00,
-	PCIE_LNK_X1		= 0x01,
-	PCIE_LNK_X2		= 0x02,
-	PCIE_LNK_X4		= 0x04,
-	PCIE_LNK_X8		= 0x08,
-	PCIE_LNK_X12		= 0x0C,
-	PCIE_LNK_X16		= 0x10,
-	PCIE_LNK_X32		= 0x20,
-	PCIE_LNK_WIDTH_UNKNOWN  = 0xFF,
-};
-
 /**
  * struct hotplug_slot_ops -the callbacks that the hotplug pci core can use
  * @owner: The module owner of this structure
@@ -52,8 +39,8 @@ enum pcie_link_width {
  * @hardware_test: Called to run a specified hardware test on the specified
  * slot.
  * @get_power_status: Called to get the current power status of a slot.
- * 	If this field is NULL, the value passed in the struct hotplug_slot_info
- * 	will be used when this value is requested by a user.
+ *	If this field is NULL, the value passed in the struct hotplug_slot_info
+ *	will be used when this value is requested by a user.
  * @get_attention_status: Called to get the current attention status of a slot.
  *	If this field is NULL, the value passed in the struct hotplug_slot_info
  *	will be used when this value is requested by a user.
@@ -188,8 +175,7 @@ struct hotplug_params {
 };
 
 #ifdef CONFIG_ACPI
-#include <acpi/acpi.h>
-#include <acpi/acpi_bus.h>
+#include <linux/acpi.h>
 int pci_get_hp_params(struct pci_dev *dev, struct hotplug_params *hpp);
 int acpi_get_hp_hw_control_from_firmware(struct pci_dev *dev, u32 flags);
 int acpi_pci_check_ejectable(struct pci_bus *pbus, acpi_handle handle);
@@ -201,7 +187,4 @@ static inline int pci_get_hp_params(struct pci_dev *dev,
 	return -ENODEV;
 }
 #endif
-
-void pci_configure_slot(struct pci_dev *dev);
 #endif
-

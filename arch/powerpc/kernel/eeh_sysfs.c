@@ -62,12 +62,11 @@ static ssize_t eeh_pe_state_show(struct device *dev,
 	int state;
 
 	if (!edev || !edev->pe)
-		return 0;
+		return -ENODEV;
 
 	state = eeh_ops->get_state(edev->pe, NULL);
-	return sprintf(buf, "PHB#%d-PE#%d: 0x%08x 0x%08x\n",
-		       edev->pe->phb->global_number,
-		       edev->pe->addr, state, edev->pe->state);
+	return sprintf(buf, "%0x08x %0x08x\n",
+		       state, edev->pe->state);
 }
 
 static ssize_t eeh_pe_state_store(struct device *dev,
@@ -76,29 +75,29 @@ static ssize_t eeh_pe_state_store(struct device *dev,
 {
 	struct pci_dev *pdev = to_pci_dev(dev);
 	struct eeh_dev *edev = pci_dev_to_eeh_dev(pdev);
-	int ret;
 
 	if (!edev || !edev->pe)
-		return 0;
+		return -ENODEV;
 
 	/* Nothing to do if it's not frozen */
 	if (!(edev->pe->state & EEH_PE_ISOLATED))
-		return 0;
+		return count;
 
-	ret = eeh_unfreeze_pe(edev->pe, true);
-	if (ret)
-		return 0;
+	if (eeh_unfreeze_pe(edev->pe, true))
+		return -EIO;
 
 	return count;
 }
 
-static DEVICE_ATTR(eeh_pe_state, (S_IWUSR | S_IRUGO),
-		   eeh_pe_state_show, eeh_pe_state_store);
+static DEVICE_ATTR_RW(eeh_pe_state);
 
 void eeh_sysfs_add_device(struct pci_dev *pdev)
 {
 	struct eeh_dev *edev = pci_dev_to_eeh_dev(pdev);
 	int rc=0;
+
+	if (!eeh_enabled())
+		return;
 
 	if (edev && (edev->mode & EEH_DEV_SYSFS))
 		return;

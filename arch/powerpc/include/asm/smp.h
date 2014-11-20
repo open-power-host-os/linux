@@ -33,6 +33,7 @@ extern int boot_cpuid;
 extern int spinning_secondaries;
 
 extern void cpu_die(void);
+extern int cpu_to_chip_id(int cpu);
 
 #ifdef CONFIG_SMP
 
@@ -104,7 +105,6 @@ static inline struct cpumask *cpu_core_mask(int cpu)
 }
 
 extern int cpu_to_core_id(int cpu);
-extern int cpu_to_chip_id(int cpu);
 
 /* Since OpenPIC has only 4 IPIs, we use slightly different message numbers.
  *
@@ -112,7 +112,7 @@ extern int cpu_to_chip_id(int cpu);
  * in /proc/interrupts will be wrong!!! --Troy */
 #define PPC_MSG_CALL_FUNCTION   0
 #define PPC_MSG_RESCHEDULE      1
-#define PPC_MSG_TIMER		2
+#define PPC_MSG_TICK_BROADCAST	2
 #define PPC_MSG_DEBUGGER_BREAK  3
 
 /* for irq controllers that have dedicated ipis per message (4) */
@@ -179,6 +179,8 @@ extern int smt_enabled_at_boot;
 extern int smp_mpic_probe(void);
 extern void smp_mpic_setup_cpu(int cpu);
 extern int smp_generic_kick_cpu(int nr);
+extern int smp_generic_cpu_bootable(unsigned int nr);
+
 
 extern void smp_generic_give_timebase(void);
 extern void smp_generic_take_timebase(void);
@@ -187,7 +189,6 @@ extern struct smp_ops_t *smp_ops;
 
 extern void arch_send_call_function_single_ipi(int cpu);
 extern void arch_send_call_function_ipi_mask(const struct cpumask *mask);
-extern void arch_send_tick_broadcast(const struct cpumask *mask);
 
 /* Definitions relative to the secondary CPU spin loop
  * and entry point. Not all of them exist on both 32 and

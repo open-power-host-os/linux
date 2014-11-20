@@ -11,11 +11,15 @@
 
 #include <linux/kernel.h>
 #include <linux/of.h>
+#include <linux/of_address.h>
 #include <linux/of_platform.h>
 #include <linux/slab.h>
+#include <linux/smp.h>
 #include <asm/archrandom.h>
 #include <asm/io.h>
+#include <asm/prom.h>
 #include <asm/machdep.h>
+#include <asm/smp.h>
 
 
 struct powernv_rng {
@@ -80,7 +84,7 @@ static __init void rng_init_per_cpu(struct powernv_rng *rng,
 
 	chip_id = of_get_ibm_chip_id(dn);
 	if (chip_id == -1)
-		pr_warn("no ibm,chip-id found for %s\n", dn->full_name);
+		pr_warn("No ibm,chip-id found for %s.\n", dn->full_name);
 
 	for_each_possible_cpu(cpu) {
 		if (per_cpu(powernv_rng, cpu) == NULL ||
@@ -118,7 +122,7 @@ static __init int rng_create(struct device_node *dn)
 
 	rng_init_per_cpu(rng, dn);
 
-	pr_info_once("registering arch random hook\n");
+	pr_info_once("Registering arch random hook.\n");
 
 	ppc_md.get_random_long = powernv_get_random_long;
 
@@ -133,7 +137,7 @@ static __init int rng_init(void)
 	for_each_compatible_node(dn, NULL, "ibm,power-rng") {
 		rc = rng_create(dn);
 		if (rc) {
-			pr_err("failed creating rng for %s (%d)\n",
+			pr_err("Failed creating rng for %s (%d).\n",
 				dn->full_name, rc);
 			continue;
 		}
@@ -144,4 +148,4 @@ static __init int rng_init(void)
 
 	return 0;
 }
-subsys_initcall(rng_init);
+machine_subsys_initcall(powernv, rng_init);

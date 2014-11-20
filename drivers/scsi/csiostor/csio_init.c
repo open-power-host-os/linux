@@ -1010,7 +1010,6 @@ err_lnode_exit:
 	csio_hw_stop(hw);
 	spin_unlock_irq(&hw->lock);
 	csio_lnodes_unblock_request(hw);
-	pci_set_drvdata(hw->pdev, NULL);
 	csio_lnodes_exit(hw, 0);
 	csio_hw_free(hw);
 err_pci_exit:
@@ -1044,7 +1043,6 @@ static void csio_remove_one(struct pci_dev *pdev)
 
 	csio_lnodes_exit(hw, 0);
 	csio_hw_free(hw);
-	pci_set_drvdata(pdev, NULL);
 	csio_pci_exit(pdev, &bars);
 }
 
@@ -1169,7 +1167,7 @@ static struct pci_error_handlers csio_err_handler = {
 	.resume		= csio_pci_resume,
 };
 
-static DEFINE_PCI_DEVICE_TABLE(csio_pci_tbl) = {
+static const struct pci_device_id csio_pci_tbl[] = {
 	CSIO_DEVICE(CSIO_DEVID_T440DBG_FCOE, 0),        /* T4 DEBUG FCOE */
 	CSIO_DEVICE(CSIO_DEVID_T420CR_FCOE, 0),		/* T420CR FCOE */
 	CSIO_DEVICE(CSIO_DEVID_T422CR_FCOE, 0),		/* T422CR FCOE */

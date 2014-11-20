@@ -73,4 +73,10 @@
 
 #define SO_SELECT_ERR_QUEUE	0x4026
 
+#define SO_BUSY_POLL		0x4027
+
+#define SO_MAX_PACING_RATE	0x4028
+
+#define SO_BPF_EXTENSIONS	0x4029
+
 #endif /* _UAPI_ASM_SOCKET_H */

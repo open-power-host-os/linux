@@ -115,7 +115,12 @@
 #define MSR_64BIT	MSR_SF
 
 /* Server variant */
-#define MSR_		(MSR_ME | MSR_RI | MSR_IR | MSR_DR | MSR_ISF |MSR_HV)
+#define __MSR		(MSR_ME | MSR_RI | MSR_IR | MSR_DR | MSR_ISF |MSR_HV)
+#ifdef __BIG_ENDIAN__
+#define MSR_		__MSR
+#else
+#define MSR_		(__MSR | MSR_LE)
+#endif
 #define MSR_KERNEL	(MSR_ | MSR_64BIT)
 #define MSR_USER32	(MSR_ | MSR_PR | MSR_EE)
 #define MSR_USER64	(MSR_USER32 | MSR_64BIT)
@@ -208,8 +213,8 @@
 #define SPRN_ACOP	0x1F	/* Available Coprocessor Register */
 #define SPRN_TFIAR	0x81	/* Transaction Failure Inst Addr   */
 #define SPRN_TEXASR	0x82	/* Transaction EXception & Summary */
-#define   TEXASR_FS	__MASK(63-36)	/* Transaction Failure Summary */
 #define SPRN_TEXASRU	0x83	/* ''	   ''	   ''	 Upper 32  */
+#define   TEXASR_FS	__MASK(63-36) /* TEXASR Failure Summary */
 #define SPRN_TFHAR	0x80	/* Transaction Failure Handler Addr */
 #define SPRN_CTRLF	0x088
 #define SPRN_CTRLT	0x098
@@ -249,7 +254,7 @@
 #define   DSISR_PROTFAULT	0x08000000	/* protection fault */
 #define   DSISR_ISSTORE		0x02000000	/* access was a store */
 #define   DSISR_DABRMATCH	0x00400000	/* hit data breakpoint */
-#define   DSISR_NOSEGMENT	0x00200000	/* STAB/SLB miss */
+#define   DSISR_NOSEGMENT	0x00200000	/* SLB miss */
 #define   DSISR_KEYFAULT	0x00200000	/* Key fault */
 #define SPRN_TBRL	0x10C	/* Time Base Read Lower Register (user, R/O) */
 #define SPRN_TBRU	0x10D	/* Time Base Read Upper Register (user, R/O) */
@@ -270,8 +275,8 @@
 #define SPRN_IC		0x350	/* Virtual Instruction Count */
 #define SPRN_VTB	0x351	/* Virtual Time Base */
 #define SPRN_LDBAR	0x352	/* LD Base Address Register */
-#define SPRN_PMICR	0x354   /* PM Idle Control Reg */
-#define SPRN_PMSR	0x355   /* PM Status Reg */
+#define SPRN_PMICR	0x354   /* Power Management Idle Control Reg */
+#define SPRN_PMSR	0x355   /* Power Management Status Reg */
 #define SPRN_PMMAR	0x356	/* Power Management Memory Activity Register */
 #define SPRN_PMCR	0x374	/* Power Management Control Register */
 
@@ -326,7 +331,7 @@
 #define     LPCR_PECE2	0x00001000	/* machine check etc can cause exit */
 #define   LPCR_MER	0x00000800	/* Mediated External Exception */
 #define   LPCR_MER_SH	11
-#define   LPCR_TC      	0x00000200	/* Translation control */
+#define   LPCR_TC      0x00000200	/* Translation control */
 #define   LPCR_LPES    0x0000000c
 #define   LPCR_LPES0   0x00000008      /* LPAR Env selector 0 */
 #define   LPCR_LPES1   0x00000004      /* LPAR Env selector 1 */
@@ -340,8 +345,8 @@
 #define	SPRN_HMER	0x150	/* Hardware m? error recovery */
 #define	SPRN_HMEER	0x151	/* Hardware m? enable error recovery */
 #define SPRN_PCR	0x152	/* Processor compatibility register */
-#define   PCR_VEC_DIS	(1ul << (63-0))	/* Vec. disable (pre POWER8) */
-#define   PCR_VSX_DIS	(1ul << (63-1))	/* VSX disable (pre POWER8) */
+#define   PCR_VEC_DIS	(1ul << (63-0))	/* Vec. disable (bit NA since POWER8) */
+#define   PCR_VSX_DIS	(1ul << (63-1))	/* VSX disable (bit NA since POWER8) */
 #define   PCR_TM_DIS	(1ul << (63-2))	/* Trans. memory disable (POWER8) */
 #define   PCR_ARCH_206	0x4		/* Architecture 2.06 */
 #define   PCR_ARCH_205	0x2		/* Architecture 2.05 */
@@ -589,9 +594,13 @@
 #define SPRN_SPRG3	0x113	/* Special Purpose Register General 3 */
 #define SPRN_USPRG3	0x103	/* SPRG3 userspace read */
 #define SPRN_SPRG4	0x114	/* Special Purpose Register General 4 */
+#define SPRN_USPRG4	0x104	/* SPRG4 userspace read */
 #define SPRN_SPRG5	0x115	/* Special Purpose Register General 5 */
+#define SPRN_USPRG5	0x105	/* SPRG5 userspace read */
 #define SPRN_SPRG6	0x116	/* Special Purpose Register General 6 */
+#define SPRN_USPRG6	0x106	/* SPRG6 userspace read */
 #define SPRN_SPRG7	0x117	/* Special Purpose Register General 7 */
+#define SPRN_USPRG7	0x107	/* SPRG7 userspace read */
 #define SPRN_SRR0	0x01A	/* Save/Restore Register 0 */
 #define SPRN_SRR1	0x01B	/* Save/Restore Register 1 */
 #define   SRR1_ISI_NOPT		0x40000000 /* ISI: Not found in hash */
@@ -676,6 +685,10 @@
 #define   MMCR0_PMXE	ASM_CONST(0x04000000) /* perf mon exception enable */
 #define   MMCR0_FCECE	ASM_CONST(0x02000000) /* freeze ctrs on enabled cond or event */
 #define   MMCR0_TBEE	0x00400000UL /* time base exception enable */
+#define   MMCR0_BHRBA	0x00200000UL /* BHRB Access allowed in userspace */
+#define   MMCR0_EBE	0x00100000UL /* Event based branch enable */
+#define   MMCR0_PMCC	0x000c0000UL /* PMC control */
+#define   MMCR0_PMCC_U6	0x00080000UL /* PMC1-6 are R/W by user (PR) */
 #define   MMCR0_PMC1CE	0x00008000UL /* PMC1 count enable*/
 #define   MMCR0_PMCjCE	ASM_CONST(0x00004000) /* PMCj count enable*/
 #define   MMCR0_TRIGGER	0x00002000UL /* TRIGGER enable */
@@ -715,6 +728,7 @@
 #define SPRN_EBBHR	804	/* Event based branch handler register */
 #define SPRN_EBBRR	805	/* Event based branch return register */
 #define SPRN_BESCR	806	/* Branch event status and control register */
+#define   BESCR_GE	0x8000000000000000ULL /* Global Enable */
 #define SPRN_WORT	895	/* Workload optimization register - thread */
 
 #define SPRN_PMC1	787
@@ -737,6 +751,11 @@
 #define SPRN_CSIGR	890
 #define SPRN_SPMC1	892
 #define SPRN_SPMC2	893
+
+/* When EBB is enabled, some of MMCR0/MMCR2/SIER are user accessible */
+#define MMCR0_USER_MASK	(MMCR0_FC | MMCR0_PMXE | MMCR0_PMAO)
+#define MMCR2_USER_MASK	0x4020100804020000UL /* (FC1P|FC2P|FC3P|FC4P|FC5P|FC6P) */
+#define SIER_USER_MASK	0x7fffffUL
 
 #define SPRN_PA6T_MMCR0 795
 #define   PA6T_MMCR0_EN0	0x0000000000000001UL
@@ -886,11 +905,10 @@
  * 64-bit embedded
  *	- SPRG0 generic exception scratch
  *	- SPRG2 TLB exception stack
- *	- SPRG3 critical exception scratch and
- *        CPU and NUMA node for VDSO getcpu (user visible)
+ *	- SPRG3 critical exception scratch (user visible, sorry!)
  *	- SPRG4 unused (user visible)
  *	- SPRG6 TLB miss scratch (user visible, sorry !)
- *	- SPRG7 critical exception scratch
+ *	- SPRG7 CPU and NUMA node for VDSO getcpu (user visible)
  *	- SPRG8 machine check exception scratch
  *	- SPRG9 debug exception scratch
  *
@@ -928,13 +946,10 @@
  *      readable variant for reads, which can avoid a fault
  *      with KVM type virtualization.
  *
- *      (*) Under KVM, the host SPRG1 is used to point to
- *      the current VCPU data structure
- *
  * 32-bit 8xx:
  *	- SPRG0 scratch for exception vectors
  *	- SPRG1 scratch for exception vectors
- *	- SPRG2 apparently unused but initialized
+ *	- SPRG2 scratch for exception vectors
  *
  */
 #ifdef CONFIG_PPC64
@@ -947,6 +962,8 @@
 #define SPRN_SPRG_SCRATCH0	SPRN_SPRG2
 #define SPRN_SPRG_HPACA		SPRN_HSPRG0
 #define SPRN_SPRG_HSCRATCH0	SPRN_HSPRG1
+#define SPRN_SPRG_VDSO_READ	SPRN_USPRG3
+#define SPRN_SPRG_VDSO_WRITE	SPRN_SPRG3
 
 #define GET_PACA(rX)					\
 	BEGIN_FTR_SECTION_NESTED(66);			\
@@ -990,6 +1007,8 @@
 #define SPRN_SPRG_TLB_SCRATCH	SPRN_SPRG6
 #define SPRN_SPRG_GEN_SCRATCH	SPRN_SPRG0
 #define SPRN_SPRG_GDBELL_SCRATCH SPRN_SPRG_GEN_SCRATCH
+#define SPRN_SPRG_VDSO_READ	SPRN_USPRG7
+#define SPRN_SPRG_VDSO_WRITE	SPRN_SPRG7
 
 #define SET_PACA(rX)	mtspr	SPRN_SPRG_PACA,rX
 #define GET_PACA(rX)	mfspr	rX,SPRN_SPRG_PACA
@@ -1040,6 +1059,7 @@
 #ifdef CONFIG_8xx
 #define SPRN_SPRG_SCRATCH0	SPRN_SPRG0
 #define SPRN_SPRG_SCRATCH1	SPRN_SPRG1
+#define SPRN_SPRG_SCRATCH2	SPRN_SPRG2
 #endif
 
 
@@ -1109,6 +1129,10 @@
 #define PVR_8560	0x80200000
 #define PVR_VER_E500V1	0x8020
 #define PVR_VER_E500V2	0x8021
+#define PVR_VER_E500MC	0x8023
+#define PVR_VER_E5500	0x8024
+#define PVR_VER_E6500	0x8040
+
 /*
  * For the 8xx processors, all of them report the same PVR family for
  * the PowerPC core. The various versions of these processors must be
@@ -1189,10 +1213,10 @@ static inline unsigned long mfvtb (void)
 }
 
 #ifdef __powerpc64__
-#ifdef CONFIG_PPC_CELL
+#if defined(CONFIG_PPC_CELL) || defined(CONFIG_PPC_FSL_BOOK3E)
 #define mftb()		({unsigned long rval;				\
 			asm volatile(					\
-				"90:	mftb %0;\n"			\
+				"90:	mfspr %0, %2;\n"		\
 				"97:	cmpwi %0,0;\n"			\
 				"	beq- 90b;\n"			\
 				"99:\n"					\
@@ -1206,18 +1230,30 @@ static inline unsigned long mfvtb (void)
 				"	.llong 0\n"			\
 				"	.llong 0\n"			\
 				".previous"				\
-			: "=r" (rval) : "i" (CPU_FTR_CELL_TB_BUG)); rval;})
+			: "=r" (rval) \
+			: "i" (CPU_FTR_CELL_TB_BUG), "i" (SPRN_TBRL)); \
+			rval;})
 #else
 #define mftb()		({unsigned long rval;	\
-			asm volatile("mftb %0" : "=r" (rval)); rval;})
+			asm volatile("mfspr %0, %1" : \
+				     "=r" (rval) : "i" (SPRN_TBRL)); rval;})
 #endif /* !CONFIG_PPC_CELL */
 
 #else /* __powerpc64__ */
 
+#if defined(CONFIG_8xx)
 #define mftbl()		({unsigned long rval;	\
 			asm volatile("mftbl %0" : "=r" (rval)); rval;})
 #define mftbu()		({unsigned long rval;	\
 			asm volatile("mftbu %0" : "=r" (rval)); rval;})
+#else
+#define mftbl()		({unsigned long rval;	\
+			asm volatile("mfspr %0, %1" : "=r" (rval) : \
+				"i" (SPRN_TBRL)); rval;})
+#define mftbu()		({unsigned long rval;	\
+			asm volatile("mfspr %0, %1" : "=r" (rval) : \
+				"i" (SPRN_TBRU)); rval;})
+#endif
 #endif /* !__powerpc64__ */
 
 #define mttbl(v)	asm volatile("mttbl %0":: "r"(v))
@@ -1231,8 +1267,7 @@ static inline unsigned long mfvtb (void)
 
 #define proc_trap()	asm volatile("trap")
 
-#define __get_SP()	({unsigned long sp; \
-			asm volatile("mr %0,1": "=r" (sp)); sp;})
+extern unsigned long current_stack_pointer(void);
 
 extern unsigned long scom970_read(unsigned int address);
 extern void scom970_write(unsigned int address, unsigned long value);

@@ -11,8 +11,7 @@
 #define SYNC_STEP_INITIAL	0
 #define SYNC_STEP_UNSPLIT	1	/* Set by secondary when it sees unsplit */
 #define SYNC_STEP_REAL_MODE	2	/* Set by secondary when in real mode  */
-#define SYNC_STEP_TB_DONE	3	/* Set by primary when TB sync is done */
-#define SYNC_STEP_FINISHED	4	/* Set by secondary when split/unsplit is done */
+#define SYNC_STEP_FINISHED	3	/* Set by secondary when split/unsplit is done */
 
 #ifndef __ASSEMBLY__
 void split_core_secondary_loop(u8 *state);

@@ -1,7 +1,7 @@
 /*******************************************************************
  * This file is part of the Emulex Linux Device Driver for         *
  * Fibre Channel Host Bus Adapters.                                *
- * Copyright (C) 2004-2012 Emulex.  All rights reserved.           *
+ * Copyright (C) 2004-2014 Emulex.  All rights reserved.           *
  * EMULEX and SLI are trademarks of Emulex.                        *
  * www.emulex.com                                                  *
  * Portions Copyright (C) 2004-2005 Christoph Hellwig              *
@@ -703,8 +703,6 @@ lpfc_work_done(struct lpfc_hba *phba)
 				lpfc_fdmi_timeout_handler(vport);
 			if (work_port_events & WORKER_RAMP_DOWN_QUEUE)
 				lpfc_ramp_down_queue_handler(phba);
-			if (work_port_events & WORKER_RAMP_UP_QUEUE)
-				lpfc_ramp_up_queue_handler(phba);
 			if (work_port_events & WORKER_DELAYED_DISC_TMO)
 				lpfc_delayed_disc_timeout_handler(vport);
 		}
@@ -762,7 +760,7 @@ lpfc_do_work(void *p)
 	struct lpfc_hba *phba = p;
 	int rc;
 
-	set_user_nice(current, -20);
+	set_user_nice(current, MIN_NICE);
 	current->flags |= PF_NOFREEZE;
 	phba->data_flags = 0;
 
@@ -1026,7 +1024,6 @@ lpfc_linkup(struct lpfc_hba *phba)
 	struct lpfc_vport **vports;
 	int i;
 
-	lpfc_cleanup_wt_rrqs(phba);
 	phba->link_state = LPFC_LINK_UP;
 
 	/* Unblock fabric iocbs if they are blocked */
@@ -2073,7 +2070,8 @@ lpfc_sli4_set_fcf_flogi_fail(struct lpfc_hba *phba, uint16_t fcf_index)
  * returns:
  * 0=success 1=failure
  **/
-int lpfc_sli4_fcf_pri_list_add(struct lpfc_hba *phba, uint16_t fcf_index,
+static int lpfc_sli4_fcf_pri_list_add(struct lpfc_hba *phba,
+	uint16_t fcf_index,
 	struct fcf_record *new_fcf_record)
 {
 	uint16_t current_fcf_pri;
@@ -2177,7 +2175,6 @@ lpfc_mbx_cmpl_fcf_scan_read_fcf_rec(struct lpfc_hba *phba, LPFC_MBOXQ_t *mboxq)
 	uint16_t fcf_index, next_fcf_index;
 	struct lpfc_fcf_rec *fcf_rec = NULL;
 	uint16_t vlan_id;
-	uint32_t seed;
 	bool select_new_fcf;
 	int rc;
 
@@ -2414,9 +2411,6 @@ lpfc_mbx_cmpl_fcf_scan_read_fcf_rec(struct lpfc_hba *phba, LPFC_MBOXQ_t *mboxq)
 		phba->fcf.fcf_flag |= FCF_AVAILABLE;
 		/* Setup initial running random FCF selection count */
 		phba->fcf.eligible_fcf_cnt = 1;
-		/* Seeding the random number generator for random selection */
-		seed = (uint32_t)(0xFFFFFFFF & jiffies);
-		prandom_seed(seed);
 	}
 	spin_unlock_irq(&phba->hbalock);
 	goto read_next_fcf;
@@ -2574,8 +2568,11 @@ lpfc_mbx_cmpl_fcf_rr_read_fcf_rec(struct lpfc_hba *phba, LPFC_MBOXQ_t *mboxq)
 	if (!new_fcf_record) {
 		lpfc_printf_log(phba, KERN_WARNING, LOG_FIP,
 				"2766 Mailbox command READ_FCF_RECORD "
-				"failed to retrieve a FCF record.\n");
-		goto error_out;
+				"failed to retrieve a FCF record. "
+				"hba_flg x%x fcf_flg x%x\n", phba->hba_flag,
+				phba->fcf.fcf_flag);
+		lpfc_unregister_fcf_rescan(phba);
+		goto out;
 	}
 
 	/* Get the needed parameters from FCF record */
@@ -2706,7 +2703,7 @@ out:
  *
  * This function handles completion of init vfi mailbox command.
  */
-void
+static void
 lpfc_init_vfi_cmpl(struct lpfc_hba *phba, LPFC_MBOXQ_t *mboxq)
 {
 	struct lpfc_vport *vport = mboxq->vport;
@@ -4002,7 +3999,10 @@ lpfc_nlp_counters(struct lpfc_vport *vport, int state, int count)
 		vport->fc_map_cnt += count;
 		break;
 	case NLP_STE_NPR_NODE:
-		vport->fc_npr_cnt += count;
+		if (vport->fc_npr_cnt == 0 && count == -1)
+			vport->fc_npr_cnt = 0;
+		else
+			vport->fc_npr_cnt += count;
 		break;
 	}
 	spin_unlock_irq(shost->host_lock);
@@ -4463,7 +4463,7 @@ lpfc_no_rpi(struct lpfc_hba *phba, struct lpfc_nodelist *ndlp)
  * This function will issue an ELS LOGO command after completing
  * the UNREG_RPI.
  **/
-void
+static void
 lpfc_nlp_logo_unreg(struct lpfc_hba *phba, LPFC_MBOXQ_t *pmb)
 {
 	struct lpfc_vport  *vport = pmb->vport;
@@ -4473,6 +4473,7 @@ lpfc_nlp_logo_unreg(struct lpfc_hba *phba, LPFC_MBOXQ_t *pmb)
 	if (!ndlp)
 		return;
 	lpfc_issue_els_logo(vport, ndlp, 0);
+	mempool_free(pmb, phba->mbox_mem_pool);
 }
 
 /*
@@ -4492,7 +4493,15 @@ lpfc_unreg_rpi(struct lpfc_vport *vport, struct lpfc_nodelist *ndlp)
 	int rc;
 	uint16_t rpi;
 
-	if (ndlp->nlp_flag & NLP_RPI_REGISTERED) {
+	if (ndlp->nlp_flag & NLP_RPI_REGISTERED ||
+	    ndlp->nlp_flag & NLP_REG_LOGIN_SEND) {
+		if (ndlp->nlp_flag & NLP_REG_LOGIN_SEND)
+			lpfc_printf_vlog(vport, KERN_INFO, LOG_SLI,
+					 "3366 RPI x%x needs to be "
+					 "unregistered nlp_flag x%x "
+					 "did x%x\n",
+					 ndlp->nlp_rpi, ndlp->nlp_flag,
+					 ndlp->nlp_DID);
 		mbox = mempool_alloc(phba->mbox_mem_pool, GFP_KERNEL);
 		if (mbox) {
 			/* SLI4 ports require the physical rpi value. */
@@ -5022,7 +5031,6 @@ lpfc_disc_start(struct lpfc_vport *vport)
 	struct lpfc_hba  *phba = vport->phba;
 	uint32_t num_sent;
 	uint32_t clear_la_pending;
-	int did_changed;
 
 	if (!lpfc_is_link_up(phba)) {
 		lpfc_printf_vlog(vport, KERN_INFO, LOG_SLI,
@@ -5040,11 +5048,6 @@ lpfc_disc_start(struct lpfc_vport *vport)
 		vport->port_state = LPFC_DISC_AUTH;
 
 	lpfc_set_disctmo(vport);
-
-	if (vport->fc_prevDID == vport->fc_myDID)
-		did_changed = 0;
-	else
-		did_changed = 1;
 
 	vport->fc_prevDID = vport->fc_myDID;
 	vport->num_disc_nodes = 0;
@@ -6208,12 +6211,40 @@ lpfc_read_fcf_conn_tbl(struct lpfc_hba *phba,
 
 		memcpy(&conn_entry->conn_rec, &conn_rec[i],
 			sizeof(struct lpfc_fcf_conn_rec));
-		conn_entry->conn_rec.vlan_tag =
-			le16_to_cpu(conn_entry->conn_rec.vlan_tag) & 0xFFF;
-		conn_entry->conn_rec.flags =
-			le16_to_cpu(conn_entry->conn_rec.flags);
 		list_add_tail(&conn_entry->list,
 			&phba->fcf_conn_rec_list);
+	}
+
+	if (!list_empty(&phba->fcf_conn_rec_list)) {
+		i = 0;
+		list_for_each_entry(conn_entry, &phba->fcf_conn_rec_list,
+				    list) {
+			conn_rec = &conn_entry->conn_rec;
+			lpfc_printf_log(phba, KERN_INFO, LOG_INIT,
+					"3345 FCF connection list rec[%02d]: "
+					"flags:x%04x, vtag:x%04x, "
+					"fabric_name:x%02x:%02x:%02x:%02x:"
+					"%02x:%02x:%02x:%02x, "
+					"switch_name:x%02x:%02x:%02x:%02x:"
+					"%02x:%02x:%02x:%02x\n", i++,
+					conn_rec->flags, conn_rec->vlan_tag,
+					conn_rec->fabric_name[0],
+					conn_rec->fabric_name[1],
+					conn_rec->fabric_name[2],
+					conn_rec->fabric_name[3],
+					conn_rec->fabric_name[4],
+					conn_rec->fabric_name[5],
+					conn_rec->fabric_name[6],
+					conn_rec->fabric_name[7],
+					conn_rec->switch_name[0],
+					conn_rec->switch_name[1],
+					conn_rec->switch_name[2],
+					conn_rec->switch_name[3],
+					conn_rec->switch_name[4],
+					conn_rec->switch_name[5],
+					conn_rec->switch_name[6],
+					conn_rec->switch_name[7]);
+		}
 	}
 }
 
@@ -6306,7 +6337,7 @@ lpfc_parse_fcoe_conf(struct lpfc_hba *phba,
 		uint8_t *buff,
 		uint32_t size)
 {
-	uint32_t offset = 0, rec_length;
+	uint32_t offset = 0;
 	uint8_t *rec_ptr;
 
 	/*
@@ -6332,8 +6363,6 @@ lpfc_parse_fcoe_conf(struct lpfc_hba *phba,
 		return;
 	}
 	offset += 4;
-
-	rec_length = buff[offset + 1];
 
 	/* Read FCoE param record */
 	rec_ptr = lpfc_get_rec_conf23(&buff[offset],

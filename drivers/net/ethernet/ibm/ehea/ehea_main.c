@@ -28,6 +28,7 @@
 
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
+#include <linux/device.h>
 #include <linux/in.h>
 #include <linux/ip.h>
 #include <linux/tcp.h>
@@ -98,10 +99,22 @@ static struct ehea_fw_handle_array ehea_fw_handles;
 static struct ehea_bcmc_reg_array ehea_bcmc_regs;
 
 
-static int ehea_probe_adapter(struct platform_device *dev,
-			      const struct of_device_id *id);
+static int ehea_probe_adapter(struct platform_device *dev);
 
 static int ehea_remove(struct platform_device *dev);
+
+static struct of_device_id ehea_module_device_table[] = {
+	{
+		.name = "lhea",
+		.compatible = "IBM,lhea",
+	},
+	{
+		.type = "network",
+		.compatible = "IBM,lhea-ethernet",
+	},
+	{},
+};
+MODULE_DEVICE_TABLE(of, ehea_module_device_table);
 
 static struct of_device_id ehea_device_table[] = {
 	{
@@ -110,9 +123,8 @@ static struct of_device_id ehea_device_table[] = {
 	},
 	{},
 };
-MODULE_DEVICE_TABLE(of, ehea_device_table);
 
-static struct of_platform_driver ehea_driver = {
+static struct platform_driver ehea_driver = {
 	.driver = {
 		.name = "ehea",
 		.owner = THIS_MODULE,
@@ -479,7 +491,7 @@ static int ehea_refill_rq_def(struct ehea_port_res *pr,
 		skb_arr[index] = skb;
 		tmp_addr = ehea_map_vaddr(skb->data);
 		if (tmp_addr == -1) {
-			dev_kfree_skb(skb);
+			dev_consume_skb_any(skb);
 			q_skba->os_skbs = fill_wqes - i;
 			ret = 0;
 			break;
@@ -845,7 +857,7 @@ static struct ehea_cqe *ehea_proc_cqes(struct ehea_port_res *pr, int my_quota)
 
 			index = EHEA_BMASK_GET(EHEA_WR_ID_INDEX, cqe->wr_id);
 			skb = pr->sq_skba.arr[index];
-			dev_kfree_skb(skb);
+			dev_consume_skb_any(skb);
 			pr->sq_skba.arr[index] = NULL;
 		}
 
@@ -1286,7 +1298,7 @@ static int ehea_reg_interrupts(struct net_device *dev)
 
 	ret = ibmebus_request_irq(port->qp_eq->attr.ist1,
 				  ehea_qp_aff_irq_handler,
-				  IRQF_DISABLED, port->int_aff_name, port);
+				  0, port->int_aff_name, port);
 	if (ret) {
 		netdev_err(dev, "failed registering irq for qp_aff_irq_handler:ist=%X\n",
 			   port->qp_eq->attr.ist1);
@@ -1304,8 +1316,7 @@ static int ehea_reg_interrupts(struct net_device *dev)
 			 "%s-queue%d", dev->name, i);
 		ret = ibmebus_request_irq(pr->eq->attr.ist1,
 					  ehea_recv_irq_handler,
-					  IRQF_DISABLED, pr->int_send_name,
-					  pr);
+					  0, pr->int_send_name, pr);
 		if (ret) {
 			netdev_err(dev, "failed registering irq for ehea_queue port_res_nr:%d, ist=%X\n",
 				   i, pr->eq->attr.ist1);
@@ -1983,7 +1994,7 @@ static void xmit_common(struct sk_buff *skb, struct ehea_swqe *swqe)
 {
 	swqe->tx_control |= EHEA_SWQE_IMM_DATA_PRESENT | EHEA_SWQE_CRC;
 
-	if (skb->protocol != htons(ETH_P_IP))
+	if (vlan_get_protocol(skb) != htons(ETH_P_IP))
 		return;
 
 	if (skb->ip_summed == CHECKSUM_PARTIAL)
@@ -2034,7 +2045,7 @@ static void ehea_xmit3(struct sk_buff *skb, struct net_device *dev,
 		skb_copy_bits(skb, 0, imm_data, skb->len);
 
 	swqe->immediate_data_length = skb->len;
-	dev_kfree_skb(skb);
+	dev_consume_skb_any(skb);
 }
 
 static int ehea_start_xmit(struct sk_buff *skb, struct net_device *dev)
@@ -3251,8 +3262,7 @@ static void ehea_remove_device_sysfs(struct platform_device *dev)
 	device_remove_file(&dev->dev, &dev_attr_remove_port);
 }
 
-static int ehea_probe_adapter(struct platform_device *dev,
-			      const struct of_device_id *id)
+static int ehea_probe_adapter(struct platform_device *dev)
 {
 	struct ehea_adapter *adapter;
 	const u64 *adapter_handle;
@@ -3264,7 +3274,7 @@ static int ehea_probe_adapter(struct platform_device *dev,
 		return -EINVAL;
 	}
 
-	adapter = kzalloc(sizeof(*adapter), GFP_KERNEL);
+	adapter = devm_kzalloc(&dev->dev, sizeof(*adapter), GFP_KERNEL);
 	if (!adapter) {
 		ret = -ENOMEM;
 		dev_err(&dev->dev, "no mem for ehea_adapter\n");
@@ -3289,7 +3299,7 @@ static int ehea_probe_adapter(struct platform_device *dev,
 
 	adapter->pd = EHEA_PD_ID;
 
-	dev_set_drvdata(&dev->dev, adapter);
+	platform_set_drvdata(dev, adapter);
 
 
 	/* initialize adapter and ports */
@@ -3322,7 +3332,7 @@ static int ehea_probe_adapter(struct platform_device *dev,
 	}
 
 	ret = ibmebus_request_irq(adapter->neq->attr.ist1,
-				  ehea_interrupt_neq, IRQF_DISABLED,
+				  ehea_interrupt_neq, 0,
 				  "ehea_neq", adapter);
 	if (ret) {
 		dev_err(&dev->dev, "requesting NEQ IRQ failed\n");
@@ -3350,7 +3360,6 @@ out_kill_eq:
 
 out_free_ad:
 	list_del(&adapter->list);
-	kfree(adapter);
 
 out:
 	ehea_update_firmware_handles();
@@ -3360,7 +3369,7 @@ out:
 
 static int ehea_remove(struct platform_device *dev)
 {
-	struct ehea_adapter *adapter = dev_get_drvdata(&dev->dev);
+	struct ehea_adapter *adapter = platform_get_drvdata(dev);
 	int i;
 
 	for (i = 0; i < EHEA_MAX_PORTS; i++)
@@ -3377,7 +3386,6 @@ static int ehea_remove(struct platform_device *dev)
 	ehea_destroy_eq(adapter->neq);
 	ehea_remove_adapter_mr(adapter);
 	list_del(&adapter->list);
-	kfree(adapter);
 
 	ehea_update_firmware_handles();
 

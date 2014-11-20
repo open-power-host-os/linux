@@ -31,6 +31,7 @@
 #include "../core.h"
 #include "../usb.h"
 #include "../efuse.h"
+#include "../base.h"
 #include "reg.h"
 #include "def.h"
 #include "phy.h"
@@ -41,6 +42,7 @@
 #include "trx.h"
 #include "led.h"
 #include "hw.h"
+#include "../rtl8192c/fw_common.h"
 #include <linux/module.h>
 
 MODULE_AUTHOR("Georgia		<georgia@realtek.com>");
@@ -74,7 +76,7 @@ static int rtl92cu_init_sw_vars(struct ieee80211_hw *hw)
 	if (IS_VENDOR_UMC_A_CUT(rtlpriv->rtlhal.version) &&
 	    !IS_92C_SERIAL(rtlpriv->rtlhal.version)) {
 		rtlpriv->cfg->fw_name = "rtlwifi/rtl8192cufw_A.bin";
-	} else if (IS_81xxC_VENDOR_UMC_B_CUT(rtlpriv->rtlhal.version)) {
+	} else if (IS_81XXC_VENDOR_UMC_B_CUT(rtlpriv->rtlhal.version)) {
 		rtlpriv->cfg->fw_name = "rtlwifi/rtl8192cufw_B.bin";
 	} else {
 		rtlpriv->cfg->fw_name = "rtlwifi/rtl8192cufw_TMSC.bin";
@@ -99,6 +101,12 @@ static void rtl92cu_deinit_sw_vars(struct ieee80211_hw *hw)
 	}
 }
 
+/* get bt coexist status */
+static bool rtl92cu_get_btc_status(void)
+{
+	return false;
+}
+
 static struct rtl_hal_ops rtl8192cu_hal_ops = {
 	.init_sw_vars = rtl92cu_init_sw_vars,
 	.deinit_sw_vars = rtl92cu_deinit_sw_vars,
@@ -120,14 +128,13 @@ static struct rtl_hal_ops rtl8192cu_hal_ops = {
 	.fill_tx_desc = rtl92cu_tx_fill_desc,
 	.fill_fake_txdesc = rtl92cu_fill_fake_txdesc,
 	.fill_tx_cmddesc = rtl92cu_tx_fill_cmddesc,
-	.cmd_send_packet = rtl92cu_cmd_send_packet,
 	.query_rx_desc = rtl92cu_rx_query_desc,
 	.set_channel_access = rtl92cu_update_channel_access_setting,
 	.radio_onoff_checking = rtl92cu_gpio_radio_on_off_checking,
 	.set_bw_mode = rtl92c_phy_set_bw_mode,
 	.switch_channel = rtl92c_phy_sw_chnl,
 	.dm_watchdog = rtl92c_dm_watchdog,
-	.scan_operation_backup = rtl92c_phy_scan_operation_backup,
+	.scan_operation_backup = rtl_phy_scan_operation_backup,
 	.set_rf_power_state = rtl92cu_phy_set_rf_power_state,
 	.led_control = rtl92cu_led_control,
 	.enable_hw_sec = rtl92cu_enable_hw_security_config,
@@ -147,6 +154,7 @@ static struct rtl_hal_ops rtl8192cu_hal_ops = {
 	.phy_set_bw_mode_callback = rtl92cu_phy_set_bw_mode_callback,
 	.dm_dynamic_txpower = rtl92cu_dm_dynamic_txpower,
 	.fill_h2c_cmd = rtl92c_fill_h2c_cmd,
+	.get_btc_status = rtl92cu_get_btc_status,
 };
 
 static struct rtl_mod_params rtl92cu_mod_params = {
@@ -316,6 +324,7 @@ static struct usb_device_id rtl8192c_usb_ids[] = {
 	{RTL_USB_DEVICE(0x0bda, 0x5088, rtl92cu_hal_cfg)}, /*Thinkware-CC&C*/
 	{RTL_USB_DEVICE(0x0df6, 0x0052, rtl92cu_hal_cfg)}, /*Sitecom - Edimax*/
 	{RTL_USB_DEVICE(0x0df6, 0x005c, rtl92cu_hal_cfg)}, /*Sitecom - Edimax*/
+	{RTL_USB_DEVICE(0x0df6, 0x0070, rtl92cu_hal_cfg)}, /*Sitecom - 150N */
 	{RTL_USB_DEVICE(0x0df6, 0x0077, rtl92cu_hal_cfg)}, /*Sitecom-WLA2100V2*/
 	{RTL_USB_DEVICE(0x0eb0, 0x9071, rtl92cu_hal_cfg)}, /*NO Brand - Etop*/
 	{RTL_USB_DEVICE(0x4856, 0x0091, rtl92cu_hal_cfg)}, /*NetweeN - Feixun*/
@@ -394,9 +403,6 @@ static struct usb_driver rtl8192cu_driver = {
 	/* .resume = rtl_usb_resume, */
 	/* .reset_resume = rtl8192c_resume, */
 #endif /* CONFIG_PM */
-#ifdef CONFIG_AUTOSUSPEND
-	.supports_autosuspend = 1,
-#endif
 	.disable_hub_initiated_lpm = 1,
 };
 

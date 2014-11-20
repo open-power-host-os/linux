@@ -249,7 +249,7 @@ static int sa1100_rtc_probe(struct platform_device *pdev)
 
 	ret = clk_prepare_enable(info->clk);
 	if (ret)
-		goto err_enable_clk;
+		return ret;
 	/*
 	 * According to the manual we should be able to let RTTR be zero
 	 * and then a default diviser for a 32.768KHz clock is used.
@@ -303,8 +303,6 @@ static int sa1100_rtc_probe(struct platform_device *pdev)
 	return 0;
 err_dev:
 	clk_disable_unprepare(info->clk);
-err_enable_clk:
-	platform_set_drvdata(pdev, NULL);
 	return ret;
 }
 
@@ -312,10 +310,8 @@ static int sa1100_rtc_remove(struct platform_device *pdev)
 {
 	struct sa1100_rtc *info = platform_get_drvdata(pdev);
 
-	if (info) {
+	if (info)
 		clk_disable_unprepare(info->clk);
-		platform_set_drvdata(pdev, NULL);
-	}
 
 	return 0;
 }
@@ -342,7 +338,7 @@ static SIMPLE_DEV_PM_OPS(sa1100_rtc_pm_ops, sa1100_rtc_suspend,
 			sa1100_rtc_resume);
 
 #ifdef CONFIG_OF
-static struct of_device_id sa1100_rtc_dt_ids[] = {
+static const struct of_device_id sa1100_rtc_dt_ids[] = {
 	{ .compatible = "mrvl,sa1100-rtc", },
 	{ .compatible = "mrvl,mmp-rtc", },
 	{}

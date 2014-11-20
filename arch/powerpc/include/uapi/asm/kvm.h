@@ -27,6 +27,7 @@
 #define __KVM_HAVE_PPC_SMT
 #define __KVM_HAVE_IRQCHIP
 #define __KVM_HAVE_IRQ_LINE
+#define __KVM_HAVE_GUEST_DEBUG
 
 struct kvm_regs {
 	__u64 pc;
@@ -269,7 +270,24 @@ struct kvm_fpu {
 	__u64 fpr[32];
 };
 
+/*
+ * Defines for h/w breakpoint, watchpoint (read, write or both) and
+ * software breakpoint.
+ * These are used as "type" in KVM_SET_GUEST_DEBUG ioctl and "status"
+ * for KVM_DEBUG_EXIT.
+ */
+#define KVMPPC_DEBUG_NONE		0x0
+#define KVMPPC_DEBUG_BREAKPOINT		(1UL << 1)
+#define KVMPPC_DEBUG_WATCH_WRITE	(1UL << 2)
+#define KVMPPC_DEBUG_WATCH_READ		(1UL << 3)
 struct kvm_debug_exit_arch {
+	__u64 address;
+	/*
+	 * exiting to userspace because of h/w breakpoint, watchpoint
+	 * (read, write or both) and software breakpoint.
+	 */
+	__u32 status;
+	__u32 reserved;
 };
 
 /* for KVM_SET_GUEST_DEBUG */
@@ -281,10 +299,6 @@ struct kvm_guest_debug_arch {
 		 * Type denotes h/w breakpoint, read watchpoint, write
 		 * watchpoint or watchpoint (both read and write).
 		 */
-#define KVMPPC_DEBUG_NONE		0x0
-#define KVMPPC_DEBUG_BREAKPOINT		(1UL << 1)
-#define KVMPPC_DEBUG_WATCH_WRITE	(1UL << 2)
-#define KVMPPC_DEBUG_WATCH_READ		(1UL << 3)
 		__u32 type;
 		__u32 reserved;
 	} bp[16];
@@ -462,6 +476,11 @@ struct kvm_get_htab_header {
 
 /* FP and vector status/control registers */
 #define KVM_REG_PPC_FPSCR	(KVM_REG_PPC | KVM_REG_SIZE_U64 | 0x80)
+/*
+ * VSCR register is documented as a 32-bit register in the ISA, but it can
+ * only be accesses via a vector register. Expose VSCR as a 32-bit register
+ * even though the kernel represents it as a 128-bit vector.
+ */
 #define KVM_REG_PPC_VSCR	(KVM_REG_PPC | KVM_REG_SIZE_U32 | 0x81)
 
 /* Virtual processor areas */
@@ -531,7 +550,6 @@ struct kvm_get_htab_header {
 #define KVM_REG_PPC_TCSCR	(KVM_REG_PPC | KVM_REG_SIZE_U64 | 0xb1)
 #define KVM_REG_PPC_PID		(KVM_REG_PPC | KVM_REG_SIZE_U64 | 0xb2)
 #define KVM_REG_PPC_ACOP	(KVM_REG_PPC | KVM_REG_SIZE_U64 | 0xb3)
-#define KVM_REG_PPC_WORT	(KVM_REG_PPC | KVM_REG_SIZE_U64 | 0xb4)
 
 #define KVM_REG_PPC_VRSAVE	(KVM_REG_PPC | KVM_REG_SIZE_U32 | 0xb4)
 #define KVM_REG_PPC_LPCR	(KVM_REG_PPC | KVM_REG_SIZE_U32 | 0xb5)
@@ -542,6 +560,9 @@ struct kvm_get_htab_header {
 #define KVM_REG_PPC_ARCH_COMPAT	(KVM_REG_PPC | KVM_REG_SIZE_U32 | 0xb7)
 
 #define KVM_REG_PPC_DABRX	(KVM_REG_PPC | KVM_REG_SIZE_U32 | 0xb8)
+#define KVM_REG_PPC_WORT	(KVM_REG_PPC | KVM_REG_SIZE_U64 | 0xb9)
+#define KVM_REG_PPC_SPRG9	(KVM_REG_PPC | KVM_REG_SIZE_U64 | 0xba)
+#define KVM_REG_PPC_DBSR	(KVM_REG_PPC | KVM_REG_SIZE_U32 | 0xbb)
 
 /* Transactional Memory checkpointed state:
  * This is all GPRs, all VSX regs and a subset of SPRs

@@ -107,8 +107,8 @@
  *
  * Most notably the subcores do not have the correct value for SDR1, which
  * means they must not be running in virtual mode when the split occurs. The
- * subcores also do not have their timebase synchronised, which can lead to
- * time running backwards if it is not corrected.
+ * subcores have separate timebases SPRs but these are pre-synchronised by
+ * opal.
  *
  * To begin with secondary threads are sent to an assembly routine. There they
  * switch to real mode, so they are immune to the uninitialised SDR1 value.
@@ -121,9 +121,8 @@
  * to request the split, and spins waiting to see that the split has happened.
  *
  * Concurrently the secondaries will notice the split. When they do they set up
- * their SPRs, notably SDR1, and then wait for thread 0 to notify them that the
- * timebase sync is completed. Once they see that notification they can return
- * to virtual mode and exit the procedure.
+ * their SPRs, notably SDR1, and then they can return to virtual mode and exit
+ * the procedure.
  */
 
 /* Initialised at boot by subcore_init() */
@@ -159,14 +158,6 @@ static void wait_for_sync_step(int step)
 
 	/* Order the wait loop vs any subsequent loads/stores. */
 	mb();
-}
-
-static void set_sync_step(int step)
-{
-	int i, cpu = smp_processor_id();
-
-	for (i = cpu + 1 ; i < cpu + threads_per_core; i++)
-		per_cpu(split_state, i).step = step;
 }
 
 static void update_hid_in_slw(u64 hid0)
@@ -240,12 +231,6 @@ static void split_core(int new_mode)
 	/* Wait for it to happen */
 	while (!(mfspr(SPRN_HID0) & split_parms[i].mask))
 		cpu_relax();
-
-	/* Hardware earlier than DD2.1 does not resync the timebase properly */
-	if (PVR_REV(mfspr(SPRN_PVR)) < 0x0201)
-		BUG_ON(opal_resync_timebase());
-
-	set_sync_step(SYNC_STEP_TB_DONE);
 }
 
 static void cpu_do_split(int new_mode)
@@ -299,7 +284,6 @@ static int cpu_update_split_mode(void *data)
 	if (this_cpu_ptr(&split_state)->master) {
 		/* Wait for all cpus to finish before we touch subcores_per_core */
 		for_each_present_cpu(cpu) {
-			/* Check if we reached maxcpus */
 			if (cpu >= setup_max_cpus)
 				break;
 
@@ -411,8 +395,8 @@ static int subcore_init(void)
 		return 0;
 
 	/*
-	 * Respect max_cpus kernel parameter.
-	 * Continue only if max_cpus are aligned to threads_per_core.
+	 * We need all threads in a core to be present to split/unsplit so
+         * continue only if max_cpus are aligned to threads_per_core.
 	 */
 	if (setup_max_cpus % threads_per_core)
 		return 0;
@@ -420,17 +404,6 @@ static int subcore_init(void)
 	BUG_ON(!alloc_cpumask_var(&cpu_offline_mask, GFP_KERNEL));
 
 	set_subcores_per_core(1);
-
-	/* 
-	 * The hardware manages the resync on newer revisions (DD2.1 and higher)
-	 * so we don't need opal_resync_timebase on those systems.
-	 */
-	if (opal_check_token(OPAL_RESYNC_TIMEBASE) != OPAL_TOKEN_PRESENT &&
-	    PVR_REV(mfspr(SPRN_PVR)) < 0x0201) {
-		pr_err("Disabling split core since opal doesn't support timebase sync.\n");
-		return 0; /* don't create sysfs file */
-
-	}
 
 	return device_create_file(cpu_subsys.dev_root,
 				  &dev_attr_subcores_per_core);

@@ -164,7 +164,7 @@ struct pci_dn {
 
 	int	pci_ext_config_space;	/* for pci devices */
 
-	int	force_32bit_msi:1;
+	bool	force_32bit_msi;
 
 #ifdef CONFIG_EEH
 	struct eeh_dev *edev;		/* eeh device */

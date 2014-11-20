@@ -213,7 +213,7 @@ static bool tegra20_spdif_wr_rd_reg(struct device *dev, unsigned int reg)
 		return true;
 	default:
 		return false;
-	};
+	}
 }
 
 static bool tegra20_spdif_volatile_reg(struct device *dev, unsigned int reg)
@@ -234,7 +234,7 @@ static bool tegra20_spdif_volatile_reg(struct device *dev, unsigned int reg)
 		return true;
 	default:
 		return false;
-	};
+	}
 }
 
 static bool tegra20_spdif_precious_reg(struct device *dev, unsigned int reg)
@@ -247,7 +247,7 @@ static bool tegra20_spdif_precious_reg(struct device *dev, unsigned int reg)
 		return true;
 	default:
 		return false;
-	};
+	}
 }
 
 static const struct regmap_config tegra20_spdif_regmap_config = {
@@ -259,7 +259,7 @@ static const struct regmap_config tegra20_spdif_regmap_config = {
 	.readable_reg = tegra20_spdif_wr_rd_reg,
 	.volatile_reg = tegra20_spdif_volatile_reg,
 	.precious_reg = tegra20_spdif_precious_reg,
-	.cache_type = REGCACHE_RBTREE,
+	.cache_type = REGCACHE_FLAT,
 };
 
 static int tegra20_spdif_platform_probe(struct platform_device *pdev)

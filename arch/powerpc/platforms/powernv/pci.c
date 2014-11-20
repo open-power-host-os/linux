@@ -47,29 +47,21 @@
 //#define cfg_dbg(fmt...)	printk(fmt)
 
 #ifdef CONFIG_PCI_MSI
-static int pnv_msi_check_device(struct pci_dev* pdev, int nvec, int type)
-{
-	struct pci_controller *hose = pci_bus_to_host(pdev->bus);
-	struct pnv_phb *phb = hose->private_data;
-	struct pci_dn *pdn = pci_get_pdn(pdev);
-
-	if (pdn && pdn->force_32bit_msi && !phb->msi32_support)
-		return -ENODEV;
-
-	return (phb && phb->msi_bmp.bitmap) ? 0 : -ENODEV;
-}
-
 static int pnv_setup_msi_irqs(struct pci_dev *pdev, int nvec, int type)
 {
 	struct pci_controller *hose = pci_bus_to_host(pdev->bus);
 	struct pnv_phb *phb = hose->private_data;
+	struct pci_dn *pdn = pci_get_pdn(pdev);
 	struct msi_desc *entry;
 	struct msi_msg msg;
 	int hwirq;
 	unsigned int virq;
 	int rc;
 
-	if (WARN_ON(!phb))
+	if (WARN_ON(!phb) || !phb->msi_bmp.bitmap)
+		return -ENODEV;
+
+	if (pdn && pdn->force_32bit_msi && !phb->msi32_support)
 		return -ENODEV;
 
 	list_for_each_entry(entry, &pdev->msi_list, list) {
@@ -225,72 +217,91 @@ static void pnv_pci_dump_phb3_diag_data(struct pci_controller *hose,
 
 	data = (struct OpalIoPhb3ErrorData*)common;
 	pr_info("PHB3 PHB#%d Diag-data (Version: %d)\n",
-		hose->global_number, common->version);
+		hose->global_number, be32_to_cpu(common->version));
 	if (data->brdgCtl)
 		pr_info("brdgCtl:     %08x\n",
-			data->brdgCtl);
+			be32_to_cpu(data->brdgCtl));
 	if (data->portStatusReg || data->rootCmplxStatus ||
 	    data->busAgentStatus)
 		pr_info("UtlSts:      %08x %08x %08x\n",
-			data->portStatusReg, data->rootCmplxStatus,
-			data->busAgentStatus);
+			be32_to_cpu(data->portStatusReg),
+			be32_to_cpu(data->rootCmplxStatus),
+			be32_to_cpu(data->busAgentStatus));
 	if (data->deviceStatus || data->slotStatus   ||
 	    data->linkStatus   || data->devCmdStatus ||
 	    data->devSecStatus)
 		pr_info("RootSts:     %08x %08x %08x %08x %08x\n",
-			data->deviceStatus, data->slotStatus,
-			data->linkStatus, data->devCmdStatus,
-			data->devSecStatus);
+			be32_to_cpu(data->deviceStatus),
+			be32_to_cpu(data->slotStatus),
+			be32_to_cpu(data->linkStatus),
+			be32_to_cpu(data->devCmdStatus),
+			be32_to_cpu(data->devSecStatus));
 	if (data->rootErrorStatus || data->uncorrErrorStatus ||
 	    data->corrErrorStatus)
 		pr_info("RootErrSts:  %08x %08x %08x\n",
-			data->rootErrorStatus, data->uncorrErrorStatus,
-			data->corrErrorStatus);
+			be32_to_cpu(data->rootErrorStatus),
+			be32_to_cpu(data->uncorrErrorStatus),
+			be32_to_cpu(data->corrErrorStatus));
 	if (data->tlpHdr1 || data->tlpHdr2 ||
 	    data->tlpHdr3 || data->tlpHdr4)
 		pr_info("RootErrLog:  %08x %08x %08x %08x\n",
-			data->tlpHdr1, data->tlpHdr2,
-			data->tlpHdr3, data->tlpHdr4);
+			be32_to_cpu(data->tlpHdr1),
+			be32_to_cpu(data->tlpHdr2),
+			be32_to_cpu(data->tlpHdr3),
+			be32_to_cpu(data->tlpHdr4));
 	if (data->sourceId || data->errorClass ||
 	    data->correlator)
 		pr_info("RootErrLog1: %08x %016llx %016llx\n",
-			data->sourceId, data->errorClass,
-			data->correlator);
+			be32_to_cpu(data->sourceId),
+			be64_to_cpu(data->errorClass),
+			be64_to_cpu(data->correlator));
 	if (data->nFir)
 		pr_info("nFir:        %016llx %016llx %016llx\n",
-			data->nFir, data->nFirMask,
-			data->nFirWOF);
+			be64_to_cpu(data->nFir),
+			be64_to_cpu(data->nFirMask),
+			be64_to_cpu(data->nFirWOF));
 	if (data->phbPlssr || data->phbCsr)
 		pr_info("PhbSts:      %016llx %016llx\n",
-			data->phbPlssr, data->phbCsr);
+			be64_to_cpu(data->phbPlssr),
+			be64_to_cpu(data->phbCsr));
 	if (data->lemFir)
 		pr_info("Lem:         %016llx %016llx %016llx\n",
-			data->lemFir, data->lemErrorMask,
-			data->lemWOF);
+			be64_to_cpu(data->lemFir),
+			be64_to_cpu(data->lemErrorMask),
+			be64_to_cpu(data->lemWOF));
 	if (data->phbErrorStatus)
 		pr_info("PhbErr:      %016llx %016llx %016llx %016llx\n",
-			data->phbErrorStatus, data->phbFirstErrorStatus,
-			data->phbErrorLog0, data->phbErrorLog1);
+			be64_to_cpu(data->phbErrorStatus),
+			be64_to_cpu(data->phbFirstErrorStatus),
+			be64_to_cpu(data->phbErrorLog0),
+			be64_to_cpu(data->phbErrorLog1));
 	if (data->mmioErrorStatus)
 		pr_info("OutErr:      %016llx %016llx %016llx %016llx\n",
-			data->mmioErrorStatus, data->mmioFirstErrorStatus,
-			data->mmioErrorLog0, data->mmioErrorLog1);
+			be64_to_cpu(data->mmioErrorStatus),
+			be64_to_cpu(data->mmioFirstErrorStatus),
+			be64_to_cpu(data->mmioErrorLog0),
+			be64_to_cpu(data->mmioErrorLog1));
 	if (data->dma0ErrorStatus)
 		pr_info("InAErr:      %016llx %016llx %016llx %016llx\n",
-			data->dma0ErrorStatus, data->dma0FirstErrorStatus,
-			data->dma0ErrorLog0, data->dma0ErrorLog1);
+			be64_to_cpu(data->dma0ErrorStatus),
+			be64_to_cpu(data->dma0FirstErrorStatus),
+			be64_to_cpu(data->dma0ErrorLog0),
+			be64_to_cpu(data->dma0ErrorLog1));
 	if (data->dma1ErrorStatus)
 		pr_info("InBErr:      %016llx %016llx %016llx %016llx\n",
-			data->dma1ErrorStatus, data->dma1FirstErrorStatus,
-			data->dma1ErrorLog0, data->dma1ErrorLog1);
+			be64_to_cpu(data->dma1ErrorStatus),
+			be64_to_cpu(data->dma1FirstErrorStatus),
+			be64_to_cpu(data->dma1ErrorLog0),
+			be64_to_cpu(data->dma1ErrorLog1));
 
 	for (i = 0; i < OPAL_PHB3_NUM_PEST_REGS; i++) {
-		if ((data->pestA[i] >> 63) == 0 &&
-		    (data->pestB[i] >> 63) == 0)
+		if ((be64_to_cpu(data->pestA[i]) >> 63) == 0 &&
+		    (be64_to_cpu(data->pestB[i]) >> 63) == 0)
 			continue;
 
 		pr_info("PE[%3d] A/B: %016llx %016llx\n",
-			i, data->pestA[i], data->pestB[i]);
+				i, be64_to_cpu(data->pestA[i]),
+				be64_to_cpu(data->pestB[i]));
 	}
 }
 
@@ -303,7 +314,7 @@ void pnv_pci_dump_phb_diag_data(struct pci_controller *hose,
 		return;
 
 	common = (struct OpalIoPhbErrorCommon *)log_buff;
-	switch (common->ioType) {
+	switch (be32_to_cpu(common->ioType)) {
 	case OPAL_PHB_ERROR_DATA_TYPE_P7IOC:
 		pnv_pci_dump_p7ioc_diag_data(hose, common);
 		break;
@@ -312,7 +323,7 @@ void pnv_pci_dump_phb_diag_data(struct pci_controller *hose,
 		break;
 	default:
 		pr_warn("%s: Unrecognized ioType %d\n",
-			__func__, common->ioType);
+			__func__, be32_to_cpu(common->ioType));
 	}
 }
 
@@ -547,7 +558,7 @@ static int pnv_pci_write_config(struct pci_bus *bus,
 	pdn = pci_get_pdn_by_devfn(bus, devfn);
 	if (!pdn)
 		return PCIBIOS_DEVICE_NOT_FOUND;
-
+ 
 	if (!pnv_pci_cfg_check(pdn))
 		return PCIBIOS_DEVICE_NOT_FOUND;
 
@@ -598,7 +609,7 @@ static int pnv_tce_build(struct iommu_table *tbl, long index, long npages,
 	if (direction != DMA_TO_DEVICE)
 		proto_tce |= TCE_PCI_WRITE;
 
-	tces = tcep = ((u64 *)tbl->it_base) + index - tbl->it_offset;
+	tces = tcep = ((__be64 *)tbl->it_base) + index - tbl->it_offset;
 	rpn = __pa(uaddr) >> tbl->it_page_shift;
 
 	while (npages--)
@@ -611,10 +622,12 @@ static int pnv_tce_build(struct iommu_table *tbl, long index, long npages,
 }
 
 static int pnv_tce_build_vm(struct iommu_table *tbl, long index, long npages,
-			    unsigned long uaddr, enum dma_data_direction direction,
+			    unsigned long uaddr,
+			    enum dma_data_direction direction,
 			    struct dma_attrs *attrs)
 {
-	return pnv_tce_build(tbl, index, npages, uaddr, direction, attrs, false);
+	return pnv_tce_build(tbl, index, npages, uaddr, direction, attrs,
+			false);
 }
 
 static int pnv_tce_xchg(struct iommu_table *tbl, long index, long npages,
@@ -655,11 +668,12 @@ static int pnv_tce_xchg_vm(struct iommu_table *tbl, long index,
 			attrs, false);
 }
 
-static void pnv_tce_free(struct iommu_table *tbl, long index, long npages, bool rm)
+static void pnv_tce_free(struct iommu_table *tbl, long index, long npages,
+		bool rm)
 {
 	__be64 *tcep, *tces;
 
-	tces = tcep = ((u64 *)tbl->it_base) + index - tbl->it_offset;
+	tces = tcep = ((__be64 *)tbl->it_base) + index - tbl->it_offset;
 
 	while (npages--)
 		*(tcep++) = cpu_to_be64(0);
@@ -678,7 +692,8 @@ static unsigned long pnv_tce_get(struct iommu_table *tbl, long index)
 }
 
 static int pnv_tce_build_rm(struct iommu_table *tbl, long index, long npages,
-			    unsigned long uaddr, enum dma_data_direction direction,
+			    unsigned long uaddr,
+			    enum dma_data_direction direction,
 			    struct dma_attrs *attrs)
 {
 	return pnv_tce_build(tbl, index, npages, uaddr, direction, attrs, true);
@@ -748,7 +763,7 @@ static struct iommu_table *pnv_pci_setup_bml_iommu(struct pci_controller *hose)
 	swinvp = of_get_property(hose->dn, "linux,tce-sw-invalidate-info",
 				 NULL);
 	if (swinvp) {
-		tbl->it_busno = swinvp[1];
+		tbl->it_busno = be64_to_cpu(swinvp[1]);
 		tbl->it_index = (unsigned long)ioremap(be64_to_cpup(swinvp), 8);
 		tbl->it_type = TCE_PCI_SWINV_CREATE | TCE_PCI_SWINV_FREE;
 	}
@@ -918,7 +933,6 @@ void __init pnv_pci_init(void)
 
 	/* Configure MSIs */
 #ifdef CONFIG_PCI_MSI
-	ppc_md.msi_check_device = pnv_msi_check_device;
 	ppc_md.setup_msi_irqs = pnv_setup_msi_irqs;
 	ppc_md.teardown_msi_irqs = pnv_teardown_msi_irqs;
 #endif
@@ -951,7 +965,7 @@ static int __init tce_iommu_bus_notifier_init(void)
 	return 0;
 }
 
-subsys_initcall_sync(tce_iommu_bus_notifier_init);
+machine_subsys_initcall_sync(powernv, tce_iommu_bus_notifier_init);
 
 #ifdef CONFIG_PCI_IOV
 static void pnv_sriov_final_fixup(struct pci_dev *dev)

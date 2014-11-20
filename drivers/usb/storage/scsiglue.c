@@ -241,7 +241,7 @@ static int slave_configure(struct scsi_device *sdev)
 
 		/* Some USB cardreaders have trouble reading an sdcard's last
 		 * sector in a larger then 1 sector read, since the performance
-		 * impact is negible we set this flag for all USB disks */
+		 * impact is negligible we set this flag for all USB disks */
 		sdev->last_sector_bug = 1;
 
 		/* Enable last-sector hacks for single-target devices using
@@ -255,6 +255,10 @@ static int slave_configure(struct scsi_device *sdev)
 		/* Check if write cache default on flag is set or not */
 		if (us->fflags & US_FL_WRITE_CACHE)
 			sdev->wce_default_on = 1;
+
+		/* A few buggy USB-ATA bridges don't understand FUA */
+		if (us->fflags & US_FL_BROKEN_FUA)
+			sdev->broken_fua = 1;
 
 	} else {
 
@@ -505,7 +509,7 @@ US_DO_ALL_FLAGS
  ***********************************************************************/
 
 /* Output routine for the sysfs max_sectors file */
-static ssize_t show_max_sectors(struct device *dev, struct device_attribute *attr, char *buf)
+static ssize_t max_sectors_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
 	struct scsi_device *sdev = to_scsi_device(dev);
 
@@ -513,7 +517,7 @@ static ssize_t show_max_sectors(struct device *dev, struct device_attribute *att
 }
 
 /* Input routine for the sysfs max_sectors file */
-static ssize_t store_max_sectors(struct device *dev, struct device_attribute *attr, const char *buf,
+static ssize_t max_sectors_store(struct device *dev, struct device_attribute *attr, const char *buf,
 		size_t count)
 {
 	struct scsi_device *sdev = to_scsi_device(dev);
@@ -523,16 +527,14 @@ static ssize_t store_max_sectors(struct device *dev, struct device_attribute *at
 		blk_queue_max_hw_sectors(sdev->request_queue, ms);
 		return count;
 	}
-	return -EINVAL;	
+	return -EINVAL;
 }
-
-static DEVICE_ATTR(max_sectors, S_IRUGO | S_IWUSR, show_max_sectors,
-		store_max_sectors);
+static DEVICE_ATTR_RW(max_sectors);
 
 static struct device_attribute *sysfs_device_attr_list[] = {
-		&dev_attr_max_sectors,
-		NULL,
-		};
+	&dev_attr_max_sectors,
+	NULL,
+};
 
 /*
  * this defines our host template, with which we'll allocate hosts

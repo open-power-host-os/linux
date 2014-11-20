@@ -1702,6 +1702,46 @@ static int parport_ECP_supported(struct parport *pb)
 }
 #endif
 
+#ifdef CONFIG_X86_32
+static int intel_bug_present_check_epp(struct parport *pb)
+{
+	const struct parport_pc_private *priv = pb->private_data;
+	int bug_present = 0;
+
+	if (priv->ecr) {
+		/* store value of ECR */
+		unsigned char ecr = inb(ECONTROL(pb));
+		unsigned char i;
+		for (i = 0x00; i < 0x80; i += 0x20) {
+			ECR_WRITE(pb, i);
+			if (clear_epp_timeout(pb)) {
+				/* Phony EPP in ECP. */
+				bug_present = 1;
+				break;
+			}
+		}
+		/* return ECR into the inital state */
+		ECR_WRITE(pb, ecr);
+	}
+
+	return bug_present;
+}
+static int intel_bug_present(struct parport *pb)
+{
+/* Check whether the device is legacy, not PCI or PCMCIA. Only legacy is known to be affected. */
+	if (pb->dev != NULL) {
+		return 0;
+	}
+
+	return intel_bug_present_check_epp(pb);
+}
+#else
+static int intel_bug_present(struct parport *pb)
+{
+	return 0;
+}
+#endif /* CONFIG_X86_32 */
+
 static int parport_ECPPS2_supported(struct parport *pb)
 {
 	const struct parport_pc_private *priv = pb->private_data;
@@ -1722,8 +1762,6 @@ static int parport_ECPPS2_supported(struct parport *pb)
 
 static int parport_EPP_supported(struct parport *pb)
 {
-	const struct parport_pc_private *priv = pb->private_data;
-
 	/*
 	 * Theory:
 	 *	Bit 0 of STR is the EPP timeout bit, this bit is 0
@@ -1742,16 +1780,8 @@ static int parport_EPP_supported(struct parport *pb)
 		return 0;  /* No way to clear timeout */
 
 	/* Check for Intel bug. */
-	if (priv->ecr) {
-		unsigned char i;
-		for (i = 0x00; i < 0x80; i += 0x20) {
-			ECR_WRITE(pb, i);
-			if (clear_epp_timeout(pb)) {
-				/* Phony EPP in ECP. */
-				return 0;
-			}
-		}
-	}
+	if (intel_bug_present(pb))
+		return 0;
 
 	pb->modes |= PARPORT_MODE_EPP;
 
@@ -2004,6 +2034,7 @@ struct parport *parport_pc_probe_port(unsigned long int base,
 	struct resource	*ECR_res = NULL;
 	struct resource	*EPP_res = NULL;
 	struct platform_device *pdev = NULL;
+	int ret;
 
 	if (!dev) {
 		/* We need a physical device to attach to, but none was
@@ -2014,8 +2045,11 @@ struct parport *parport_pc_probe_port(unsigned long int base,
 			return NULL;
 		dev = &pdev->dev;
 
-		dev->coherent_dma_mask = DMA_BIT_MASK(24);
-		dev->dma_mask = &dev->coherent_dma_mask;
+		ret = dma_coerce_mask_and_coherent(dev, DMA_BIT_MASK(24));
+		if (ret) {
+			dev_err(dev, "Unable to set coherent dma mask: disabling DMA\n");
+			dma = PARPORT_DMA_NONE;
+		}
 	}
 
 	ops = kmalloc(sizeof(struct parport_operations), GFP_KERNEL);
@@ -2817,16 +2851,12 @@ static int parport_pc_pci_probe(struct pci_dev *dev,
 		if (irq == IRQ_NONE) {
 			printk(KERN_DEBUG
 	"PCI parallel port detected: %04x:%04x, I/O at %#lx(%#lx)\n",
-				parport_pc_pci_tbl[i + last_sio].vendor,
-				parport_pc_pci_tbl[i + last_sio].device,
-				io_lo, io_hi);
+				id->vendor, id->device, io_lo, io_hi);
 			irq = PARPORT_IRQ_NONE;
 		} else {
 			printk(KERN_DEBUG
 	"PCI parallel port detected: %04x:%04x, I/O at %#lx(%#lx), IRQ %d\n",
-				parport_pc_pci_tbl[i + last_sio].vendor,
-				parport_pc_pci_tbl[i + last_sio].device,
-				io_lo, io_hi, irq);
+				id->vendor, id->device, io_lo, io_hi, irq);
 		}
 		data->ports[count] =
 			parport_pc_probe_port(io_lo, io_hi, irq,
@@ -2855,8 +2885,6 @@ static void parport_pc_pci_remove(struct pci_dev *dev)
 {
 	struct pci_parport_data *data = pci_get_drvdata(dev);
 	int i;
-
-	pci_set_drvdata(dev, NULL);
 
 	if (data) {
 		for (i = data->num - 1; i >= 0; i--)

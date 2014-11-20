@@ -13,6 +13,7 @@
 
 #include <linux/usb.h>
 #include <linux/usb/quirks.h>
+#include <linux/usb/hcd.h>
 #include "usb.h"
 
 /* Lists of quirky USB devices, split in device quirks and interface quirks.
@@ -92,6 +93,16 @@ static const struct usb_device_id usb_quirk_list[] = {
 	{ USB_DEVICE(0x04e8, 0x6601), .driver_info =
 			USB_QUIRK_CONFIG_INTF_STRINGS },
 
+	/* Elan Touchscreen */
+	{ USB_DEVICE(0x04f3, 0x0089), .driver_info =
+			USB_QUIRK_DEVICE_QUALIFIER },
+
+	{ USB_DEVICE(0x04f3, 0x009b), .driver_info =
+			USB_QUIRK_DEVICE_QUALIFIER },
+
+	{ USB_DEVICE(0x04f3, 0x016f), .driver_info =
+			USB_QUIRK_DEVICE_QUALIFIER },
+
 	/* Roland SC-8820 */
 	{ USB_DEVICE(0x0582, 0x0007), .driver_info = USB_QUIRK_RESET_RESUME },
 
@@ -100,9 +111,6 @@ static const struct usb_device_id usb_quirk_list[] = {
 
 	/* Alcor Micro Corp. Hub */
 	{ USB_DEVICE(0x058f, 0x9254), .driver_info = USB_QUIRK_RESET_RESUME },
-
-	/* MicroTouch Systems touchscreen */
-	{ USB_DEVICE(0x0596, 0x051e), .driver_info = USB_QUIRK_RESET_RESUME },
 
 	/* appletouch */
 	{ USB_DEVICE(0x05ac, 0x021a), .driver_info = USB_QUIRK_RESET_RESUME },
@@ -147,12 +155,23 @@ static const struct usb_device_id usb_quirk_list[] = {
 	/* SKYMEDI USB_DRIVE */
 	{ USB_DEVICE(0x1516, 0x8628), .driver_info = USB_QUIRK_RESET_RESUME },
 
+	/* Razer - Razer Blade Keyboard */
+	{ USB_DEVICE(0x1532, 0x0116), .driver_info =
+			USB_QUIRK_LINEAR_UFRAME_INTR_BINTERVAL },
+
 	/* BUILDWIN Photo Frame */
 	{ USB_DEVICE(0x1908, 0x1315), .driver_info =
 			USB_QUIRK_HONOR_BNUMINTERFACES },
 
 	/* INTEL VALUE SSD */
 	{ USB_DEVICE(0x8086, 0xf1a5), .driver_info = USB_QUIRK_RESET_RESUME },
+
+	/* USB3503 */
+	{ USB_DEVICE(0x0424, 0x3503), .driver_info = USB_QUIRK_RESET_RESUME },
+
+	/* ASUS Base Station(T100) */
+	{ USB_DEVICE(0x0b05, 0x17e0), .driver_info =
+			USB_QUIRK_IGNORE_REMOTE_WAKEUP },
 
 	{ }  /* terminating entry must be last */
 };
@@ -161,6 +180,21 @@ static const struct usb_device_id usb_interface_quirk_list[] = {
 	/* Logitech UVC Cameras */
 	{ USB_VENDOR_AND_INTERFACE_INFO(0x046d, USB_CLASS_VIDEO, 1, 0),
 	  .driver_info = USB_QUIRK_RESET_RESUME },
+
+	{ }  /* terminating entry must be last */
+};
+
+static const struct usb_device_id usb_amd_resume_quirk_list[] = {
+	/* Lenovo Mouse with Pixart controller */
+	{ USB_DEVICE(0x17ef, 0x602e), .driver_info = USB_QUIRK_RESET_RESUME },
+
+	/* Pixart Mouse */
+	{ USB_DEVICE(0x093a, 0x2500), .driver_info = USB_QUIRK_RESET_RESUME },
+	{ USB_DEVICE(0x093a, 0x2510), .driver_info = USB_QUIRK_RESET_RESUME },
+	{ USB_DEVICE(0x093a, 0x2521), .driver_info = USB_QUIRK_RESET_RESUME },
+
+	/* Logitech Optical Mouse M90/M100 */
+	{ USB_DEVICE(0x046d, 0xc05a), .driver_info = USB_QUIRK_RESET_RESUME },
 
 	{ }  /* terminating entry must be last */
 };
@@ -191,6 +225,18 @@ static bool usb_match_any_interface(struct usb_device *udev,
 	return false;
 }
 
+static int usb_amd_resume_quirk(struct usb_device *udev)
+{
+	struct usb_hcd *hcd;
+
+	hcd = bus_to_hcd(udev->bus);
+	/* The device should be attached directly to root hub */
+	if (udev->level == 1 && hcd->amd_resume_bug == 1)
+		return 1;
+
+	return 0;
+}
+
 static u32 __usb_detect_quirks(struct usb_device *udev,
 			       const struct usb_device_id *id)
 {
@@ -216,6 +262,15 @@ static u32 __usb_detect_quirks(struct usb_device *udev,
 void usb_detect_quirks(struct usb_device *udev)
 {
 	udev->quirks = __usb_detect_quirks(udev, usb_quirk_list);
+
+	/*
+	 * Pixart-based mice would trigger remote wakeup issue on AMD
+	 * Yangtze chipset, so set them as RESET_RESUME flag.
+	 */
+	if (usb_amd_resume_quirk(udev))
+		udev->quirks |= __usb_detect_quirks(udev,
+				usb_amd_resume_quirk_list);
+
 	if (udev->quirks)
 		dev_dbg(&udev->dev, "USB quirks for this device: %x\n",
 			udev->quirks);

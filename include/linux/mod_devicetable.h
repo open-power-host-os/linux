@@ -361,7 +361,8 @@ struct ssb_device_id {
 	__u16	vendor;
 	__u16	coreid;
 	__u8	revision;
-};
+	__u8	__pad;
+} __attribute__((packed, aligned(2)));
 #define SSB_DEVICE(_vendor, _coreid, _revision)  \
 	{ .vendor = _vendor, .coreid = _coreid, .revision = _revision, }
 #define SSB_DEVTABLE_END  \
@@ -377,7 +378,7 @@ struct bcma_device_id {
 	__u16	id;
 	__u8	rev;
 	__u8	class;
-};
+} __attribute__((packed,aligned(2)));
 #define BCMA_CORE(_manuf, _id, _rev, _class)  \
 	{ .manuf = _manuf, .id = _id, .rev = _rev, .class = _class, }
 #define BCMA_CORETABLE_END  \
@@ -428,6 +429,14 @@ struct i2c_device_id {
 
 struct spi_device_id {
 	char name[SPI_NAME_SIZE];
+	kernel_ulong_t driver_data;	/* Data private to the driver */
+};
+
+#define SPMI_NAME_SIZE	32
+#define SPMI_MODULE_PREFIX "spmi:"
+
+struct spmi_device_id {
+	char name[SPMI_NAME_SIZE];
 	kernel_ulong_t driver_data;	/* Data private to the driver */
 };
 
@@ -547,6 +556,11 @@ struct amba_id {
  * See documentation of "x86_match_cpu" for details.
  */
 
+/*
+ * MODULE_DEVICE_TABLE expects this struct to be called x86cpu_device_id.
+ * Although gcc seems to ignore this error, clang fails without this define.
+ */
+#define x86cpu_device_id x86_cpu_id
 struct x86_cpu_id {
 	__u16 vendor;
 	__u16 family;
@@ -563,6 +577,15 @@ struct x86_cpu_id {
 #define X86_MODEL_ANY  0
 #define X86_FEATURE_ANY 0	/* Same as FPU, you can't test for that */
 
+/*
+ * Generic table type for matching CPU features.
+ * @feature:	the bit number of the feature (0 - 65535)
+ */
+
+struct cpu_feature {
+	__u16	feature;
+};
+
 #define IPACK_ANY_FORMAT 0xff
 #define IPACK_ANY_ID (~0)
 struct ipack_device_id {
@@ -577,6 +600,30 @@ struct ipack_device_id {
 struct mei_cl_device_id {
 	char name[MEI_CL_NAME_SIZE];
 	kernel_ulong_t driver_info;
+};
+
+/* RapidIO */
+
+#define RIO_ANY_ID	0xffff
+
+/**
+ * struct rio_device_id - RIO device identifier
+ * @did: RapidIO device ID
+ * @vid: RapidIO vendor ID
+ * @asm_did: RapidIO assembly device ID
+ * @asm_vid: RapidIO assembly vendor ID
+ *
+ * Identifies a RapidIO device based on both the device/vendor IDs and
+ * the assembly device/vendor IDs.
+ */
+struct rio_device_id {
+	__u16 did, vid;
+	__u16 asm_did, asm_vid;
+};
+
+struct mcb_device_id {
+	__u16 device;
+	kernel_ulong_t driver_data;
 };
 
 #endif /* LINUX_MOD_DEVICETABLE_H */

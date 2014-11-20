@@ -327,6 +327,7 @@ static int dev_ifsioc(struct net *net, struct ifreq *ifr, unsigned int cmd)
 		    cmd == SIOCBRADDIF ||
 		    cmd == SIOCBRDELIF ||
 		    cmd == SIOCSHWTSTAMP ||
+		    cmd == SIOCGHWTSTAMP ||
 		    cmd == SIOCWANDEV) {
 			err = -EOPNOTSUPP;
 			if (ops->ndo_do_ioctl) {
@@ -364,11 +365,8 @@ void dev_load(struct net *net, const char *name)
 	no_module = !dev;
 	if (no_module && capable(CAP_NET_ADMIN))
 		no_module = request_module("netdev-%s", name);
-	if (no_module && capable(CAP_SYS_MODULE)) {
-		if (!request_module("%s", name))
-			pr_warn("Loading kernel module for a network device with CAP_SYS_MODULE (deprecated).  Use CAP_NET_ADMIN and alias netdev-%s instead.\n",
-				name);
-	}
+	if (no_module && capable(CAP_SYS_MODULE))
+		request_module("%s", name);
 }
 EXPORT_SYMBOL(dev_load);
 
@@ -546,6 +544,7 @@ int dev_ioctl(struct net *net, unsigned int cmd, void __user *arg)
 	 */
 	default:
 		if (cmd == SIOCWANDEV ||
+		    cmd == SIOCGHWTSTAMP ||
 		    (cmd >= SIOCDEVPRIVATE &&
 		     cmd <= SIOCDEVPRIVATE + 15)) {
 			dev_load(net, ifr.ifr_name);

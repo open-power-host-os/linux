@@ -56,9 +56,8 @@ enum {
 	WORK_NR_COLORS		= (1 << WORK_STRUCT_COLOR_BITS) - 1,
 	WORK_NO_COLOR		= WORK_NR_COLORS,
 
-	/* special cpu IDs */
+	/* not bound to any CPU, prefer the local CPU */
 	WORK_CPU_UNBOUND	= NR_CPUS,
-	WORK_CPU_END		= NR_CPUS + 1,
 
 	/*
 	 * Reserve 7 bits off of pwq pointer w/ debugobjects turned off.
@@ -177,20 +176,10 @@ struct execute_work {
 #define DECLARE_DEFERRABLE_WORK(n, f)					\
 	struct delayed_work n = __DELAYED_WORK_INITIALIZER(n, f, TIMER_DEFERRABLE)
 
-/*
- * initialize a work item's function pointer
- */
-#define PREPARE_WORK(_work, _func)					\
-	do {								\
-		(_work)->func = (_func);				\
-	} while (0)
-
-#define PREPARE_DELAYED_WORK(_work, _func)				\
-	PREPARE_WORK(&(_work)->work, (_func))
-
 #ifdef CONFIG_DEBUG_OBJECTS_WORK
 extern void __init_work(struct work_struct *work, int onstack);
 extern void destroy_work_on_stack(struct work_struct *work);
+extern void destroy_delayed_work_on_stack(struct delayed_work *work);
 static inline unsigned int work_static(struct work_struct *work)
 {
 	return *work_data_bits(work) & WORK_STRUCT_STATIC;
@@ -198,6 +187,7 @@ static inline unsigned int work_static(struct work_struct *work)
 #else
 static inline void __init_work(struct work_struct *work, int onstack) { }
 static inline void destroy_work_on_stack(struct work_struct *work) { }
+static inline void destroy_delayed_work_on_stack(struct delayed_work *work) { }
 static inline unsigned int work_static(struct work_struct *work) { return 0; }
 #endif
 
@@ -217,7 +207,7 @@ static inline unsigned int work_static(struct work_struct *work) { return 0; }
 		(_work)->data = (atomic_long_t) WORK_DATA_INIT();	\
 		lockdep_init_map(&(_work)->lockdep_map, #_work, &__key, 0); \
 		INIT_LIST_HEAD(&(_work)->entry);			\
-		PREPARE_WORK((_work), (_func));				\
+		(_work)->func = (_func);				\
 	} while (0)
 #else
 #define __INIT_WORK(_work, _func, _onstack)				\
@@ -225,7 +215,7 @@ static inline unsigned int work_static(struct work_struct *work) { return 0; }
 		__init_work((_work), _onstack);				\
 		(_work)->data = (atomic_long_t) WORK_DATA_INIT();	\
 		INIT_LIST_HEAD(&(_work)->entry);			\
-		PREPARE_WORK((_work), (_func));				\
+		(_work)->func = (_func);				\
 	} while (0)
 #endif
 
@@ -283,25 +273,44 @@ static inline unsigned int work_static(struct work_struct *work) { return 0; }
 #define delayed_work_pending(w) \
 	work_pending(&(w)->work)
 
-/**
- * work_clear_pending - for internal use only, mark a work item as not pending
- * @work: The work item in question
- */
-#define work_clear_pending(work) \
-	clear_bit(WORK_STRUCT_PENDING_BIT, work_data_bits(work))
-
 /*
  * Workqueue flags and constants.  For details, please refer to
  * Documentation/workqueue.txt.
  */
 enum {
-	WQ_NON_REENTRANT	= 1 << 0, /* guarantee non-reentrance */
 	WQ_UNBOUND		= 1 << 1, /* not bound to any cpu */
 	WQ_FREEZABLE		= 1 << 2, /* freeze during suspend */
 	WQ_MEM_RECLAIM		= 1 << 3, /* may be used for memory reclaim */
 	WQ_HIGHPRI		= 1 << 4, /* high priority */
-	WQ_CPU_INTENSIVE	= 1 << 5, /* cpu instensive workqueue */
+	WQ_CPU_INTENSIVE	= 1 << 5, /* cpu intensive workqueue */
 	WQ_SYSFS		= 1 << 6, /* visible in sysfs, see wq_sysfs_register() */
+
+	/*
+	 * Per-cpu workqueues are generally preferred because they tend to
+	 * show better performance thanks to cache locality.  Per-cpu
+	 * workqueues exclude the scheduler from choosing the CPU to
+	 * execute the worker threads, which has an unfortunate side effect
+	 * of increasing power consumption.
+	 *
+	 * The scheduler considers a CPU idle if it doesn't have any task
+	 * to execute and tries to keep idle cores idle to conserve power;
+	 * however, for example, a per-cpu work item scheduled from an
+	 * interrupt handler on an idle CPU will force the scheduler to
+	 * excute the work item on that CPU breaking the idleness, which in
+	 * turn may lead to more scheduling choices which are sub-optimal
+	 * in terms of power consumption.
+	 *
+	 * Workqueues marked with WQ_POWER_EFFICIENT are per-cpu by default
+	 * but become unbound if workqueue.power_efficient kernel param is
+	 * specified.  Per-cpu workqueues which are identified to
+	 * contribute significantly to power-consumption are identified and
+	 * marked with this flag and enabling the power_efficient mode
+	 * leads to noticeable power saving at the cost of small
+	 * performance disadvantage.
+	 *
+	 * http://thread.gmane.org/gmane.linux.kernel/1480396
+	 */
+	WQ_POWER_EFFICIENT	= 1 << 7,
 
 	__WQ_DRAINING		= 1 << 16, /* internal: workqueue is draining */
 	__WQ_ORDERED		= 1 << 17, /* internal: workqueue is ordered */
@@ -323,6 +332,9 @@ enum {
  * short queue flush time.  Don't queue works which can run for too
  * long.
  *
+ * system_highpri_wq is similar to system_wq but for work items which
+ * require WQ_HIGHPRI.
+ *
  * system_long_wq is similar to system_wq but may host long running
  * works.  Queue flushing might take relatively long.
  *
@@ -333,25 +345,20 @@ enum {
  *
  * system_freezable_wq is equivalent to system_wq except that it's
  * freezable.
+ *
+ * *_power_efficient_wq are inclined towards saving power and converted
+ * into WQ_UNBOUND variants if 'wq_power_efficient' is enabled; otherwise,
+ * they are same as their non-power-efficient counterparts - e.g.
+ * system_power_efficient_wq is identical to system_wq if
+ * 'wq_power_efficient' is disabled.  See WQ_POWER_EFFICIENT for more info.
  */
 extern struct workqueue_struct *system_wq;
+extern struct workqueue_struct *system_highpri_wq;
 extern struct workqueue_struct *system_long_wq;
 extern struct workqueue_struct *system_unbound_wq;
 extern struct workqueue_struct *system_freezable_wq;
-
-static inline struct workqueue_struct * __deprecated __system_nrt_wq(void)
-{
-	return system_wq;
-}
-
-static inline struct workqueue_struct * __deprecated __system_nrt_freezable_wq(void)
-{
-	return system_freezable_wq;
-}
-
-/* equivlalent to system_wq and system_freezable_wq, deprecated */
-#define system_nrt_wq			__system_nrt_wq()
-#define system_nrt_freezable_wq		__system_nrt_freezable_wq()
+extern struct workqueue_struct *system_power_efficient_wq;
+extern struct workqueue_struct *system_freezable_power_efficient_wq;
 
 extern struct workqueue_struct *
 __alloc_workqueue_key(const char *fmt, unsigned int flags, int max_active,
@@ -379,10 +386,7 @@ __alloc_workqueue_key(const char *fmt, unsigned int flags, int max_active,
 	static struct lock_class_key __key;				\
 	const char *__lock_name;					\
 									\
-	if (__builtin_constant_p(fmt))					\
-		__lock_name = (fmt);					\
-	else								\
-		__lock_name = #fmt;					\
+	__lock_name = #fmt#args;					\
 									\
 	__alloc_workqueue_key((fmt), (flags), (max_active),		\
 			      &__key, __lock_name, ##args);		\
@@ -410,11 +414,12 @@ __alloc_workqueue_key(const char *fmt, unsigned int flags, int max_active,
 	alloc_workqueue(fmt, WQ_UNBOUND | __WQ_ORDERED | (flags), 1, ##args)
 
 #define create_workqueue(name)						\
-	alloc_workqueue((name), WQ_MEM_RECLAIM, 1)
+	alloc_workqueue("%s", WQ_MEM_RECLAIM, 1, (name))
 #define create_freezable_workqueue(name)				\
-	alloc_workqueue((name), WQ_FREEZABLE | WQ_UNBOUND | WQ_MEM_RECLAIM, 1)
+	alloc_workqueue("%s", WQ_FREEZABLE | WQ_UNBOUND | WQ_MEM_RECLAIM, \
+			1, (name))
 #define create_singlethread_workqueue(name)				\
-	alloc_workqueue((name), WQ_UNBOUND | WQ_MEM_RECLAIM, 1)
+	alloc_ordered_workqueue("%s", WQ_MEM_RECLAIM, name)
 
 extern void destroy_workqueue(struct workqueue_struct *wq);
 
@@ -562,33 +567,6 @@ static inline bool schedule_delayed_work(struct delayed_work *dwork,
 static inline bool keventd_up(void)
 {
 	return system_wq != NULL;
-}
-
-/*
- * Like above, but uses del_timer() instead of del_timer_sync(). This means,
- * if it returns 0 the timer function may be running and the queueing is in
- * progress.
- */
-static inline bool __deprecated __cancel_delayed_work(struct delayed_work *work)
-{
-	bool ret;
-
-	ret = del_timer(&work->timer);
-	if (ret)
-		work_clear_pending(&work->work);
-	return ret;
-}
-
-/* used to be different but now identical to flush_work(), deprecated */
-static inline bool __deprecated flush_work_sync(struct work_struct *work)
-{
-	return flush_work(work);
-}
-
-/* used to be different but now identical to flush_delayed_work(), deprecated */
-static inline bool __deprecated flush_delayed_work_sync(struct delayed_work *dwork)
-{
-	return flush_delayed_work(dwork);
 }
 
 #ifndef CONFIG_SMP

@@ -86,12 +86,13 @@ static void show_faulting_vma(unsigned long address, char *buf)
 	unsigned long ino = 0;
 	dev_t dev = 0;
 	char *nm = buf;
+	struct mm_struct *active_mm = current->active_mm;
 
 	/* can't use print_vma_addr() yet as it doesn't check for
 	 * non-inclusive vma
 	 */
-
-	vma = find_vma(current->active_mm, address);
+	down_read(&active_mm->mmap_sem);
+	vma = find_vma(active_mm, address);
 
 	/* check against the find_vma( ) behaviour which returns the next VMA
 	 * if the container VMA is not found
@@ -101,7 +102,7 @@ static void show_faulting_vma(unsigned long address, char *buf)
 		if (file) {
 			struct path *path = &file->f_path;
 			nm = d_path(path, buf, PAGE_SIZE - 1);
-			inode = vma->vm_file->f_path.dentry->d_inode;
+			inode = file_inode(vma->vm_file);
 			dev = inode->i_sb->s_dev;
 			ino = inode->i_ino;
 		}
@@ -110,30 +111,30 @@ static void show_faulting_vma(unsigned long address, char *buf)
 			vma->vm_start < TASK_UNMAPPED_BASE ?
 				address : address - vma->vm_start,
 			nm, vma->vm_start, vma->vm_end);
-	} else {
+	} else
 		pr_info("    @No matching VMA found\n");
-	}
+
+	up_read(&active_mm->mmap_sem);
 }
 
 static void show_ecr_verbose(struct pt_regs *regs)
 {
-	unsigned int vec, cause_code, cause_reg;
+	unsigned int vec, cause_code;
 	unsigned long address;
 
-	cause_reg = current->thread.cause_code;
-	pr_info("\n[ECR   ]: 0x%08x => ", cause_reg);
+	pr_info("\n[ECR   ]: 0x%08lx => ", regs->event);
 
 	/* For Data fault, this is data address not instruction addr */
 	address = current->thread.fault_address;
 
-	vec = cause_reg >> 16;
-	cause_code = (cause_reg >> 8) & 0xFF;
+	vec = regs->ecr_vec;
+	cause_code = regs->ecr_cause;
 
 	/* For DTLB Miss or ProtV, display the memory involved too */
 	if (vec == ECR_V_DTLB_MISS) {
-		pr_cont("Invalid %s 0x%08lx by insn @ 0x%08lx\n",
-		       (cause_code == 0x01) ? "Read From" :
-		       ((cause_code == 0x02) ? "Write to" : "EX"),
+		pr_cont("Invalid %s @ 0x%08lx by insn @ 0x%08lx\n",
+		       (cause_code == 0x01) ? "Read" :
+		       ((cause_code == 0x02) ? "Write" : "EX"),
 		       address, regs->ret);
 	} else if (vec == ECR_V_ITLB_MISS) {
 		pr_cont("Insn could not be fetched\n");
@@ -144,14 +145,12 @@ static void show_ecr_verbose(struct pt_regs *regs)
 	} else if (vec == ECR_V_PROTV) {
 		if (cause_code == ECR_C_PROTV_INST_FETCH)
 			pr_cont("Execute from Non-exec Page\n");
-		else if (cause_code == ECR_C_PROTV_LOAD)
-			pr_cont("Read from Non-readable Page\n");
-		else if (cause_code == ECR_C_PROTV_STORE)
-			pr_cont("Write to Non-writable Page\n");
-		else if (cause_code == ECR_C_PROTV_XCHG)
-			pr_cont("Data exchange protection violation\n");
 		else if (cause_code == ECR_C_PROTV_MISALIG_DATA)
 			pr_cont("Misaligned r/w from 0x%08lx\n", address);
+		else
+			pr_cont("%s access not allowed on page\n",
+				(cause_code == 0x01) ? "Read" :
+				((cause_code == 0x02) ? "Write" : "EX"));
 	} else if (vec == ECR_V_INSN_ERR) {
 		pr_cont("Illegal Insn\n");
 	} else {
@@ -176,8 +175,7 @@ void show_regs(struct pt_regs *regs)
 	print_task_path_n_nm(tsk, buf);
 	show_regs_print_info(KERN_INFO);
 
-	if (current->thread.cause_code)
-		show_ecr_verbose(regs);
+	show_ecr_verbose(regs);
 
 	pr_info("[EFA   ]: 0x%08lx\n[BLINK ]: %pS\n[ERET  ]: %pS\n",
 		current->thread.fault_address,
@@ -213,10 +211,9 @@ void show_regs(struct pt_regs *regs)
 }
 
 void show_kernel_fault_diag(const char *str, struct pt_regs *regs,
-			    unsigned long address, unsigned long cause_reg)
+			    unsigned long address)
 {
 	current->thread.fault_address = address;
-	current->thread.cause_code = cause_reg;
 
 	/* Caller and Callee regs */
 	show_regs(regs);

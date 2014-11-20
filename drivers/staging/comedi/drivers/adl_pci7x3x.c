@@ -19,10 +19,6 @@
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
 /*
@@ -48,6 +44,7 @@ driver.
 Configuration Options: not applicable, uses comedi PCI auto config
 */
 
+#include <linux/module.h>
 #include <linux/pci.h>
 
 #include "../comedidev.h"
@@ -115,21 +112,10 @@ static int adl_pci7x3x_do_insn_bits(struct comedi_device *dev,
 				    unsigned int *data)
 {
 	unsigned long reg = (unsigned long)s->private;
-	unsigned int mask = data[0];
-	unsigned int bits = data[1];
 
-	if (mask) {
-		s->state &= ~mask;
-		s->state |= (bits & mask);
-
+	if (comedi_dio_update_state(s, data))
 		outl(s->state, dev->iobase + reg);
-	}
 
-	/*
-	 * NOTE: The output register is not readable.
-	 * This returned state will not be correct until all the
-	 * outputs have been updated.
-	 */
 	data[1] = s->state;
 
 	return insn->n;
@@ -253,9 +239,6 @@ static int adl_pci7x3x_auto_attach(struct comedi_device *dev,
 		}
 	}
 
-	dev_info(dev->class_dev, "%s attached (%d inputs/%d outputs)\n",
-		dev->board_name, board->di_nchan, board->do_nchan);
-
 	return 0;
 }
 
@@ -263,7 +246,7 @@ static struct comedi_driver adl_pci7x3x_driver = {
 	.driver_name	= "adl_pci7x3x",
 	.module		= THIS_MODULE,
 	.auto_attach	= adl_pci7x3x_auto_attach,
-	.detach		= comedi_pci_disable,
+	.detach		= comedi_pci_detach,
 };
 
 static int adl_pci7x3x_pci_probe(struct pci_dev *dev,
@@ -273,7 +256,7 @@ static int adl_pci7x3x_pci_probe(struct pci_dev *dev,
 				      id->driver_data);
 }
 
-static DEFINE_PCI_DEVICE_TABLE(adl_pci7x3x_pci_table) = {
+static const struct pci_device_id adl_pci7x3x_pci_table[] = {
 	{ PCI_VDEVICE(ADLINK, 0x7230), BOARD_PCI7230 },
 	{ PCI_VDEVICE(ADLINK, 0x7233), BOARD_PCI7233 },
 	{ PCI_VDEVICE(ADLINK, 0x7234), BOARD_PCI7234 },

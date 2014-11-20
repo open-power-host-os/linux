@@ -49,9 +49,11 @@
  * 	1 - sleep
  *	2 - winkle
  *
- * Pass wether to check for pending interrupts in r4
+ * To check IRQ_HAPPENED in r4
+ * 	0 - don't check
+ * 	1 - check
  */
-_STATIC(power7_powersave_common)
+power7_powersave_common:
 	/* Use r3 to pass state nap/sleep/winkle */
 	/* NAP is a state loss, we create a regs frame on the
 	 * stack, fill it up with the state we care about and
@@ -69,7 +71,7 @@ _STATIC(power7_powersave_common)
 	/* Make sure FPU, VSX etc... are flushed as we may lose
 	 * state when going to nap mode
 	 */
-	bl	.discard_lazy_cpu_state
+	bl	discard_lazy_cpu_state
 #endif /* CONFIG_SMP */
 
 	/* Hard disable interrupts */
@@ -187,6 +189,45 @@ _GLOBAL(__power7_sleep)
 	b	power7_powersave_common
 	/* No return */
 
+_GLOBAL(__power7_winkle)
+	li	r3,2
+	li	r4,1
+	b	power7_powersave_common
+	/* No return */
+
+/*
+ * Make opal call in realmode. This is a generic function to be called
+ * from realmode from reset vector. It handles endianess.
+ *
+ * r13 - paca pointer
+ * r1  - stack pointer
+ * r3  - opal token
+ */
+opal_call_realmode:
+	mflr	r12
+	std	r12,_LINK(r1)
+	ld	r2,PACATOC(r13)
+	/* Set opal return address */
+	LOAD_REG_ADDR(r0,return_from_opal_call)
+	mtlr	r0
+	/* Handle endian-ness */
+	li	r0,MSR_LE
+	mfmsr	r12
+	andc	r12,r12,r0
+	mtspr	SPRN_HSRR1,r12
+	mr	r0,r3			/* Move opal token to r0 */
+	LOAD_REG_ADDR(r11,opal)
+	ld	r12,8(r11)
+	ld	r2,0(r11)
+	mtspr	SPRN_HSRR0,r12
+	hrfid
+
+return_from_opal_call:
+	FIXUP_ENDIAN
+	ld	r0,_LINK(r1)
+	mtlr	r0
+	blr
+
 #define CHECK_HMI_INTERRUPT						\
 	mfspr	r0,SPRN_SRR1;						\
 BEGIN_FTR_SECTION_NESTED(66);						\
@@ -200,21 +241,11 @@ ALT_FTR_SECTION_END_NESTED_IFSET(CPU_FTR_ARCH_207S, 66);		\
 	ld	r2,PACATOC(r13);					\
 	ld	r1,PACAR1(r13);						\
 	std	r3,ORIG_GPR3(r1);	/* Save original r3 */		\
-	li	r0,OPAL_HANDLE_HMI;					\
-	LOAD_REG_ADDR(r11,opal);					\
-	ld	r12,8(r11);						\
-	ld	r2,0(r11);						\
-	mtctr	r12;							\
-	bctrl;								\
+	li	r3,OPAL_HANDLE_HMI;	/* Pass opal token argument*/	\
+	bl	opal_call_realmode;					\
 	ld	r3,ORIG_GPR3(r1);	/* Restore original r3 */	\
 20:	nop;
 
-
-_GLOBAL(__power7_winkle)
-	li	r3,2
-	li	r4,1
-	b	power7_powersave_common
-	/* No return */
 
 _GLOBAL(power7_wakeup_hv_state_loss)
 	/* Check paca flag to diffentiate b/w fast sleep and winkle */
@@ -228,12 +259,8 @@ _GLOBAL(power7_wakeup_hv_state_loss)
 	bl 	__restore_cpu_power8
 
 	/* Time base re-sync */
-	li      r0,OPAL_RESYNC_TIMEBASE
-	LOAD_REG_ADDR(r11,opal);
-	ld      r12,8(r11);
-	ld      r2,0(r11);
-	mtctr   r12
-	bctrl
+	li	r3,OPAL_RESYNC_TIMEBASE
+	bl	opal_call_realmode
 
 	/* Restore SLB  from PACA */
 	ld      r4,PACA_SLBSHADOWPTR(r13)
@@ -272,12 +299,8 @@ BEGIN_FTR_SECTION
 	CHECK_HMI_INTERRUPT
 END_FTR_SECTION_IFSET(CPU_FTR_HVMODE)
 	/* Time base re-sync */
-	li	r0,OPAL_RESYNC_TIMEBASE
-	LOAD_REG_ADDR(r11,opal);
-	ld	r12,8(r11);
-	ld	r2,0(r11);
-	mtctr	r12
-	bctrl
+	li	r3,OPAL_RESYNC_TIMEBASE
+	bl	opal_call_realmode;
 
 	/* TODO: Check r3 for failure */
 
@@ -320,7 +343,7 @@ END_FTR_SECTION_IFSET(CPU_FTR_HVMODE)
 _GLOBAL(power7_wakeup_noloss)
 	lbz	r0,PACA_NAPSTATELOST(r13)
 	cmpwi	r0,0
-	bne	.power7_wakeup_loss
+	bne	power7_wakeup_loss
 BEGIN_FTR_SECTION
 	CHECK_HMI_INTERRUPT
 END_FTR_SECTION_IFSET(CPU_FTR_HVMODE)

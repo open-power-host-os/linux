@@ -8,6 +8,7 @@
  * published by the Free Software Foundation.
  */
 
+#include <asm/assembler.h>
 #include <asm/unistd.h>
 #include <asm/ftrace.h>
 #include <asm/unwind.h>
@@ -88,7 +89,7 @@ ENTRY(ret_from_fork)
 	cmp	r5, #0
 	movne	r0, r4
 	adrne	lr, BSYM(1f)
-	movne	pc, r5
+	retne	r5
 1:	get_thread_info tsk
 	b	ret_slow_syscall
 ENDPROC(ret_from_fork)
@@ -290,7 +291,7 @@ ENDPROC(ftrace_graph_caller_old)
 
 .macro mcount_exit
 	ldmia	sp!, {r0-r3, ip, lr}
-	mov	pc, ip
+	ret	ip
 .endm
 
 ENTRY(__gnu_mcount_nc)
@@ -298,7 +299,7 @@ UNWIND(.fnstart)
 #ifdef CONFIG_DYNAMIC_FTRACE
 	mov	ip, lr
 	ldmia	sp!, {lr}
-	mov	pc, ip
+	ret	ip
 #else
 	__mcount
 #endif
@@ -333,12 +334,12 @@ return_to_handler:
 	bl	ftrace_return_to_handler
 	mov	lr, r0			@ r0 has real ret addr
 	ldmia	sp!, {r0-r3}
-	mov	pc, lr
+	ret	lr
 #endif
 
 ENTRY(ftrace_stub)
 .Lftrace_stub:
-	mov	pc, lr
+	ret	lr
 ENDPROC(ftrace_stub)
 
 #endif /* CONFIG_FUNCTION_TRACER */
@@ -350,6 +351,9 @@ ENDPROC(ftrace_stub)
 
 	.align	5
 ENTRY(vector_swi)
+#ifdef CONFIG_CPU_V7M
+	v7m_exception_entry
+#else
 	sub	sp, sp, #S_FRAME_SIZE
 	stmia	sp, {r0 - r12}			@ Calling r0 - r12
  ARM(	add	r8, sp, #S_PC		)
@@ -360,7 +364,12 @@ ENTRY(vector_swi)
 	str	lr, [sp, #S_PC]			@ Save calling PC
 	str	r8, [sp, #S_PSR]		@ Save CPSR
 	str	r0, [sp, #S_OLD_R0]		@ Save OLD_R0
+#endif
 	zero_fp
+	alignment_trap r10, ip, __cr_alignment
+	enable_irq
+	ct_user_exit
+	get_thread_info tsk
 
 	/*
 	 * Get the system call number.
@@ -375,13 +384,11 @@ ENTRY(vector_swi)
 #ifdef CONFIG_ARM_THUMB
 	tst	r8, #PSR_T_BIT
 	movne	r10, #0				@ no thumb OABI emulation
-	ldreq	r10, [lr, #-4]			@ get SWI instruction
+ USER(	ldreq	r10, [lr, #-4]		)	@ get SWI instruction
 #else
-	ldr	r10, [lr, #-4]			@ get SWI instruction
+ USER(	ldr	r10, [lr, #-4]		)	@ get SWI instruction
 #endif
-#ifdef CONFIG_CPU_ENDIAN_BE8
-	rev	r10, r10			@ little endian instruction
-#endif
+ ARM_BE8(rev	r10, r10)			@ little endian instruction
 
 #elif defined(CONFIG_AEABI)
 
@@ -392,22 +399,13 @@ ENTRY(vector_swi)
 	/* Legacy ABI only, possibly thumb mode. */
 	tst	r8, #PSR_T_BIT			@ this is SPSR from save_user_regs
 	addne	scno, r7, #__NR_SYSCALL_BASE	@ put OS number in
-	ldreq	scno, [lr, #-4]
+ USER(	ldreq	scno, [lr, #-4]		)
 
 #else
 	/* Legacy ABI only. */
-	ldr	scno, [lr, #-4]			@ get SWI instruction
+ USER(	ldr	scno, [lr, #-4]		)	@ get SWI instruction
 #endif
 
-#ifdef CONFIG_ALIGNMENT_TRAP
-	ldr	ip, __cr_alignment
-	ldr	ip, [ip]
-	mcr	p15, 0, ip, c1, c0		@ update control register
-#endif
-	enable_irq
-	ct_user_exit
-
-	get_thread_info tsk
 	adr	tbl, sys_call_table		@ load syscall table pointer
 
 #if defined(CONFIG_OABI_COMPAT)
@@ -437,11 +435,26 @@ local_restart:
 	ldrcc	pc, [tbl, scno, lsl #2]		@ call sys_* routine
 
 	add	r1, sp, #S_OFF
-2:	mov	why, #0				@ no longer a real syscall
-	cmp	scno, #(__ARM_NR_BASE - __NR_SYSCALL_BASE)
+2:	cmp	scno, #(__ARM_NR_BASE - __NR_SYSCALL_BASE)
 	eor	r0, scno, #__NR_SYSCALL_BASE	@ put OS number back
-	bcs	arm_syscall	
+	bcs	arm_syscall
+	mov	why, #0				@ no longer a real syscall
 	b	sys_ni_syscall			@ not private func
+
+#if defined(CONFIG_OABI_COMPAT) || !defined(CONFIG_AEABI)
+	/*
+	 * We failed to handle a fault trying to access the page
+	 * containing the swi instruction, but we're not really in a
+	 * position to return -EFAULT. Instead, return back to the
+	 * instruction and re-enter the user fault handling path trying
+	 * to page it in. This will likely result in sending SEGV to the
+	 * current task.
+	 */
+9001:
+	sub	lr, lr, #4
+	str	lr, [sp, #S_PC]
+	b	ret_fast_syscall
+#endif
 ENDPROC(vector_swi)
 
 	/*
@@ -549,7 +562,7 @@ sys_mmap2:
 		streq	r5, [sp, #4]
 		beq	sys_mmap_pgoff
 		mov	r0, #-EINVAL
-		mov	pc, lr
+		ret	lr
 #else
 		str	r5, [sp, #4]
 		b	sys_mmap_pgoff

@@ -42,7 +42,7 @@
 #include <linux/timex.h>
 #include <linux/kernel_stat.h>
 #include <linux/time.h>
-#include <linux/timer.h>
+#include <linux/clockchips.h>
 #include <linux/init.h>
 #include <linux/profile.h>
 #include <linux/cpu.h>
@@ -98,13 +98,8 @@ static struct clocksource clocksource_timebase = {
 
 static int decrementer_set_next_event(unsigned long evt,
 				      struct clock_event_device *dev);
-static int broadcast_set_next_event(unsigned long evt,
-				      struct clock_event_device *dev);
-static void broadcast_set_mode(enum clock_event_mode mode,
-				 struct clock_event_device *dev);
 static void decrementer_set_mode(enum clock_event_mode mode,
 				 struct clock_event_device *dev);
-static void decrementer_timer_broadcast(const struct cpumask *mask);
 
 struct clock_event_device decrementer_clockevent = {
 	.name           = "decrementer",
@@ -112,24 +107,12 @@ struct clock_event_device decrementer_clockevent = {
 	.irq            = 0,
 	.set_next_event = decrementer_set_next_event,
 	.set_mode       = decrementer_set_mode,
-	.broadcast	= decrementer_timer_broadcast,
-	.features       = CLOCK_EVT_FEAT_C3STOP | CLOCK_EVT_FEAT_ONESHOT,
+	.features       = CLOCK_EVT_FEAT_ONESHOT | CLOCK_EVT_FEAT_C3STOP,
 };
 EXPORT_SYMBOL(decrementer_clockevent);
 
-struct clock_event_device broadcast_clockevent = {
-	.name           = "broadcast",
-	.rating         = 200,
-	.irq            = 0,
-	.set_next_event = broadcast_set_next_event,
-	.set_mode       = broadcast_set_mode,
-	.features       = CLOCK_EVT_FEAT_ONESHOT,
-};
-EXPORT_SYMBOL(broadcast_clockevent);
-
 DEFINE_PER_CPU(u64, decrementers_next_tb);
 static DEFINE_PER_CPU(struct clock_event_device, decrementers);
-struct clock_event_device bc_timer;
 
 #define XSEC_PER_SEC (1024*1024)
 
@@ -228,16 +211,16 @@ static u64 scan_dispatch_log(u64 stop_tb)
 	if (!dtl)
 		return 0;
 
-	if (i == vpa->dtl_idx)
+	if (i == be64_to_cpu(vpa->dtl_idx))
 		return 0;
-	while (i < vpa->dtl_idx) {
-		dtb = dtl->timebase;
-		tb_delta = dtl->enqueue_to_dispatch_time +
-			dtl->ready_to_enqueue_time;
+	while (i < be64_to_cpu(vpa->dtl_idx)) {
+		dtb = be64_to_cpu(dtl->timebase);
+		tb_delta = be32_to_cpu(dtl->enqueue_to_dispatch_time) +
+			be32_to_cpu(dtl->ready_to_enqueue_time);
 		barrier();
-		if (i + N_DISPATCH_LOG < vpa->dtl_idx) {
+		if (i + N_DISPATCH_LOG < be64_to_cpu(vpa->dtl_idx)) {
 			/* buffer has overflowed */
-			i = vpa->dtl_idx - N_DISPATCH_LOG;
+			i = be64_to_cpu(vpa->dtl_idx) - N_DISPATCH_LOG;
 			dtl = local_paca->dispatch_log + (i % N_DISPATCH_LOG);
 			continue;
 		}
@@ -287,7 +270,7 @@ static inline u64 calculate_stolen_time(u64 stop_tb)
 {
 	u64 stolen = 0;
 
-	if (get_paca()->dtl_ridx != get_paca()->lppaca_ptr->dtl_idx) {
+	if (get_paca()->dtl_ridx != be64_to_cpu(get_lppaca()->dtl_idx)) {
 		stolen = scan_dispatch_log(stop_tb);
 		get_paca()->system_time -= stolen;
 	}
@@ -503,7 +486,6 @@ static void __timer_interrupt(void)
 	struct clock_event_device *evt = &__get_cpu_var(decrementers);
 	u64 now;
 
-	__get_cpu_var(irq_stat).timer_irqs++;
 	trace_timer_interrupt_entry(regs);
 
 	if (test_irq_work_pending()) {
@@ -516,6 +498,7 @@ static void __timer_interrupt(void)
 		*next_tb = ~(u64)0;
 		if (evt->event_handler)
 			evt->event_handler(evt);
+		__get_cpu_var(irq_stat).timer_irqs_event++;
 	} else {
 		now = *next_tb - now;
 		if (now <= DECREMENTER_MAX)
@@ -523,6 +506,7 @@ static void __timer_interrupt(void)
 		/* We may have raced with new irq work */
 		if (test_irq_work_pending())
 			set_dec(1);
+		__get_cpu_var(irq_stat).timer_irqs_others++;
 	}
 
 #ifdef CONFIG_PPC64
@@ -532,6 +516,7 @@ static void __timer_interrupt(void)
 		cu->current_tb = mfspr(SPRN_PURR);
 	}
 #endif
+
 	trace_timer_interrupt_exit(regs);
 }
 
@@ -565,6 +550,7 @@ void timer_interrupt(struct pt_regs * regs)
 	 */
 	may_hard_irq_enable();
 
+
 #if defined(CONFIG_PPC32) && defined(CONFIG_PPC_PMAC)
 	if (atomic_read(&ppc_n_lost_interrupts) != 0)
 		do_IRQ(regs);
@@ -574,7 +560,6 @@ void timer_interrupt(struct pt_regs * regs)
 	irq_enter();
 
 	__timer_interrupt();
-
 	irq_exit();
 	set_irq_regs(old_regs);
 }
@@ -639,7 +624,7 @@ unsigned long long sched_clock(void)
 static int __init get_freq(char *name, int cells, unsigned long *val)
 {
 	struct device_node *cpu;
-	const unsigned int *fp;
+	const __be32 *fp;
 	int found = 0;
 
 	/* The cpu node should have timebase and clock frequency properties */
@@ -658,8 +643,7 @@ static int __init get_freq(char *name, int cells, unsigned long *val)
 	return found;
 }
 
-/* should become __cpuinit when secondary_cpu_time_init also is */
-void start_cpu_decrementer(void)
+static void start_cpu_decrementer(void)
 {
 #if defined(CONFIG_BOOKE) || defined(CONFIG_40x)
 	/* Clear any pending timer interrupts */
@@ -757,7 +741,7 @@ static cycle_t timebase_read(struct clocksource *cs)
 }
 
 void update_vsyscall_old(struct timespec *wall_time, struct timespec *wtm,
-			struct clocksource *clock, u32 mult)
+			 struct clocksource *clock, u32 mult, cycle_t cycle_last)
 {
 	u64 new_tb_to_xs, new_stamp_xsec;
 	u32 frac_sec;
@@ -790,7 +774,7 @@ void update_vsyscall_old(struct timespec *wall_time, struct timespec *wtm,
 	 * We expect the caller to have done the first increment of
 	 * vdso_data->tb_update_count already.
 	 */
-	vdso_data->tb_orig_stamp = clock->cycle_last;
+	vdso_data->tb_orig_stamp = cycle_last;
 	vdso_data->stamp_xsec = new_stamp_xsec;
 	vdso_data->tb_to_xs = new_tb_to_xs;
 	vdso_data->wtom_clock_sec = wtm->tv_sec;
@@ -839,19 +823,6 @@ static int decrementer_set_next_event(unsigned long evt,
 	return 0;
 }
 
-static int broadcast_set_next_event(unsigned long evt,
-					struct clock_event_device *dev)
-{
-	return 0;
-}
-
-static void broadcast_set_mode(enum clock_event_mode mode,
-				 struct clock_event_device *dev)
-{
-	if (mode != CLOCK_EVT_MODE_ONESHOT)
-		broadcast_set_next_event(DECREMENTER_MAX, dev);
-}
-
 static void decrementer_set_mode(enum clock_event_mode mode,
 				 struct clock_event_device *dev)
 {
@@ -860,18 +831,12 @@ static void decrementer_set_mode(enum clock_event_mode mode,
 }
 
 /* Interrupt handler for the timer broadcast IPI */
-void decrementer_timer_interrupt(void)
+void tick_broadcast_ipi_handler(void)
 {
 	u64 *next_tb = &__get_cpu_var(decrementers_next_tb);
 
-	broadcast_irq_entry();
 	*next_tb = get_tb_or_rtc();
 	__timer_interrupt();
-}
-
-static void decrementer_timer_broadcast(const struct cpumask *mask)
-{
-	arch_send_tick_broadcast(mask);
 }
 
 static void register_decrementer_clockevent(int cpu)
@@ -887,19 +852,6 @@ static void register_decrementer_clockevent(int cpu)
 	clockevents_register_device(dec);
 }
 
-static void register_broadcast_clockevent(int cpu)
-{
-	struct clock_event_device *bc_evt = &bc_timer;
-
-	*bc_evt = broadcast_clockevent;
-	bc_evt->cpumask = cpu_possible_mask;
-
-	printk_once(KERN_DEBUG "clockevent: %s mult[%x] shift[%d] cpu[%d]\n",
-		    bc_evt->name, bc_evt->mult, bc_evt->shift, cpu);
-
-	clockevents_register_device(bc_evt);
-}
-
 static void __init init_decrementer_clockevent(void)
 {
 	int cpu = smp_processor_id();
@@ -912,19 +864,6 @@ static void __init init_decrementer_clockevent(void)
 		clockevent_delta2ns(2, &decrementer_clockevent);
 
 	register_decrementer_clockevent(cpu);
-}
-
-static void __init init_broadcast_clockevent(void)
-{
-	int cpu = smp_processor_id();
-
-	clockevents_calc_mult_shift(&broadcast_clockevent, ppc_tb_freq, 4);
-
-	broadcast_clockevent.max_delta_ns =
-		clockevent_delta2ns(DECREMENTER_MAX, &broadcast_clockevent);
-	broadcast_clockevent.min_delta_ns =
-		clockevent_delta2ns(2, &broadcast_clockevent);
-	register_broadcast_clockevent(cpu);
 }
 
 void secondary_cpu_time_init(void)
@@ -1003,7 +942,7 @@ void __init time_init(void)
 	clocksource_init();
 
 	init_decrementer_clockevent();
-	init_broadcast_clockevent();
+	tick_setup_hrtimer_broadcast();
 }
 
 
@@ -1086,6 +1025,7 @@ void to_tm(int tim, struct rtc_time * tm)
 	 */
 	GregorianDay(tm);
 }
+EXPORT_SYMBOL(to_tm);
 
 /*
  * Divide a 128-bit dividend by a 32-bit divisor, leaving a 128 bit
@@ -1138,7 +1078,7 @@ static int __init rtc_init(void)
 
 	pdev = platform_device_register_simple("rtc-generic", -1, NULL, 0);
 
-	return PTR_RET(pdev);
+	return PTR_ERR_OR_ZERO(pdev);
 }
 
 module_init(rtc_init);

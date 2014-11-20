@@ -37,6 +37,11 @@
  */
 #define TRAMPOLINE_VA		UL(CONFIG_VECTORS_BASE)
 
+/*
+ * KVM_MMU_CACHE_MIN_PAGES is the number of stage2 page table translation levels.
+ */
+#define KVM_MMU_CACHE_MIN_PAGES	2
+
 #ifndef __ASSEMBLY__
 
 #include <asm/cacheflush.h>
@@ -50,7 +55,7 @@ void free_hyp_pgds(void);
 int kvm_alloc_stage2_pgd(struct kvm *kvm);
 void kvm_free_stage2_pgd(struct kvm *kvm);
 int kvm_phys_addr_ioremap(struct kvm *kvm, phys_addr_t guest_ipa,
-			  phys_addr_t pa, unsigned long size);
+			  phys_addr_t pa, unsigned long size, bool writable);
 
 int kvm_handle_guest_abort(struct kvm_vcpu *vcpu, struct kvm_run *run);
 
@@ -62,9 +67,15 @@ phys_addr_t kvm_get_idmap_vector(void);
 int kvm_mmu_init(void);
 void kvm_clear_hyp_idmap(void);
 
+static inline void kvm_set_pmd(pmd_t *pmd, pmd_t new_pmd)
+{
+	*pmd = new_pmd;
+	flush_pmd_entry(pmd);
+}
+
 static inline void kvm_set_pte(pte_t *pte, pte_t new_pte)
 {
-	pte_val(*pte) = new_pte;
+	*pte = new_pte;
 	/*
 	 * flush_pmd_entry just takes a void pointer and cleans the necessary
 	 * cache entries, so we can reuse the function for ptes.
@@ -72,20 +83,14 @@ static inline void kvm_set_pte(pte_t *pte, pte_t new_pte)
 	flush_pmd_entry(pte);
 }
 
-static inline bool kvm_is_write_fault(unsigned long hsr)
-{
-	unsigned long hsr_ec = hsr >> HSR_EC_SHIFT;
-	if (hsr_ec == HSR_EC_IABT)
-		return false;
-	else if ((hsr & HSR_ISV) && !(hsr & HSR_WNR))
-		return false;
-	else
-		return true;
-}
-
 static inline void kvm_clean_pgd(pgd_t *pgd)
 {
 	clean_dcache_area(pgd, PTRS_PER_S2_PGD * sizeof(pgd_t));
+}
+
+static inline void kvm_clean_pmd(pmd_t *pmd)
+{
+	clean_dcache_area(pmd, PTRS_PER_PMD * sizeof(pmd_t));
 }
 
 static inline void kvm_clean_pmd_entry(pmd_t *pmd)
@@ -103,10 +108,64 @@ static inline void kvm_set_s2pte_writable(pte_t *pte)
 	pte_val(*pte) |= L_PTE_S2_RDWR;
 }
 
+static inline void kvm_set_s2pmd_writable(pmd_t *pmd)
+{
+	pmd_val(*pmd) |= L_PMD_S2_RDWR;
+}
+
+/* Open coded p*d_addr_end that can deal with 64bit addresses */
+#define kvm_pgd_addr_end(addr, end)					\
+({	u64 __boundary = ((addr) + PGDIR_SIZE) & PGDIR_MASK;		\
+	(__boundary - 1 < (end) - 1)? __boundary: (end);		\
+})
+
+#define kvm_pud_addr_end(addr,end)		(end)
+
+#define kvm_pmd_addr_end(addr, end)					\
+({	u64 __boundary = ((addr) + PMD_SIZE) & PMD_MASK;		\
+	(__boundary - 1 < (end) - 1)? __boundary: (end);		\
+})
+
+static inline bool kvm_page_empty(void *ptr)
+{
+	struct page *ptr_page = virt_to_page(ptr);
+	return page_count(ptr_page) == 1;
+}
+
+
+#define kvm_pte_table_empty(kvm, ptep) kvm_page_empty(ptep)
+#define kvm_pmd_table_empty(kvm, pmdp) kvm_page_empty(pmdp)
+#define kvm_pud_table_empty(kvm, pudp) (0)
+
+#define KVM_PREALLOC_LEVEL	0
+
+static inline int kvm_prealloc_hwpgd(struct kvm *kvm, pgd_t *pgd)
+{
+	return 0;
+}
+
+static inline void kvm_free_hwpgd(struct kvm *kvm) { }
+
+static inline void *kvm_get_hwpgd(struct kvm *kvm)
+{
+	return kvm->arch.pgd;
+}
+
 struct kvm;
 
-static inline void coherent_icache_guest_page(struct kvm *kvm, gfn_t gfn)
+#define kvm_flush_dcache_to_poc(a,l)	__cpuc_flush_dcache_area((a), (l))
+
+static inline bool vcpu_has_cache_enabled(struct kvm_vcpu *vcpu)
 {
+	return (vcpu->arch.cp15[c1_SCTLR] & 0b101) == 0b101;
+}
+
+static inline void coherent_cache_guest_page(struct kvm_vcpu *vcpu, hva_t hva,
+					     unsigned long size)
+{
+	if (!vcpu_has_cache_enabled(vcpu))
+		kvm_flush_dcache_to_poc((void *)hva, size);
+	
 	/*
 	 * If we are going to insert an instruction page and the icache is
 	 * either VIPT or PIPT, there is a potential problem where the host
@@ -120,15 +179,16 @@ static inline void coherent_icache_guest_page(struct kvm *kvm, gfn_t gfn)
 	 * need any kind of flushing (DDI 0406C.b - Page B3-1392).
 	 */
 	if (icache_is_pipt()) {
-		unsigned long hva = gfn_to_hva(kvm, gfn);
-		__cpuc_coherent_user_range(hva, hva + PAGE_SIZE);
+		__cpuc_coherent_user_range(hva, hva + size);
 	} else if (!icache_is_vivt_asid_tagged()) {
 		/* any kind of VIPT cache */
 		__flush_icache_all();
 	}
 }
 
-#define kvm_flush_dcache_to_poc(a,l)	__cpuc_flush_dcache_area((a), (l))
+#define kvm_virt_to_phys(x)		virt_to_idmap((unsigned long)(x))
+
+void stage2_flush_vm(struct kvm *kvm);
 
 #endif	/* !__ASSEMBLY__ */
 

@@ -16,6 +16,7 @@
 #include <linux/fs.h>
 #include <linux/vmalloc.h>
 #include <linux/fcntl.h>
+#include <linux/kobject.h>
 #include <asm/uaccess.h>
 #include <asm/opal.h>
 
@@ -69,26 +70,21 @@ static ssize_t elog_ack_show(struct elog_obj *elog_obj,
 	return sprintf(buf, "ack - acknowledge log message\n");
 }
 
-static void delay_release_kobj(void *kobj)
-{
-	kobject_put((struct kobject *)kobj);
-}
-
 static ssize_t elog_ack_store(struct elog_obj *elog_obj,
 			      struct elog_attribute *attr,
 			      const char *buf,
 			      size_t count)
 {
 	opal_send_ack_elog(elog_obj->id);
-	sysfs_schedule_callback(&elog_obj->kobj, delay_release_kobj,
-				&elog_obj->kobj, THIS_MODULE);
+	sysfs_remove_file_self(&elog_obj->kobj, &attr->attr);
+	kobject_put(&elog_obj->kobj);
 	return count;
 }
 
 static struct elog_attribute id_attribute =
-	__ATTR(id, 0666, elog_id_show, NULL);
+	__ATTR(id, S_IRUGO, elog_id_show, NULL);
 static struct elog_attribute type_attribute =
-	__ATTR(type, 0666, elog_type_show, NULL);
+	__ATTR(type, S_IRUGO, elog_type_show, NULL);
 static struct elog_attribute ack_attribute =
 	__ATTR(acknowledge, 0660, elog_ack_show, elog_ack_store);
 
@@ -242,17 +238,24 @@ static struct elog_obj *create_elog_obj(uint64_t id, size_t size, uint64_t type)
 
 static void elog_work_fn(struct work_struct *work)
 {
-	size_t elog_size;
+	__be64 size;
+	__be64 id;
+	__be64 type;
+	uint64_t elog_size;
 	uint64_t log_id;
 	uint64_t elog_type;
 	int rc;
 	char name[2+16+1];
 
-	rc = opal_get_elog_size(&log_id, &elog_size, &elog_type);
+	rc = opal_get_elog_size(&id, &size, &type);
 	if (rc != OPAL_SUCCESS) {
 		pr_err("ELOG: OPAL log info read failed\n");
 		return;
 	}
+
+	elog_size = be64_to_cpu(size);
+	log_id = be64_to_cpu(id);
+	elog_type = be64_to_cpu(type);
 
 	WARN_ON(elog_size > OPAL_MAX_ERRLOG_SIZE);
 
@@ -291,6 +294,10 @@ static struct notifier_block elog_nb = {
 int __init opal_elog_init(void)
 {
 	int rc = 0;
+
+	/* ELOG not supported by firmware */
+	if (!opal_check_token(OPAL_ELOG_READ))
+		return -1;
 
 	elog_kset = kset_create_and_add("elog", NULL, opal_kobj);
 	if (!elog_kset) {
