@@ -2725,7 +2725,6 @@ static unsigned int default_hcall_list[] = {
 	H_READ,
 	H_PROTECT,
 	H_BULK_REMOVE,
-	H_GET_TCE,
 	H_PUT_TCE,
 	H_SET_DABR,
 	H_SET_XDABR,
