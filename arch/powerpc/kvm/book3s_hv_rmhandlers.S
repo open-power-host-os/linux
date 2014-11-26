@@ -345,7 +345,7 @@ kvm_no_guest:
 	rlwimi	r4, r3, 0, LPCR_PECE0 | LPCR_PECE1
 	mtspr	SPRN_LPCR, r4
 	li	r3, 0
-	b	.power7_wakeup_loss
+	b	power7_wakeup_loss
 
 53:	HMT_LOW
 	ld	r4, HSTATE_KVM_VCPU(r13)
