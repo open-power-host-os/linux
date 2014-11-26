@@ -119,7 +119,7 @@ power7_powersave_common:
 	 */
 	li	r5, (MSR_SF | MSR_HV)@highest
 	sldi	r5, r5, 48
-	ori	r5, r5, MSR_ME
+	ori	r5, r5, MSR_KERNEL & (MSR_ME | MSR_LE)
 	li	r6, MSR_RI
 	andc	r6, r9, r6
 	LOAD_REG_ADDR(r7, power7_enter_nap_mode)
