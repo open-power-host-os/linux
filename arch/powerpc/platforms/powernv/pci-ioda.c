@@ -49,17 +49,6 @@
 /* 256M DMA window, 4K TCE pages, 8 bytes TCE */
 #define TCE32_TABLE_SIZE	((0x10000000 / 0x1000) * 8)
 
-#ifdef CONFIG_PCI_IOV
-#define VF_PE_LOG						\
-	else if (pe->flags & PNV_IODA_PE_VF)                    \
-		sprintf(pfix, "%04x:%02x:%2x.%d",               \
-			pci_domain_nr(pe->parent_dev->bus),     \
-			(pe->rid & 0xff00) >> 8,                \
-			PCI_SLOT(pe->rid), PCI_FUNC(pe->rid));
-#else  /* CONFIG_PCI_IOV*/
-#define VF_PE_LOG
-#endif /* CONFIG_PCI_IOV*/
-
 static void pe_level_printk(const struct pnv_ioda_pe *pe, const char *level,
 			    const char *fmt, ...)
 {
@@ -72,11 +61,18 @@ static void pe_level_printk(const struct pnv_ioda_pe *pe, const char *level,
 	vaf.fmt = fmt;
 	vaf.va = &args;
 
-	if (pe->pdev)
+	if (pe->flags & PNV_IODA_PE_DEV)
 		strlcpy(pfix, dev_name(&pe->pdev->dev), sizeof(pfix));
-	else
+	else if (pe->flags & (PNV_IODA_PE_BUS | PNV_IODA_PE_BUS_ALL))
 		sprintf(pfix, "%04x:%02x     ",
 			pci_domain_nr(pe->pbus), pe->pbus->number);
+#ifdef CONFIG_PCI_IOV
+	else if (pe->flags & PNV_IODA_PE_VF)
+		sprintf(pfix, "%04x:%02x:%2x.%d",
+			pci_domain_nr(pe->parent_dev->bus),
+			(pe->rid & 0xff00) >> 8,
+			PCI_SLOT(pe->rid), PCI_FUNC(pe->rid));
+#endif /* CONFIG_PCI_IOV */
 
 	printk("%spci %s: [PE# %.3d] %pV",
 	       level, pfix, pe->pe_number, &vaf);
