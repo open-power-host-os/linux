@@ -117,7 +117,6 @@ struct machdep_calls {
 #endif
 
 	void		(*restart)(char *cmd);
-	void		(*power_off)(void);
 	void		(*halt)(void);
 	void		(*panic)(char *str);
 	void		(*cpu_die)(void);
@@ -281,10 +280,6 @@ struct machdep_calls {
 	void 		(*setup_idle)(void);
 	unsigned long	(*power7_sleep)(void);
 	unsigned long	(*power7_winkle)(void);
-
-#ifdef CONFIG_MEMORY_HOTREMOVE
-	int (*remove_memory)(u64, u64);
-#endif
 };
 
 extern void e500_idle(void);
@@ -331,16 +326,6 @@ typedef enum sys_ctrler_kind {
 extern sys_ctrler_t sys_ctrler;
 
 #endif /* CONFIG_PPC_PMAC */
-
-
-/* Functions to produce codes on the leds.
- * The SRC code should be unique for the message category and should
- * be limited to the lower 24 bits (the upper 8 are set by these funcs),
- * and (for boot & dump) should be sorted numerically in the order
- * the events occur.
- */
-/* Print a boot progress message. */
-void ppc64_boot_msg(unsigned int src, const char *msg);
 
 static inline void log_error(char *buf, unsigned int err_type, int fatal)
 {

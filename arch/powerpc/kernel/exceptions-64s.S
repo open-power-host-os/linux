@@ -294,14 +294,14 @@ decrementer_pSeries:
 	. = 0xc00
 	.globl	system_call_pSeries
 system_call_pSeries:
-	/*
-	 * Switch to HMT medium priority on systems where we don't support
-	 * saving/restoring PPR or if CONFIG_KVM_BOOK3S_64_HANDLER is not
-	 * set. Otherwise, we save PPR in the CONFIG_KVM_BOOK3S_64_HANDLER
-	 * path before switching priority.
-	 */
+	 /*
+	  * If CONFIG_KVM_BOOK3S_64_HANDLER is set, save the PPR (on systems
+	  * that support it) before changing to HMT_MEDIUM. That allows the KVM
+	  * code to save that value into the guest state (it is the guest's PPR
+	  * value). Otherwise just change to HMT_MEDIUM as userspace has
+	  * already saved the PPR.
+	  */
 #ifdef CONFIG_KVM_BOOK3S_64_HANDLER
-	HMT_MEDIUM_PPR_DISCARD
 	SET_SCRATCH0(r13)
 	GET_PACA(r13)
 	std	r9,PACA_EXGEN+EX_R9(r13)

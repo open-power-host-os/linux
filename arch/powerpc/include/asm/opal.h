@@ -159,6 +159,8 @@ struct opal_sg_list {
 #define OPAL_WRITE_TPO				103
 #define OPAL_READ_TPO				104
 #define OPAL_GET_DPO_STATUS			105
+#define OPAL_IPMI_SEND				107
+#define OPAL_IPMI_RECV				108
 
 #ifndef __ASSEMBLY__
 
@@ -461,6 +463,17 @@ struct opal_msg {
 	__be32 msg_type;
 	__be32 reserved;
 	__be64 params[8];
+};
+
+enum {
+	OPAL_IPMI_MSG_FORMAT_VERSION_1 = 1,
+};
+
+struct opal_ipmi_msg {
+	uint8_t		version;
+	uint8_t		netfn;
+	uint8_t		cmd;
+	uint8_t		data[];
 };
 
 /*
@@ -1025,6 +1038,10 @@ int64_t opal_handle_hmi(void);
 int64_t opal_register_dump_region(uint32_t id, uint64_t start, uint64_t end);
 int64_t opal_unregister_dump_region(uint32_t id);
 int64_t opal_pci_set_phb_cxl_mode(uint64_t phb_id, uint64_t mode, uint64_t pe_number);
+int64_t opal_ipmi_send(uint64_t interface, struct opal_ipmi_msg *msg,
+		uint64_t msg_len);
+int64_t opal_ipmi_recv(uint64_t interface, struct opal_ipmi_msg *msg,
+		uint64_t *msg_len);
 int64_t opal_get_dpo_status(int64_t *dpo_timeout);
 
 /* Internal functions */

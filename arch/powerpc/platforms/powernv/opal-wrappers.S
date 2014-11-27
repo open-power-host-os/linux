@@ -18,7 +18,7 @@
 	.section	".text"
 
 #ifdef CONFIG_TRACEPOINTS
-#ifdef CONFIG_JUMP_LABEL
+#ifdef HAVE_JUMP_LABEL
 #define OPAL_BRANCH(LABEL)					\
 	ARCH_STATIC_BRANCH(LABEL, opal_tracepoint_key)
 #else
@@ -255,3 +255,5 @@ OPAL_CALL(opal_tpo_write,			OPAL_WRITE_TPO);
 OPAL_CALL(opal_tpo_read,			OPAL_READ_TPO);
 OPAL_CALL(opal_get_dpo_status,			OPAL_GET_DPO_STATUS);
 OPAL_CALL(opal_pci_set_phb_cxl_mode,		OPAL_PCI_SET_PHB_CXL_MODE);
+OPAL_CALL(opal_ipmi_send,			OPAL_IPMI_SEND);
+OPAL_CALL(opal_ipmi_recv,			OPAL_IPMI_RECV);

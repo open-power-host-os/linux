@@ -45,7 +45,7 @@ unsigned long __init opal_get_boot_time(void)
 	long rc = OPAL_BUSY;
 
 	if (!opal_check_token(OPAL_RTC_READ))
-		goto out;
+		return 0;
 
 	while (rc == OPAL_BUSY || rc == OPAL_BUSY_EVENT) {
 		rc = opal_rtc_read(&__y_m_d, &__h_m_s_ms);
@@ -55,20 +55,16 @@ unsigned long __init opal_get_boot_time(void)
 			mdelay(10);
 	}
 	if (rc != OPAL_SUCCESS)
-		goto out;
+		return 0;
 
 	y_m_d = be32_to_cpu(__y_m_d);
 	h_m_s_ms = be64_to_cpu(__h_m_s_ms);
 	opal_to_tm(y_m_d, h_m_s_ms, &tm);
 	return mktime(tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
 		      tm.tm_hour, tm.tm_min, tm.tm_sec);
-out:
-	ppc_md.get_rtc_time = NULL;
-	ppc_md.set_rtc_time = NULL;
-	return 0;
 }
 
-static int __init opal_time_init(void)
+static __init int opal_time_init(void)
 {
 	struct platform_device *pdev;
 	struct device_node *rtc;
@@ -78,14 +74,14 @@ static int __init opal_time_init(void)
 		pdev = of_platform_device_create(rtc, "opal-rtc", NULL);
 		of_node_put(rtc);
 	} else {
-		if (opal_check_token(OPAL_RTC_READ) == OPAL_TOKEN_PRESENT ||
-		    opal_check_token(OPAL_READ_TPO) == OPAL_TOKEN_PRESENT)
+		if (opal_check_token(OPAL_RTC_READ) ||
+		    opal_check_token(OPAL_READ_TPO))
 			pdev = platform_device_register_simple("opal-rtc", -1,
 							       NULL, 0);
 		else
 			return -ENODEV;
 	}
 
-	return PTR_RET(pdev);
+	return PTR_ERR_OR_ZERO(pdev);
 }
 machine_subsys_initcall(powernv, opal_time_init);

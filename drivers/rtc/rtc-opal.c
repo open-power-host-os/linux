@@ -214,7 +214,7 @@ static int opal_rtc_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static struct of_device_id opal_rtc_match[] = {
+static const struct of_device_id opal_rtc_match[] = {
 	{
 		.compatible	= "ibm,opal-rtc",
 	},
@@ -222,7 +222,7 @@ static struct of_device_id opal_rtc_match[] = {
 };
 MODULE_DEVICE_TABLE(of, opal_rtc_match);
 
-static struct platform_device_id opal_rtc_driver_ids[] = {
+static const struct platform_device_id opal_rtc_driver_ids[] = {
 	{
 		.name		= "opal-rtc",
 	},
