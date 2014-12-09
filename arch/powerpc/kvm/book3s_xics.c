@@ -1313,8 +1313,10 @@ int kvmppc_xics_connect_vcpu(struct kvm_device *dev, struct kvm_vcpu *vcpu,
 		return -EPERM;
 	if (xics->kvm != vcpu->kvm)
 		return -EPERM;
-	if (vcpu->arch.irq_type)
-		return -EBUSY;
+
+	/* If irq_type is already set, don't reinitialize */
+	if (vcpu->arch.irq_type != KVMPPC_IRQ_DEFAULT)
+		return 0;
 
 	r = kvmppc_xics_create_icp(vcpu, xcpu);
 	if (!r)
