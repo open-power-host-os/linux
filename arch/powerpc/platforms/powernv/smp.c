@@ -32,6 +32,8 @@
 #include <asm/opal.h>
 #include <asm/runlatch.h>
 #include <asm/processor.h>
+#include <asm/code-patching.h>
+#include <asm/dbell.h>
 
 #include "powernv.h"
 
@@ -165,7 +167,7 @@ static void pnv_smp_cpu_kill_self(void)
 	mtspr(SPRN_LPCR, mfspr(SPRN_LPCR) & ~(u64)LPCR_PECE1);
 	while (!generic_check_cpu_restart(cpu)) {
 		ppc64_runlatch_off();
-		srr1 = power7_nap();
+		srr1 = power7_nap(1);
 		ppc64_runlatch_on();
 
 		/*
@@ -185,9 +187,11 @@ static void pnv_smp_cpu_kill_self(void)
 			smp_mb();
 		}
 
-		if (!cpu_core_split_required())
-			if (generic_check_cpu_restart(cpu))
-				break;
+		if (cpu_core_split_required())
+			continue;
+
+		if (!generic_check_cpu_restart(cpu))
+			DBG("CPU%d Unexpected exit while offline !\n", cpu);
 	}
 	mtspr(SPRN_LPCR, mfspr(SPRN_LPCR) | LPCR_PECE1);
 	DBG("CPU%d coming online...\n", cpu);

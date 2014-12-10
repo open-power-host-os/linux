@@ -152,7 +152,6 @@ struct opal_sg_list {
 #define OPAL_PCI_ERR_INJECT			96
 #define OPAL_PCI_EEH_FREEZE_SET			97
 #define OPAL_HANDLE_HMI				98
-#define OPAL_SLW_SET_REG			100
 #define OPAL_REGISTER_DUMP_REGION		101
 #define OPAL_UNREGISTER_DUMP_REGION		102
 #define OPAL_WRITE_TPO				103
@@ -377,11 +376,6 @@ enum OpalEpowStatus {
 	OPAL_EPOW_UPS = 1,
 	OPAL_EPOW_OVER_AMBIENT_TEMP = 2,
 	OPAL_EPOW_OVER_INTERNAL_TEMP = 3
-};
-
-enum OpalCheckTokenStatus {
-       OPAL_TOKEN_ABSENT = 0,
-       OPAL_TOKEN_PRESENT = 1
 };
 
 /*
@@ -886,7 +880,6 @@ int64_t opal_pci_next_error(uint64_t phb_id, __be64 *first_frozen_pe,
 			    __be16 *pci_error_type, __be16 *severity);
 int64_t opal_pci_poll(uint64_t phb_id);
 int64_t opal_return_cpu(void);
-int64_t opal_slw_set_reg(uint64_t cpu_pir, uint64_t sprn, uint64_t val);
 int64_t opal_check_token(uint64_t token);
 int64_t opal_reinit_cpus(uint64_t flags);
 

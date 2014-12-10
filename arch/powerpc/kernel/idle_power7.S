@@ -139,17 +139,12 @@ _GLOBAL(power7_idle)
 	lwz	r4,ADDROFF(powersave_nap)(r3)
 	cmpwi	0,r4,0
 	beqlr
+	li	r3, 1
 	/* fall through */
 
 _GLOBAL(power7_nap)
+	mr	r4,r3
 	li	r3,0
-	li	r4,1
-	b	power7_powersave_common
-	/* No return */
-
-_GLOBAL(power7_forced_nap)
-	li	r3,0
-	li	r4,0
 	b	power7_powersave_common
 	/* No return */
 
@@ -238,7 +233,7 @@ END_FTR_SECTION_IFSET(CPU_FTR_HVMODE)
 
 /*
  * R3 here contains the value that will be returned to the caller
- * of power7_nap, power7_idle, etc.
+ * of power7_nap.
  */
 _GLOBAL(power7_wakeup_loss)
 	ld	r1,PACAR1(r13)
@@ -258,7 +253,7 @@ END_FTR_SECTION_IFSET(CPU_FTR_HVMODE)
 
 /*
  * R3 here contains the value that will be returned to the caller
- * of power7_nap, power7_idle, etc.
+ * of power7_nap.
  */
 _GLOBAL(power7_wakeup_noloss)
 	lbz	r0,PACA_NAPSTATELOST(r13)

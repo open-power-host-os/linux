@@ -26,7 +26,6 @@
 #include <linux/of_fdt.h>
 #include <linux/interrupt.h>
 #include <linux/bug.h>
-#include <linux/cpuidle.h>
 #include <linux/pci.h>
 #include <linux/cpufreq.h>
 
@@ -256,6 +255,13 @@ static void pnv_kexec_cpu_down(int crash_shutdown, int secondary)
 }
 #endif /* CONFIG_KEXEC */
 
+#ifdef CONFIG_MEMORY_HOTPLUG_SPARSE
+static unsigned long pnv_memory_block_size(void)
+{
+	return 256UL * 1024 * 1024;
+}
+#endif
+
 static void __init pnv_setup_machdep_opal(void)
 {
 	ppc_md.get_boot_time = opal_get_boot_time;
@@ -281,13 +287,6 @@ static void __init pnv_setup_machdep_rtas(void)
 	ppc_md.halt = rtas_halt;
 }
 #endif /* CONFIG_PPC_POWERNV_RTAS */
-
-#ifdef CONFIG_MEMORY_HOTPLUG_SPARSE
-static unsigned long pnv_memory_block_size(void)
-{
-	return 256UL * 1024 * 1024;
-}
-#endif
 
 static int __init pnv_probe(void)
 {

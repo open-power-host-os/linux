@@ -131,7 +131,7 @@ BEGIN_FTR_SECTION
 1:
 #endif
 
-	/* Return SRR1 from power7_nap() et al. */
+	/* Return SRR1 from power7_nap() */
 	mfspr	r3,SPRN_SRR1
 	beq	cr1,2f
 	b	power7_wakeup_noloss
@@ -1463,7 +1463,6 @@ unrecover_mce:
 1:	addi	r3,r1,STACK_FRAME_OVERHEAD
 	bl	unrecoverable_exception
 	b	1b
-
 /*
  * r13 points to the PACA, r9 contains the saved CR,
  * r12 contain the saved SRR1, SRR0 is still ready for return
