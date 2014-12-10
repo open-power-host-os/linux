@@ -152,7 +152,6 @@ struct opal_sg_list {
 #define OPAL_PCI_ERR_INJECT			96
 #define OPAL_PCI_EEH_FREEZE_SET			97
 #define OPAL_HANDLE_HMI				98
-#define OPAL_CONFIG_IDLE_STATE			99
 #define OPAL_SLW_SET_REG			100
 #define OPAL_REGISTER_DUMP_REGION		101
 #define OPAL_UNREGISTER_DUMP_REGION		102
@@ -872,9 +871,8 @@ extern struct kobject *opal_kobj;
 extern struct device_node *opal_node;
 
 /* Flags used for idle state discovery from the device tree */
-#define IDLE_INST_NAP		0x00010000 /* nap instruction can be used */
-#define IDLE_INST_SLEEP		0x00020000 /* sleep instruction can be used */
-#define IDLE_INST_SLEEP_ER1	0x00080000 /* Use sleep instruction with work around*/
+#define IDLE_INST_NAP	0x00010000 /* nap instruction can be used */
+#define IDLE_INST_SLEEP	0x00020000 /* sleep instruction can be used */
 
 /* API functions */
 int64_t opal_invalid_call(void);
@@ -997,7 +995,6 @@ int64_t opal_pci_next_error(uint64_t phb_id, __be64 *first_frozen_pe,
 int64_t opal_pci_poll(uint64_t phb_id);
 int64_t opal_return_cpu(void);
 int64_t opal_slw_set_reg(uint64_t cpu_pir, uint64_t sprn, uint64_t val);
-int64_t opal_config_idle_state(uint64_t state, uint64_t enter);
 int64_t opal_check_token(uint64_t token);
 int64_t opal_reinit_cpus(uint64_t flags);
 
