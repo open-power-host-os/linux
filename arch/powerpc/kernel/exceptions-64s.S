@@ -100,19 +100,6 @@ system_reset_pSeries:
 	SET_SCRATCH0(r13)
 #ifdef CONFIG_PPC_P7_NAP
 BEGIN_FTR_SECTION
-
-	GET_PACA(r13)
-#ifdef CONFIG_KVM_BOOK3S_HV_POSSIBLE
-	li	r0,KVM_HWTHREAD_IN_KERNEL
-	stb	r0,HSTATE_HWTHREAD_STATE(r13)
-	/* Order setting hwthread_state vs. testing hwthread_req */
-	sync
-	lbz	r0,HSTATE_HWTHREAD_REQ(r13)
-	cmpwi	r0,0
-	beq	1f
-	b	kvm_start_guest
-1:
-#endif
 	/* Running native on arch 2.06 or later, check if we are
 	 * waking up from nap. We only handle no state loss and
 	 * supervisor state loss. We do -not- handle hypervisor
@@ -129,8 +116,20 @@ BEGIN_FTR_SECTION
 	 * OPAL v3 based powernv platforms have new idle states
 	 * which fall in this catagory.
 	 */
-	GET_PACA(r13)
 	bgt	cr1,8f
+	GET_PACA(r13)
+
+#ifdef CONFIG_KVM_BOOK3S_HV_POSSIBLE
+	li	r0,KVM_HWTHREAD_IN_KERNEL
+	stb	r0,HSTATE_HWTHREAD_STATE(r13)
+	/* Order setting hwthread_state vs. testing hwthread_req */
+	sync
+	lbz	r0,HSTATE_HWTHREAD_REQ(r13)
+	cmpwi	r0,0
+	beq	1f
+	b	kvm_start_guest
+1:
+#endif
 
 	/* Return SRR1 from power7_nap() et al. */
 	mfspr	r3,SPRN_SRR1
@@ -139,7 +138,8 @@ BEGIN_FTR_SECTION
 2:	b	power7_wakeup_loss
 
 	/* Fast Sleep wakeup on PowerNV */
-8:	b 	power7_wakeup_tb_loss
+8:	GET_PACA(r13)
+	b 	power7_wakeup_tb_loss
 
 9:
 END_FTR_SECTION_IFSET(CPU_FTR_HVMODE | CPU_FTR_ARCH_206)
