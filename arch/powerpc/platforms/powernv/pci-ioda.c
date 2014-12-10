@@ -671,7 +671,7 @@ static int pnv_ioda_set_peltv(struct pnv_phb *phb,
 			      bool is_add)
 {
 	struct pnv_ioda_pe *slave;
-	struct pci_dev *pdev;
+	struct pci_dev *pdev = NULL;
 	int ret;
 
 	/*
@@ -710,8 +710,12 @@ static int pnv_ioda_set_peltv(struct pnv_phb *phb,
 
 	if (pe->flags & (PNV_IODA_PE_BUS_ALL | PNV_IODA_PE_BUS))
 		pdev = pe->pbus->self;
-	else
+	else if (pe->flags & PNV_IODA_PE_DEV)
 		pdev = pe->pdev->bus->self;
+#ifdef CONFIG_PCI_IOV
+	else if (pe->flags & PNV_IODA_PE_VF)
+		pdev = pe->parent_dev->bus->self;
+#endif /* CONFIG_PCI_IOV */
 	while (pdev) {
 		struct pci_dn *pdn = pci_get_pdn(pdev);
 		struct pnv_ioda_pe *parent;
@@ -731,7 +735,6 @@ static int pnv_ioda_set_peltv(struct pnv_phb *phb,
 
 static int pnv_ioda_configure_pe(struct pnv_phb *phb, struct pnv_ioda_pe *pe)
 {
-	struct pci_dev *parent;
 	uint8_t bcomp, dcomp, fcomp;
 	long rc, rid_end, rid;
 
@@ -741,7 +744,6 @@ static int pnv_ioda_configure_pe(struct pnv_phb *phb, struct pnv_ioda_pe *pe)
 
 		dcomp = OPAL_IGNORE_RID_DEVICE_NUMBER;
 		fcomp = OPAL_IGNORE_RID_FUNCTION_NUMBER;
-		parent = pe->pbus->self;
 		if (pe->flags & PNV_IODA_PE_BUS_ALL)
 			count = pe->pbus->busn_res.end - pe->pbus->busn_res.start + 1;
 		else
@@ -764,12 +766,6 @@ static int pnv_ioda_configure_pe(struct pnv_phb *phb, struct pnv_ioda_pe *pe)
 		}
 		rid_end = pe->rid + (count << 8);
 	} else {
-#ifdef CONFIG_PCI_IOV
-		if (pe->flags & PNV_IODA_PE_VF)
-			parent = pe->parent_dev;
-		else
-#endif /* CONFIG_PCI_IOV */
-			parent = pe->pdev->bus->self;
 		bcomp = OpalPciBusAll;
 		dcomp = OPAL_COMPARE_RID_DEVICE_NUMBER;
 		fcomp = OPAL_COMPARE_RID_FUNCTION_NUMBER;
