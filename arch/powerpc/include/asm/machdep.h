@@ -279,7 +279,6 @@ struct machdep_calls {
 	/* Idle handlers */
 	void 		(*setup_idle)(void);
 	unsigned long	(*power7_sleep)(void);
-	unsigned long	(*power7_winkle)(void);
 };
 
 extern void e500_idle(void);
