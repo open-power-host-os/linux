@@ -62,12 +62,11 @@ static ssize_t eeh_pe_state_show(struct device *dev,
 	int state;
 
 	if (!edev || !edev->pe)
-		return 0;
+		return -ENODEV;
 
 	state = eeh_ops->get_state(edev->pe, NULL);
-	return sprintf(buf, "PHB#%d-PE#%d: 0x%08x 0x%08x\n",
-		       edev->pe->phb->global_number,
-		       edev->pe->addr, state, edev->pe->state);
+	return sprintf(buf, "0x%08x 0x%08x\n",
+		       state, edev->pe->state);
 }
 
 static ssize_t eeh_pe_state_store(struct device *dev,
