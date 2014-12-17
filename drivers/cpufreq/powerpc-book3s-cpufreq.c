@@ -27,6 +27,7 @@
 #include <linux/reboot.h>
 
 #include <asm/cputhreads.h>
+#include <asm/firmware.h>
 #include <asm/topology.h>
 #include <asm/machdep.h>
 #include <asm/prom.h>
@@ -129,7 +130,10 @@ static int init_powernv_pstates(void)
 
 	nr_pstates = prop->length/sizeof(u32);
 
-	WARN_ON(!nr_pstates);
+	if (!nr_pstates) {
+		pr_warn("No PStates found\n");
+		return -ENODEV;
+	}
 
 	pr_debug("NR PStates %d\n", nr_pstates);
 	for (i = 0; i < nr_pstates; i++) {
@@ -158,7 +162,12 @@ static unsigned int pstate_id_to_freq(int pstate_id)
 	int i;
 
 	i = powernv_pstate_info.max - pstate_id;
-	BUG_ON(i >= powernv_pstate_info.nr_pstates || i < 0);
+	if (i >= powernv_pstate_info.nr_pstates || i < 0) {
+		pr_warn("PState id %d outside of PState table, "
+			"reporting nominal id %d instead\n",
+			pstate_id, powernv_pstate_info.nominal);
+		i = powernv_pstate_info.max - powernv_pstate_info.nominal;
+	}
 
 	return powernv_freqs[i].frequency;
 }
@@ -405,6 +414,10 @@ static struct cpufreq_driver powernv_cpufreq_driver = {
 static int __init powernv_cpufreq_init(void)
 {
 	int rc = 0;
+
+	/* Don't probe on pseries (guest) platforms */
+	if (!firmware_has_feature(FW_FEATURE_OPALv3))
+		return -ENODEV;
 
 	/* Detect pstates from device tree and init */
 
