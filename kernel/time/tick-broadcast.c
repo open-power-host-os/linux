@@ -675,8 +675,11 @@ static void broadcast_move_bc(int deadcpu)
 
 	if (!bc || !broadcast_needs_cpu(bc, deadcpu))
 		return;
-	/* This moves the broadcast assignment to this cpu */
-	clockevents_program_event(bc, bc->next_event, 1);
+	/* Since a cpu with the earliest wakeup is nominated as the 
+	 * standby cpu, the next cpu to invoke BROADCAST_ENTER
+	 * will now automatically take up the duty of broadcasting.
+	 */
+	bc->next_event.tv64 = KTIME_MAX;
 }
 
 /*
