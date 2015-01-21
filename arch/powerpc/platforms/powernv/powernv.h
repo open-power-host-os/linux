@@ -27,6 +27,8 @@ static inline u64 pnv_pci_dma_get_required_mask(struct pci_dev *pdev)
 
 bool cpu_core_split_required(void);
 
+extern u32 pnv_get_supported_cpuidle_states(void);
+
 extern void pnv_lpc_init(void);
 
 #endif /* _POWERNV_H */

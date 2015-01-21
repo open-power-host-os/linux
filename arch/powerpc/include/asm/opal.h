@@ -185,6 +185,14 @@ extern int opal_enter_rtas(struct rtas_args *args,
 #define OPAL_READ_TPO				104
 #define OPAL_GET_DPO_STATUS			105
 
+/* Device tree flags */
+
+/* Flags set in power-mgmt nodes in device tree if
+ * respective idle states are supported in the platform.
+ */
+#define OPAL_PM_NAP_ENABLED	0x00010000
+#define OPAL_PM_SLEEP_ENABLED	0x00020000
+
 #ifndef __ASSEMBLY__
 
 /* Other enums */

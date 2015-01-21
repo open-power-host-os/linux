@@ -159,6 +159,7 @@ static void pnv_smp_cpu_kill_self(void)
 {
 	unsigned int cpu;
 	unsigned long srr1;
+	u32 idle_states;
 
 	/* Standard hot unplug procedure */
 	local_irq_disable();
@@ -169,13 +170,17 @@ static void pnv_smp_cpu_kill_self(void)
 	generic_set_cpu_dead(cpu);
 	smp_wmb();
 
+	idle_states = pnv_get_supported_cpuidle_states();
 	/* We don't want to take decrementer interrupts while we are offline,
 	 * so clear LPCR:PECE1. We keep PECE2 enabled.
 	 */
 	mtspr(SPRN_LPCR, mfspr(SPRN_LPCR) & ~(u64)LPCR_PECE1);
 	while (!generic_check_cpu_restart(cpu)) {
 		ppc64_runlatch_off();
-		srr1 = power7_nap();
+		if (idle_states & OPAL_PM_SLEEP_ENABLED)
+			srr1 = power7_sleep();
+		else
+			srr1 = power7_nap();
 		ppc64_runlatch_on();
 
 		/*
