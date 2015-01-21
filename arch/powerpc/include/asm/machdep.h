@@ -273,10 +273,6 @@ struct machdep_calls {
 #ifdef CONFIG_ARCH_RANDOM
 	int (*get_random_long)(unsigned long *v);
 #endif
-	/* Idle handlers */
-	void 		(*setup_idle)(void);
-	unsigned long	(*power7_sleep)(void);
-	unsigned long	(*power7_winkle)(void);
 };
 
 extern void e500_idle(void);

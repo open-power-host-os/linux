@@ -35,19 +35,8 @@
 #include <asm/rtas.h>
 #include <asm/opal.h>
 #include <asm/kexec.h>
-#include <asm/cputhreads.h>
 
 #include "powernv.h"
-
-/* Per-cpu structures to keep track of cpus of a core that
- * are in idle states >= fastsleep so as to call opal for
- * sleep setup when the entire core is ready to go to fastsleep.
- *
- * We need sometihng similar to a per-core lock. For now we
- * achieve this by taking the lock of the primary thread in the core.
- */
-static DEFINE_PER_CPU(spinlock_t, fastsleep_override_lock);
-static DEFINE_PER_CPU(int, fastsleep_cnt);
 
 static void __init pnv_setup_arch(void)
 {
@@ -263,7 +252,6 @@ static void pnv_kexec_cpu_down(int crash_shutdown, int secondary)
 }
 #endif /* CONFIG_KEXEC */
 
-/* PowerNV idle routines */
 void powernv_idle(void)
 {
 	/* Hook to cpuidle framework if available, else
@@ -273,204 +261,6 @@ void powernv_idle(void)
 		power7_idle();
 	}
 }
-
-static unsigned int supported_cpuidle_states = 0;
-static int need_fastsleep_workaround = 0;
-
-unsigned int pnv_get_supported_cpuidle_states(void)
-{
-	return supported_cpuidle_states;
-}
-
-int pnv_save_sprs_for_winkle(void)
-{
-	int cpu;
-	int rc;
-
-	/*
-	* hid0, hid1, hid4, hid5, hmeer and lpcr values are symmetric accross
-	* all cpus at boot. Get these reg values of current cpu and use the
-	* same accross all cpus.
-	*/
-	uint64_t lpcr_val = mfspr(SPRN_LPCR);
-	uint64_t hid0_val = mfspr(SPRN_HID0);
-	uint64_t hid1_val = mfspr(SPRN_HID1);
-	uint64_t hid4_val = mfspr(SPRN_HID4);
-	uint64_t hid5_val = mfspr(SPRN_HID5);
-	uint64_t hmeer_val = mfspr(SPRN_HMEER);
-	for_each_possible_cpu(cpu) {
-		uint64_t pir = get_hard_smp_processor_id(cpu);
-		uint64_t local_paca_ptr = (uint64_t)&paca[cpu];
-
-		rc = opal_slw_set_reg(pir, SPRN_HSPRG0, local_paca_ptr);
-		if (rc != 0)
-			return rc;
-
-		rc = opal_slw_set_reg(pir, SPRN_LPCR, lpcr_val);
-		if (rc != 0)
-			return rc;
-
-		/* HIDs are per core registers */
-		if (cpu_thread_in_core(cpu) == 0) {
-
-			rc = opal_slw_set_reg(pir, SPRN_HMEER, hmeer_val);
-			if (rc != 0)
-				return rc;
-
-			rc = opal_slw_set_reg(pir, SPRN_HID0, hid0_val);
-			if (rc != 0)
-				return rc;
-
-			rc = opal_slw_set_reg(pir, SPRN_HID1, hid1_val);
-			if (rc != 0)
-				return rc;
-
-			rc = opal_slw_set_reg(pir, SPRN_HID4, hid4_val);
-			if (rc != 0)
-				return rc;
-
-			rc = opal_slw_set_reg(pir, SPRN_HID5, hid5_val);
-			if (rc != 0)
-				return rc;
-
-		}
-
-	}
-
-	return 0;
-
-}
-static int __init pnv_probe_idle_states(void)
-{
-	struct device_node *power_mgt;
-	struct property *prop;
-	int dt_idle_states;
-	u32 *flags;
-	int i;
-
-	if (!firmware_has_feature(FW_FEATURE_OPALv3))
-		return 0;
-
-	power_mgt = of_find_node_by_path("/ibm,opal/power-mgt");
-	if (!power_mgt) {
-		pr_warn("opal: PowerMgmt Node not found\n");
-		return 0;
-	}
-
-	prop = of_find_property(power_mgt, "ibm,cpu-idle-state-flags", NULL);
-	if (!prop) {
-		pr_warn("DT-PowerMgmt: missing ibm,cpu-idle-state-flags\n");
-		return 0;
-	}
-
-	dt_idle_states = prop->length / sizeof(u32);
-	flags = (u32 *) prop->value;
-
-	for (i = 0; i < dt_idle_states; i++) {
-		if (flags[i] & IDLE_INST_NAP)
-			supported_cpuidle_states |= IDLE_USE_NAP;
-
-/*
- * Force disable fast-sleep and winkle due to timebase resync
- * issue. Re-enable with timebase sync fix.
- */
-#if 0
-		if (flags[i] & IDLE_INST_SLEEP)
-			supported_cpuidle_states |= IDLE_USE_SLEEP;
-
-		if (flags[i] & IDLE_INST_SLEEP_ER1) {
-			supported_cpuidle_states |= IDLE_USE_SLEEP;
-			need_fastsleep_workaround = 1;
-		}
-
-		if (flags[i] & IDLE_INST_WINKLE) {
-
-			/*
-			 * If winkle is supported, save HSPRG0, HIDs and LPCR
-			 * contents via OPAL. Enable winkle only if this
-			 * succeeds.
-			 */
-
-			int opal_ret_val = pnv_save_sprs_for_winkle();
-			if (!opal_ret_val)
-				supported_cpuidle_states |= IDLE_USE_WINKLE;
-			else
-				pr_warn("opal: opal_slw_set_reg failed with rc=%d, disabling winkle\n",
-						opal_ret_val);
-		}
-#endif
-	}
-
-	return 0;
-}
-
-__initcall(pnv_probe_idle_states);
-
-static void pnv_setup_idle(void)
-{
-	int cpu;
-	for_each_possible_cpu(cpu) {
-		spin_lock_init(&per_cpu(fastsleep_override_lock, cpu));
-		per_cpu(fastsleep_cnt, cpu) = threads_per_core;
-       }
-}
-
-static void pnv_apply_fastsleep_workaround(bool enter_fastsleep, int primary_thread)
-{
-	if (enter_fastsleep) {
-		spin_lock(&per_cpu(fastsleep_override_lock, primary_thread));
-		if (--(per_cpu(fastsleep_cnt, primary_thread)) == 0)
-			opal_config_idle_state(1,1);
-	        spin_unlock(&per_cpu(fastsleep_override_lock, primary_thread));
-	} else {
-		spin_lock(&per_cpu(fastsleep_override_lock, primary_thread));
-		if ((per_cpu(fastsleep_cnt, primary_thread)) == 0)
-			opal_config_idle_state(1,0);
-	 	per_cpu(fastsleep_cnt, primary_thread)++;
-		spin_unlock(&per_cpu(fastsleep_override_lock, primary_thread));
-	}
-}
-
-static unsigned long pnv_power7_sleep(void)
-{
-	int cpu, primary_thread;
-	unsigned long srr1;
-
-	cpu = smp_processor_id();
-	primary_thread = cpu_first_thread_sibling(cpu);
-
-	if (need_fastsleep_workaround) {
-               pnv_apply_fastsleep_workaround(1, primary_thread);
-	       srr1 = __power7_sleep();
-               pnv_apply_fastsleep_workaround(0, primary_thread);
-	} else {
-		srr1 = __power7_sleep();
-	}
-	return srr1;
-}
-
-/*
- * We need to keep track of offline cpus also for calling
- * fastsleep workaround appropriately
- */
-static unsigned long pnv_power7_winkle(void)
-{
-	int cpu, primary_thread;
-	unsigned long srr1;
-
-	cpu = smp_processor_id();
-	primary_thread = cpu_first_thread_sibling(cpu);
-
-	if (need_fastsleep_workaround) {
-		pnv_apply_fastsleep_workaround(1, primary_thread);
-		srr1 = __power7_winkle();
-		pnv_apply_fastsleep_workaround(0, primary_thread);
-	} else {
-			srr1 = __power7_winkle();
-	}
-	return srr1;
-}
-
 
 static void __init pnv_setup_machdep_opal(void)
 {
@@ -482,9 +272,6 @@ static void __init pnv_setup_machdep_opal(void)
 	ppc_md.mce_check_early_recovery = opal_mce_check_early_recovery;
 	ppc_md.hmi_exception_early = opal_hmi_exception_early;
 	ppc_md.handle_hmi_exception = opal_handle_hmi_exception;
-	ppc_md.setup_idle = pnv_setup_idle;
-	ppc_md.power7_sleep = pnv_power7_sleep;
-	ppc_md.power7_winkle = pnv_power7_winkle;
 }
 
 #ifdef CONFIG_PPC_POWERNV_RTAS

@@ -24,15 +24,15 @@
 #include <asm/reg.h>
 #include <asm/machdep.h>
 #include <asm/firmware.h>
-#include <asm/opal.h>
 #include <asm/runlatch.h>
-#include <asm/processor.h>
 #include <asm/time.h>
 #include <asm/plpar_wrappers.h>
 
 /* Flags and constants used in PowerNV platform */
 
 #define MAX_POWERNV_IDLE_STATES	8
+#define IDLE_USE_INST_NAP	0x00010000 /* Use nap instruction */
+#define IDLE_USE_INST_SLEEP	0x00020000 /* Use sleep instruction */
 
 struct cpuidle_driver powerpc_book3s_idle_driver = {
 	.name             = "powerpc_book3s_idle",
@@ -446,7 +446,7 @@ static int powernv_add_idle_states(void)
 
 	for (i = 0; i < dt_idle_states; i++) {
 
-		if (flags[i] & IDLE_INST_NAP) {
+		if (flags[i] & IDLE_USE_INST_NAP) {
 			/* Add NAP state */
 			strcpy(powernv_states[nr_idle_states].name, "Nap");
 			strcpy(powernv_states[nr_idle_states].desc, "Nap");
@@ -457,12 +457,7 @@ static int powernv_add_idle_states(void)
 			nr_idle_states++;
 		}
 
-/*
- * Disable fast-sleep now and enable after ensuring that
- * only the first waking thread will call timebase resync.
- */
-#if 0
-		if ((flags[i] & IDLE_INST_SLEEP_ER1) || (flags[i] & IDLE_INST_SLEEP)) {
+		if (flags[i] & IDLE_USE_INST_SLEEP) {
 			/* Add FASTSLEEP state */
 			strcpy(powernv_states[nr_idle_states].name, "FastSleep");
 			strcpy(powernv_states[nr_idle_states].desc, "FastSleep");
@@ -472,7 +467,6 @@ static int powernv_add_idle_states(void)
 			powernv_states[nr_idle_states].enter = &fastsleep_loop;
 			nr_idle_states++;
 		}
-#endif
 	}
 
 	return nr_idle_states;
@@ -546,9 +540,6 @@ static int __init powerpc_book3s_processor_idle_init(void)
 
 	register_cpu_notifier(&setup_hotplug_notifier);
 	printk(KERN_DEBUG "powerpc_book3s_idle registered\n");
-
-	/* If any idle states require special initializations before cpuidle kicks in */
-        arch_setup_idle();
 	return 0;
 }
 

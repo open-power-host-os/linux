@@ -7,14 +7,6 @@ extern void pnv_smp_init(void);
 static inline void pnv_smp_init(void) { }
 #endif
 
-/* Flags to indicate which of the CPU idle states are available for use */
-
-#define IDLE_USE_NAP		(1UL << 0)
-#define IDLE_USE_SLEEP		(1UL << 1)
-#define IDLE_USE_WINKLE                (1UL << 3)
-
-extern unsigned int pnv_get_supported_cpuidle_states(void);
-
 struct pci_dev;
 
 #ifdef CONFIG_PCI

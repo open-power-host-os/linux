@@ -31,7 +31,6 @@
 #ifndef __ASSEMBLY__
 #include <linux/compiler.h>
 #include <linux/cache.h>
-#include <asm/percpu.h>
 #include <asm/ptrace.h>
 #include <asm/types.h>
 #include <asm/hw_breakpoint.h>
@@ -432,14 +431,12 @@ static inline unsigned long get_clean_sp(unsigned long sp, int is_32)
 
 extern unsigned long cpuidle_disable;
 enum idle_boot_override {IDLE_NO_OVERRIDE = 0, IDLE_POWERSAVE_OFF};
+
 extern int powersave_nap;	/* set if nap mode can be used in idle loop */
-extern void arch_setup_idle(void);
 extern unsigned long power7_nap(void);
 extern unsigned long power7_forced_nap(void);
 extern unsigned long power7_sleep(void);
-extern unsigned long __power7_sleep(void);
-extern unsigned long power7_winkle(void);
-extern unsigned long __power7_winkle(void);
+
 #ifdef CONFIG_CPU_IDLE_POWERPC_BOOK3S
 extern void update_smt_snooze_delay(int cpu, int residency);
 #else

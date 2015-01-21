@@ -24,7 +24,6 @@
 #include <asm/smp.h>
 
 #include "subcore.h"
-#include "powernv.h"
 
 
 /*
@@ -169,16 +168,6 @@ static void set_sync_step(int step)
 		per_cpu(split_state, i).step = step;
 }
 
-static void update_hid_in_slw(u64 hid0)
-{
-	u64 idle_states = pnv_get_supported_cpuidle_states();
-	if (idle_states & IDLE_USE_WINKLE) {
-		/* OPAL call to patch slw with the new HID0 value */
-		u64 cpu_pir = hard_smp_processor_id();
-		opal_slw_set_reg(cpu_pir, SPRN_HID0, hid0);
-	}
-}
-
 static void unsplit_core(void)
 {
 	u64 hid0, mask;
@@ -198,7 +187,6 @@ static void unsplit_core(void)
 	hid0 = mfspr(SPRN_HID0);
 	hid0 &= ~HID0_POWER8_DYNLPARDIS;
 	mtspr(SPRN_HID0, hid0);
-	update_hid_in_slw(hid0);
 
 	while (mfspr(SPRN_HID0) & mask)
 		cpu_relax();
@@ -235,7 +223,6 @@ static void split_core(int new_mode)
 	hid0  = mfspr(SPRN_HID0);
 	hid0 |= HID0_POWER8_DYNLPARDIS | split_parms[i].value;
 	mtspr(SPRN_HID0, hid0);
-	update_hid_in_slw(hid0);
 
 	/* Wait for it to happen */
 	while (!(mfspr(SPRN_HID0) & split_parms[i].mask))

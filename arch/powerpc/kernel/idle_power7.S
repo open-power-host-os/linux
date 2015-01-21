@@ -18,14 +18,6 @@
 #include <asm/hw_irq.h>
 #include <asm/kvm_book3s_asm.h>
 #include <asm/opal.h>
-#include <asm/mmu-hash64.h>
-
-/*
- * Use volatile GPRs' space to save essential SPRs before entering winkle
- */
-#define _SDR1	GPR3
-#define _HFSCR	GPR4
-#define _TSCR	GPR5
 
 #undef DEBUG
 
@@ -47,7 +39,6 @@
  * Pass requested state in r3:
  * 	0 - nap
  * 	1 - sleep
- *	2 - winkle
  *
  * Pass wether to check for pending interrupts in r4
  */
@@ -135,30 +126,9 @@ power7_enter_nap_mode:
 #endif
 	cmpwi	cr0,r3,1
 	beq	2f
-	cmpwi	cr0,r3,2
-	beq	3f
 	IDLE_STATE_ENTER_SEQ(PPC_NAP)
 	/* No return */
-2:
-	li	r4,1
-	stb	r4,PACAOFFLINESTATE(r13)
-	IDLE_STATE_ENTER_SEQ(PPC_SLEEP)
-	/* No return */
-
-3:
-	mfspr   r4,SPRN_SDR1
-	std     r4,_SDR1(r1)
-
-	mfspr   r4,SPRN_HFSCR
-	std     r4,_HFSCR(r1)
-
-	mfspr   r4,SPRN_TSCR
-	std     r4,_TSCR(r1)
-
-	/* Enter winkle */
-        li      r4,0
-        stb     r4,PACAOFFLINESTATE(r13)
-	IDLE_STATE_ENTER_SEQ(PPC_WINKLE)
+2:	IDLE_STATE_ENTER_SEQ(PPC_SLEEP)
 	/* No return */
 
 _GLOBAL(power7_idle)
@@ -181,7 +151,7 @@ _GLOBAL(power7_forced_nap)
 	b	power7_powersave_common
 	/* No return */
 
-_GLOBAL(__power7_sleep)
+_GLOBAL(power7_sleep)
 	li	r3,1
 	li	r4,1
 	b	power7_powersave_common
@@ -209,60 +179,6 @@ ALT_FTR_SECTION_END_NESTED_IFSET(CPU_FTR_ARCH_207S, 66);		\
 	ld	r3,ORIG_GPR3(r1);	/* Restore original r3 */	\
 20:	nop;
 
-
-_GLOBAL(__power7_winkle)
-	li	r3,2
-	li	r4,1
-	b	power7_powersave_common
-	/* No return */
-
-_GLOBAL(power7_wakeup_hv_state_loss)
-	/* Check paca flag to diffentiate b/w fast sleep and winkle */
-	lbz	r4,PACAOFFLINESTATE(13)
-	cmpwi	cr0,r4,0
-	bne	power7_wakeup_tb_loss
-
-	ld      r2,PACATOC(r13);
-	ld      r1,PACAR1(r13)
-
-	bl 	__restore_cpu_power8
-
-	/* Time base re-sync */
-	li      r0,OPAL_RESYNC_TIMEBASE
-	LOAD_REG_ADDR(r11,opal);
-	ld      r12,8(r11);
-	ld      r2,0(r11);
-	mtctr   r12
-	bctrl
-
-	/* Restore SLB  from PACA */
-	ld      r4,PACA_SLBSHADOWPTR(r13)
-	.rept   SLB_NUM_BOLTED
-	ld      r5,SLBSHADOW_SAVEAREA(r4)
-	ld      r6,SLBSHADOW_SAVEAREA+8(r4)
-	andis.  r7,r5,SLB_ESID_V@h
-	beq     1f
-	slbmte  r6,r5
-	1:      addi    r4,r4,16
-	.endr
-
-	ld      r4,_SDR1(r1)
-	mtspr   SPRN_SDR1,r4
-
-	ld      r4,_TSCR(r1)
-	mtspr   SPRN_TSCR,r4
-
-	REST_NVGPRS(r1)
-	REST_GPR(2, r1)
-	ld      r3,_CCR(r1)
-	ld      r4,_MSR(r1)
-	ld      r5,_NIP(r1)
-	addi    r1,r1,INT_FRAME_SIZE
-	mtcr    r3
-	mfspr   r3,SPRN_SRR1            /* Return SRR1 */
-	mtspr   SPRN_SRR1,r4
-	mtspr   SPRN_SRR0,r5
-	rfid
 
 _GLOBAL(power7_wakeup_tb_loss)
 	ld	r2,PACATOC(r13);

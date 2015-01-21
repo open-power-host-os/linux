@@ -28,9 +28,6 @@
 
 #include <asm/processor.h>
 #include <asm/cputable.h>
-#include <asm/cputhreads.h>
-#include <asm/firmware.h>
-#include <asm/opal.h>
 #include <asm/time.h>
 #include <asm/machdep.h>
 #include <asm/runlatch.h>
@@ -82,34 +79,7 @@ void arch_cpu_idle(void)
 	ppc64_runlatch_on();
 }
 
-void arch_setup_idle(void)
-{
-	if (ppc_md.setup_idle)
-		ppc_md.setup_idle();
-}
-
-unsigned long power7_sleep(void)
-{
-	unsigned long ret;
-	if (ppc_md.power7_sleep)
-		ret = ppc_md.power7_sleep();
-	else
-		ret = __power7_sleep();
-	return ret;
-}
-
-unsigned long power7_winkle(void)
-{
-	unsigned long ret;
-	if (ppc_md.power7_winkle)
-		ret = ppc_md.power7_winkle();
-	else
-		ret = __power7_winkle();
-	return ret;
-}
-
 int powersave_nap;
-
 
 #ifdef CONFIG_SYSCTL
 /*
