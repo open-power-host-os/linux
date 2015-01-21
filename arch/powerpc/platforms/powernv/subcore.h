@@ -16,4 +16,5 @@
 
 #ifndef __ASSEMBLY__
 void split_core_secondary_loop(u8 *state);
+extern void update_subcore_sibling_mask(void);
 #endif
