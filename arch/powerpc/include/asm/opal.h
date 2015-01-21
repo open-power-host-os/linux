@@ -179,6 +179,7 @@ extern int opal_enter_rtas(struct rtas_args *args,
 #define OPAL_PCI_ERR_INJCT			96
 #define OPAL_PCI_EEH_FREEZE_SET			97
 #define OPAL_HANDLE_HMI				98
+#define OPAL_CONFIG_CPU_IDLE_STATE		99
 #define OPAL_REGISTER_DUMP_REGION		101
 #define OPAL_UNREGISTER_DUMP_REGION		102
 #define OPAL_WRITE_TPO				103
@@ -192,6 +193,7 @@ extern int opal_enter_rtas(struct rtas_args *args,
  */
 #define OPAL_PM_NAP_ENABLED	0x00010000
 #define OPAL_PM_SLEEP_ENABLED	0x00020000
+#define OPAL_PM_SLEEP_ENABLED_ER1	0x00080000
 
 #ifndef __ASSEMBLY__
 
