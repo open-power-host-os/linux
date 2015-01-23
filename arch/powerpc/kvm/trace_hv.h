@@ -2,242 +2,222 @@
 #define _TRACE_KVM_HV_H
 
 #include <linux/tracepoint.h>
+#include "trace_book3s.h"
+#include <asm/hvcall.h>
+#include <asm/kvm_asm.h>
 
 #undef TRACE_SYSTEM
 #define TRACE_SYSTEM kvm_hv
 #define TRACE_INCLUDE_PATH .
 #define TRACE_INCLUDE_FILE trace_hv
 
-#define kvm_trace_symbol_exit \
-	{0x100, "SYSTEM_RESET"}, \
-	{0x200, "MACHINE_CHECK"}, \
-	{0x300, "DATA_STORAGE"}, \
-	{0x380, "DATA_SEGMENT"}, \
-	{0x400, "INST_STORAGE"}, \
-	{0x480, "INST_SEGMENT"}, \
-	{0x500, "EXTERNAL"}, \
-	{0x502, "EXTERNAL_HV"}, \
-	{0x600, "ALIGNMENT"}, \
-	{0x700, "PROGRAM"}, \
-	{0x800, "FP_UNAVAIL"}, \
-	{0x900, "DECREMENTER"}, \
-	{0x980, "HV_DECREMENTER"}, \
-	{0xc00, "SYSCALL"}, \
-	{0xd00, "TRACE"}, \
-	{0xe00, "H_DATA_STORAGE"}, \
-	{0xe20, "H_INST_STORAGE"}, \
-	{0xe40, "H_EMUL_ASSIST"}, \
-	{0xf00, "PERFMON"}, \
-	{0xf20, "ALTIVEC"}, \
-	{0xf40, "VSX"}
-
 #define kvm_trace_symbol_hcall \
-	{0x04, "H_REMOVE"}, \
-	{0x08, "H_ENTER"}, \
-	{0x0c, "H_READ"}, \
-	{0x10, "H_CLEAR_MOD"}, \
-	{0x14, "H_CLEAR_REF"}, \
-	{0x18, "H_PROTECT"}, \
-	{0x1c, "H_GET_TCE"}, \
-	{0x20, "H_PUT_TCE"}, \
-	{0x24, "H_SET_SPRG0"}, \
-	{0x28, "H_SET_DABR"}, \
-	{0x2c, "H_PAGE_INIT"}, \
-	{0x30, "H_SET_ASR"}, \
-	{0x34, "H_ASR_ON"}, \
-	{0x38, "H_ASR_OFF"}, \
-	{0x3c, "H_LOGICAL_CI_LOAD"}, \
-	{0x40, "H_LOGICAL_CI_STORE"}, \
-	{0x44, "H_LOGICAL_CACHE_LOAD"}, \
-	{0x48, "H_LOGICAL_CACHE_STORE"}, \
-	{0x4c, "H_LOGICAL_ICBI"}, \
-	{0x50, "H_LOGICAL_DCBF"}, \
-	{0x54, "H_GET_TERM_CHAR"}, \
-	{0x58, "H_PUT_TERM_CHAR"}, \
-	{0x5c, "H_REAL_TO_LOGICAL"}, \
-	{0x60, "H_HYPERVISOR_DATA"}, \
-	{0x64, "H_EOI"}, \
-	{0x68, "H_CPPR"}, \
-	{0x6c, "H_IPI"}, \
-	{0x70, "H_IPOLL"}, \
-	{0x74, "H_XIRR"}, \
-	{0x7c, "H_PERFMON"}, \
-	{0x78, "H_MIGRATE_DMA"}, \
-	{0xDC, "H_REGISTER_VPA"}, \
-	{0xE0, "H_CEDE"}, \
-	{0xE4, "H_CONFER"}, \
-	{0xE8, "H_PROD"}, \
-	{0xEC, "H_GET_PPP"}, \
-	{0xF0, "H_SET_PPP"}, \
-	{0xF4, "H_PURR"}, \
-	{0xF8, "H_PIC"}, \
-	{0xFC, "H_REG_CRQ"}, \
-	{0x100, "H_FREE_CRQ"}, \
-	{0x104, "H_VIO_SIGNAL"}, \
-	{0x108, "H_SEND_CRQ"}, \
-	{0x110, "H_COPY_RDMA"}, \
-	{0x114, "H_REGISTER_LOGICAL_LAN"}, \
-	{0x118, "H_FREE_LOGICAL_LAN"}, \
-	{0x11C, "H_ADD_LOGICAL_LAN_BUFFER"}, \
-	{0x120, "H_SEND_LOGICAL_LAN"}, \
-	{0x124, "H_BULK_REMOVE"}, \
-	{0x130, "H_MULTICAST_CTRL"}, \
-	{0x134, "H_SET_XDABR"}, \
-	{0x138, "H_STUFF_TCE"}, \
-	{0x13C, "H_PUT_TCE_INDIRECT"}, \
-	{0x14C, "H_CHANGE_LOGICAL_LAN_MAC"}, \
-	{0x150, "H_VTERM_PARTNER_INFO"}, \
-	{0x154, "H_REGISTER_VTERM"}, \
-	{0x158, "H_FREE_VTERM"}, \
-	{0x15C, "H_RESET_EVENTS"}, \
-	{0x160, "H_ALLOC_RESOURCE"}, \
-	{0x164, "H_FREE_RESOURCE"}, \
-	{0x168, "H_MODIFY_QP"}, \
-	{0x16C, "H_QUERY_QP"}, \
-	{0x170, "H_REREGISTER_PMR"}, \
-	{0x174, "H_REGISTER_SMR"}, \
-	{0x178, "H_QUERY_MR"}, \
-	{0x17C, "H_QUERY_MW"}, \
-	{0x180, "H_QUERY_HCA"}, \
-	{0x184, "H_QUERY_PORT"}, \
-	{0x188, "H_MODIFY_PORT"}, \
-	{0x18C, "H_DEFINE_AQP1"}, \
-	{0x190, "H_GET_TRACE_BUFFER"}, \
-	{0x194, "H_DEFINE_AQP0"}, \
-	{0x198, "H_RESIZE_MR"}, \
-	{0x19C, "H_ATTACH_MCQP"}, \
-	{0x1A0, "H_DETACH_MCQP"}, \
-	{0x1A4, "H_CREATE_RPT"}, \
-	{0x1A8, "H_REMOVE_RPT"}, \
-	{0x1AC, "H_REGISTER_RPAGES"}, \
-	{0x1B0, "H_DISABLE_AND_GETC"}, \
-	{0x1B4, "H_ERROR_DATA"}, \
-	{0x1B8, "H_GET_HCA_INFO"}, \
-	{0x1BC, "H_GET_PERF_COUNT"}, \
-	{0x1C0, "H_MANAGE_TRACE"}, \
-	{0x1D4, "H_FREE_LOGICAL_LAN_BUFFER"}, \
-	{0x1E4, "H_QUERY_INT_STATE"}, \
-	{0x1D8, "H_POLL_PENDING"}, \
-	{0x244, "H_ILLAN_ATTRIBUTES"}, \
-	{0x250, "H_MODIFY_HEA_QP"}, \
-	{0x254, "H_QUERY_HEA_QP"}, \
-	{0x258, "H_QUERY_HEA"}, \
-	{0x25C, "H_QUERY_HEA_PORT"}, \
-	{0x260, "H_MODIFY_HEA_PORT"}, \
-	{0x264, "H_REG_BCMC"}, \
-	{0x268, "H_DEREG_BCMC"}, \
-	{0x26C, "H_REGISTER_HEA_RPAGES"}, \
-	{0x270, "H_DISABLE_AND_GET_HEA"}, \
-	{0x274, "H_GET_HEA_INFO"}, \
-	{0x278, "H_ALLOC_HEA_RESOURCE"}, \
-	{0x284, "H_ADD_CONN"}, \
-	{0x288, "H_DEL_CONN"}, \
-	{0x298, "H_JOIN"}, \
-	{0x2A4, "H_VASI_STATE"}, \
-	{0x2B0, "H_ENABLE_CRQ"}, \
-	{0x2B8, "H_GET_EM_PARMS"}, \
-	{0x2D0, "H_SET_MPP"}, \
-	{0x2D4, "H_GET_MPP"}, \
-	{0x2EC, "H_HOME_NODE_ASSOCIATIVITY"}, \
-	{0x2F4, "H_BEST_ENERGY"}, \
-	{0x2FC, "H_XIRR_X"}, \
-	{0x300, "H_RANDOM"}, \
-	{0x304, "H_COP"}, \
-	{0x314, "H_GET_MPP_X"}, \
-	{0x31C, "H_SET_MODE"}, \
-	{0xf000, "H_RTAS"}
+	{H_REMOVE,			"H_REMOVE"}, \
+	{H_ENTER,			"H_ENTER"}, \
+	{H_READ,			"H_READ"}, \
+	{H_CLEAR_MOD,			"H_CLEAR_MOD"}, \
+	{H_CLEAR_REF,			"H_CLEAR_REF"}, \
+	{H_PROTECT,			"H_PROTECT"}, \
+	{H_GET_TCE,			"H_GET_TCE"}, \
+	{H_PUT_TCE,			"H_PUT_TCE"}, \
+	{H_SET_SPRG0,			"H_SET_SPRG0"}, \
+	{H_SET_DABR,			"H_SET_DABR"}, \
+	{H_PAGE_INIT,			"H_PAGE_INIT"}, \
+	{H_SET_ASR,			"H_SET_ASR"}, \
+	{H_ASR_ON,			"H_ASR_ON"}, \
+	{H_ASR_OFF,			"H_ASR_OFF"}, \
+	{H_LOGICAL_CI_LOAD,		"H_LOGICAL_CI_LOAD"}, \
+	{H_LOGICAL_CI_STORE,		"H_LOGICAL_CI_STORE"}, \
+	{H_LOGICAL_CACHE_LOAD,		"H_LOGICAL_CACHE_LOAD"}, \
+	{H_LOGICAL_CACHE_STORE,		"H_LOGICAL_CACHE_STORE"}, \
+	{H_LOGICAL_ICBI,		"H_LOGICAL_ICBI"}, \
+	{H_LOGICAL_DCBF,		"H_LOGICAL_DCBF"}, \
+	{H_GET_TERM_CHAR,		"H_GET_TERM_CHAR"}, \
+	{H_PUT_TERM_CHAR,		"H_PUT_TERM_CHAR"}, \
+	{H_REAL_TO_LOGICAL,		"H_REAL_TO_LOGICAL"}, \
+	{H_HYPERVISOR_DATA,		"H_HYPERVISOR_DATA"}, \
+	{H_EOI,				"H_EOI"}, \
+	{H_CPPR,			"H_CPPR"}, \
+	{H_IPI,				"H_IPI"}, \
+	{H_IPOLL,			"H_IPOLL"}, \
+	{H_XIRR,			"H_XIRR"}, \
+	{H_PERFMON,			"H_PERFMON"}, \
+	{H_MIGRATE_DMA,			"H_MIGRATE_DMA"}, \
+	{H_REGISTER_VPA,		"H_REGISTER_VPA"}, \
+	{H_CEDE,			"H_CEDE"}, \
+	{H_CONFER,			"H_CONFER"}, \
+	{H_PROD,			"H_PROD"}, \
+	{H_GET_PPP,			"H_GET_PPP"}, \
+	{H_SET_PPP,			"H_SET_PPP"}, \
+	{H_PURR,			"H_PURR"}, \
+	{H_PIC,				"H_PIC"}, \
+	{H_REG_CRQ,			"H_REG_CRQ"}, \
+	{H_FREE_CRQ,			"H_FREE_CRQ"}, \
+	{H_VIO_SIGNAL,			"H_VIO_SIGNAL"}, \
+	{H_SEND_CRQ,			"H_SEND_CRQ"}, \
+	{H_COPY_RDMA,			"H_COPY_RDMA"}, \
+	{H_REGISTER_LOGICAL_LAN,	"H_REGISTER_LOGICAL_LAN"}, \
+	{H_FREE_LOGICAL_LAN,		"H_FREE_LOGICAL_LAN"}, \
+	{H_ADD_LOGICAL_LAN_BUFFER,	"H_ADD_LOGICAL_LAN_BUFFER"}, \
+	{H_SEND_LOGICAL_LAN,		"H_SEND_LOGICAL_LAN"}, \
+	{H_BULK_REMOVE,			"H_BULK_REMOVE"}, \
+	{H_MULTICAST_CTRL,		"H_MULTICAST_CTRL"}, \
+	{H_SET_XDABR,			"H_SET_XDABR"}, \
+	{H_STUFF_TCE,			"H_STUFF_TCE"}, \
+	{H_PUT_TCE_INDIRECT,		"H_PUT_TCE_INDIRECT"}, \
+	{H_CHANGE_LOGICAL_LAN_MAC,	"H_CHANGE_LOGICAL_LAN_MAC"}, \
+	{H_VTERM_PARTNER_INFO,		"H_VTERM_PARTNER_INFO"}, \
+	{H_REGISTER_VTERM,		"H_REGISTER_VTERM"}, \
+	{H_FREE_VTERM,			"H_FREE_VTERM"}, \
+	{H_RESET_EVENTS,		"H_RESET_EVENTS"}, \
+	{H_ALLOC_RESOURCE,		"H_ALLOC_RESOURCE"}, \
+	{H_FREE_RESOURCE,		"H_FREE_RESOURCE"}, \
+	{H_MODIFY_QP,			"H_MODIFY_QP"}, \
+	{H_QUERY_QP,			"H_QUERY_QP"}, \
+	{H_REREGISTER_PMR,		"H_REREGISTER_PMR"}, \
+	{H_REGISTER_SMR,		"H_REGISTER_SMR"}, \
+	{H_QUERY_MR,			"H_QUERY_MR"}, \
+	{H_QUERY_MW,			"H_QUERY_MW"}, \
+	{H_QUERY_HCA,			"H_QUERY_HCA"}, \
+	{H_QUERY_PORT,			"H_QUERY_PORT"}, \
+	{H_MODIFY_PORT,			"H_MODIFY_PORT"}, \
+	{H_DEFINE_AQP1,			"H_DEFINE_AQP1"}, \
+	{H_GET_TRACE_BUFFER,		"H_GET_TRACE_BUFFER"}, \
+	{H_DEFINE_AQP0,			"H_DEFINE_AQP0"}, \
+	{H_RESIZE_MR,			"H_RESIZE_MR"}, \
+	{H_ATTACH_MCQP,			"H_ATTACH_MCQP"}, \
+	{H_DETACH_MCQP,			"H_DETACH_MCQP"}, \
+	{H_CREATE_RPT,			"H_CREATE_RPT"}, \
+	{H_REMOVE_RPT,			"H_REMOVE_RPT"}, \
+	{H_REGISTER_RPAGES,		"H_REGISTER_RPAGES"}, \
+	{H_DISABLE_AND_GETC,		"H_DISABLE_AND_GETC"}, \
+	{H_ERROR_DATA,			"H_ERROR_DATA"}, \
+	{H_GET_HCA_INFO,		"H_GET_HCA_INFO"}, \
+	{H_GET_PERF_COUNT,		"H_GET_PERF_COUNT"}, \
+	{H_MANAGE_TRACE,		"H_MANAGE_TRACE"}, \
+	{H_FREE_LOGICAL_LAN_BUFFER,	"H_FREE_LOGICAL_LAN_BUFFER"}, \
+	{H_QUERY_INT_STATE,		"H_QUERY_INT_STATE"}, \
+	{H_POLL_PENDING,		"H_POLL_PENDING"}, \
+	{H_ILLAN_ATTRIBUTES,		"H_ILLAN_ATTRIBUTES"}, \
+	{H_MODIFY_HEA_QP,		"H_MODIFY_HEA_QP"}, \
+	{H_QUERY_HEA_QP,		"H_QUERY_HEA_QP"}, \
+	{H_QUERY_HEA,			"H_QUERY_HEA"}, \
+	{H_QUERY_HEA_PORT,		"H_QUERY_HEA_PORT"}, \
+	{H_MODIFY_HEA_PORT,		"H_MODIFY_HEA_PORT"}, \
+	{H_REG_BCMC,			"H_REG_BCMC"}, \
+	{H_DEREG_BCMC,			"H_DEREG_BCMC"}, \
+	{H_REGISTER_HEA_RPAGES,		"H_REGISTER_HEA_RPAGES"}, \
+	{H_DISABLE_AND_GET_HEA,		"H_DISABLE_AND_GET_HEA"}, \
+	{H_GET_HEA_INFO,		"H_GET_HEA_INFO"}, \
+	{H_ALLOC_HEA_RESOURCE,		"H_ALLOC_HEA_RESOURCE"}, \
+	{H_ADD_CONN,			"H_ADD_CONN"}, \
+	{H_DEL_CONN,			"H_DEL_CONN"}, \
+	{H_JOIN,			"H_JOIN"}, \
+	{H_VASI_STATE,			"H_VASI_STATE"}, \
+	{H_ENABLE_CRQ,			"H_ENABLE_CRQ"}, \
+	{H_GET_EM_PARMS,		"H_GET_EM_PARMS"}, \
+	{H_SET_MPP,			"H_SET_MPP"}, \
+	{H_GET_MPP,			"H_GET_MPP"}, \
+	{H_HOME_NODE_ASSOCIATIVITY,	"H_HOME_NODE_ASSOCIATIVITY"}, \
+	{H_BEST_ENERGY,			"H_BEST_ENERGY"}, \
+	{H_XIRR_X,			"H_XIRR_X"}, \
+	{H_RANDOM,			"H_RANDOM"}, \
+	{H_COP,				"H_COP"}, \
+	{H_GET_MPP_X,			"H_GET_MPP_X"}, \
+	{H_SET_MODE,			"H_SET_MODE"}, \
+	{H_RTAS,			"H_RTAS"}
 
 #define kvm_trace_symbol_kvmret \
-	{0, "RESUME_GUEST"}, \
-	{1, "RESUME_GUEST_NV"}, \
-	{2, "RESUME_HOST"}, \
-	{3, "RESUME_HOST_NV"}
+	{RESUME_GUEST,			"RESUME_GUEST"}, \
+	{RESUME_GUEST_NV,		"RESUME_GUEST_NV"}, \
+	{RESUME_HOST,			"RESUME_HOST"}, \
+	{RESUME_HOST_NV,		"RESUME_HOST_NV"}
 
 #define kvm_trace_symbol_hcall_rc \
-	{0, "H_SUCCESS"}, \
-	{1, "H_BUSY"}, \
-	{2, "H_CLOSED"}, \
-	{3, "H_NOT_AVAILABLE"}, \
-	{4, "H_CONSTRAINED"}, \
-	{5, "H_PARTIAL"}, \
-	{14, "H_IN_PROGRESS"}, \
-	{15, "H_PAGE_REGISTERED"}, \
-	{16, "H_PARTIAL_STORE"}, \
-	{17, "H_PENDING"}, \
-	{18, "H_CONTINUE"}, \
-	{9900, "H_LONG_BUSY_START_RANGE"}, \
-	{9900, "H_LONG_BUSY_ORDER_1_MSEC"}, \
-	{9901, "H_LONG_BUSY_ORDER_10_MSEC"}, \
-	{9902, "H_LONG_BUSY_ORDER_100_MSEC"}, \
-	{9903, "H_LONG_BUSY_ORDER_1_SEC"}, \
-	{9904, "H_LONG_BUSY_ORDER_10_SEC"}, \
-	{9905, "H_LONG_BUSY_ORDER_100_SEC"}, \
-	{9905, "H_LONG_BUSY_END_RANGE"}, \
-	{9999, "H_TOO_HARD"}, \
-	{-1, "H_HARDWARE"}, \
-	{-2, "H_FUNCTION"}, \
-	{-3, "H_PRIVILEGE"}, \
-	{-4, "H_PARAMETER"}, \
-	{-5, "H_BAD_MODE"}, \
-	{-6, "H_PTEG_FULL"}, \
-	{-7, "H_NOT_FOUND"}, \
-	{-8, "H_RESERVED_DABR"}, \
-	{-9, "H_NO_MEM"}, \
-	{-10, "H_AUTHORITY"}, \
-	{-11, "H_PERMISSION"}, \
-	{-12, "H_DROPPED"}, \
-	{-13, "H_SOURCE_PARM"}, \
-	{-14, "H_DEST_PARM"}, \
-	{-15, "H_REMOTE_PARM"}, \
-	{-16, "H_RESOURCE"}, \
-	{-17, "H_ADAPTER_PARM"}, \
-	{-18, "H_RH_PARM"}, \
-	{-19, "H_RCQ_PARM"}, \
-	{-20, "H_SCQ_PARM"}, \
-	{-21, "H_EQ_PARM"}, \
-	{-22, "H_RT_PARM"}, \
-	{-23, "H_ST_PARM"}, \
-	{-24, "H_SIGT_PARM"}, \
-	{-25, "H_TOKEN_PARM"}, \
-	{-27, "H_MLENGTH_PARM"}, \
-	{-28, "H_MEM_PARM"}, \
-	{-29, "H_MEM_ACCESS_PARM"}, \
-	{-30, "H_ATTR_PARM"}, \
-	{-31, "H_PORT_PARM"}, \
-	{-32, "H_MCG_PARM"}, \
-	{-33, "H_VL_PARM"}, \
-	{-34, "H_TSIZE_PARM"}, \
-	{-35, "H_TRACE_PARM"}, \
-	{-37, "H_MASK_PARM"}, \
-	{-38, "H_MCG_FULL"}, \
-	{-39, "H_ALIAS_EXIST"}, \
-	{-40, "H_P_COUNTER"}, \
-	{-41, "H_TABLE_FULL"}, \
-	{-42, "H_ALT_TABLE"}, \
-	{-43, "H_MR_CONDITION"}, \
-	{-44, "H_NOT_ENOUGH_RESOURCES"}, \
-	{-45, "H_R_STATE"}, \
-	{-46, "H_RESCINDED"}, \
-	{-55, "H_P2"}, \
-	{-56, "H_P3"}, \
-	{-57, "H_P4"}, \
-	{-58, "H_P5"}, \
-	{-59, "H_P6"}, \
-	{-60, "H_P7"}, \
-	{-61, "H_P8"}, \
-	{-62, "H_P9"}, \
-	{-64, "H_TOO_BIG"}, \
-	{-68, "H_OVERLAP"}, \
-	{-69, "H_INTERRUPT"}, \
-	{-70, "H_BAD_DATA"}, \
-	{-71, "H_NOT_ACTIVE"}, \
-	{-72, "H_SG_LIST"}, \
-	{-73, "H_OP_MODE"}, \
-	{-74, "H_COP_HW"}, \
-	{-256, "H_UNSUPPORTED_FLAG_START"}, \
-	{-511, "H_UNSUPPORTED_FLAG_END"}, \
-	{-9005, "H_MULTI_THREADS_ACTIVE"}, \
-	{-9006, "H_OUTSTANDING_COP_OPS"}
+	{H_SUCCESS,			"H_SUCCESS"}, \
+	{H_BUSY,			"H_BUSY"}, \
+	{H_CLOSED,			"H_CLOSED"}, \
+	{H_NOT_AVAILABLE,		"H_NOT_AVAILABLE"}, \
+	{H_CONSTRAINED,			"H_CONSTRAINED"}, \
+	{H_PARTIAL,			"H_PARTIAL"}, \
+	{H_IN_PROGRESS,			"H_IN_PROGRESS"}, \
+	{H_PAGE_REGISTERED,		"H_PAGE_REGISTERED"}, \
+	{H_PARTIAL_STORE,		"H_PARTIAL_STORE"}, \
+	{H_PENDING,			"H_PENDING"}, \
+	{H_CONTINUE,			"H_CONTINUE"}, \
+	{H_LONG_BUSY_START_RANGE,	"H_LONG_BUSY_START_RANGE"}, \
+	{H_LONG_BUSY_ORDER_1_MSEC,	"H_LONG_BUSY_ORDER_1_MSEC"}, \
+	{H_LONG_BUSY_ORDER_10_MSEC,	"H_LONG_BUSY_ORDER_10_MSEC"}, \
+	{H_LONG_BUSY_ORDER_100_MSEC,	"H_LONG_BUSY_ORDER_100_MSEC"}, \
+	{H_LONG_BUSY_ORDER_1_SEC,	"H_LONG_BUSY_ORDER_1_SEC"}, \
+	{H_LONG_BUSY_ORDER_10_SEC,	"H_LONG_BUSY_ORDER_10_SEC"}, \
+	{H_LONG_BUSY_ORDER_100_SEC,	"H_LONG_BUSY_ORDER_100_SEC"}, \
+	{H_LONG_BUSY_END_RANGE,		"H_LONG_BUSY_END_RANGE"}, \
+	{H_TOO_HARD,			"H_TOO_HARD"}, \
+	{H_HARDWARE,			"H_HARDWARE"}, \
+	{H_FUNCTION,			"H_FUNCTION"}, \
+	{H_PRIVILEGE,			"H_PRIVILEGE"}, \
+	{H_PARAMETER,			"H_PARAMETER"}, \
+	{H_BAD_MODE,			"H_BAD_MODE"}, \
+	{H_PTEG_FULL,			"H_PTEG_FULL"}, \
+	{H_NOT_FOUND,			"H_NOT_FOUND"}, \
+	{H_RESERVED_DABR,		"H_RESERVED_DABR"}, \
+	{H_NO_MEM,			"H_NO_MEM"}, \
+	{H_AUTHORITY,			"H_AUTHORITY"}, \
+	{H_PERMISSION,			"H_PERMISSION"}, \
+	{H_DROPPED,			"H_DROPPED"}, \
+	{H_SOURCE_PARM,			"H_SOURCE_PARM"}, \
+	{H_DEST_PARM,			"H_DEST_PARM"}, \
+	{H_REMOTE_PARM,			"H_REMOTE_PARM"}, \
+	{H_RESOURCE,			"H_RESOURCE"}, \
+	{H_ADAPTER_PARM,		"H_ADAPTER_PARM"}, \
+	{H_RH_PARM,			"H_RH_PARM"}, \
+	{H_RCQ_PARM,			"H_RCQ_PARM"}, \
+	{H_SCQ_PARM,			"H_SCQ_PARM"}, \
+	{H_EQ_PARM,			"H_EQ_PARM"}, \
+	{H_RT_PARM,			"H_RT_PARM"}, \
+	{H_ST_PARM,			"H_ST_PARM"}, \
+	{H_SIGT_PARM,			"H_SIGT_PARM"}, \
+	{H_TOKEN_PARM,			"H_TOKEN_PARM"}, \
+	{H_MLENGTH_PARM,		"H_MLENGTH_PARM"}, \
+	{H_MEM_PARM,			"H_MEM_PARM"}, \
+	{H_MEM_ACCESS_PARM,		"H_MEM_ACCESS_PARM"}, \
+	{H_ATTR_PARM,			"H_ATTR_PARM"}, \
+	{H_PORT_PARM,			"H_PORT_PARM"}, \
+	{H_MCG_PARM,			"H_MCG_PARM"}, \
+	{H_VL_PARM,			"H_VL_PARM"}, \
+	{H_TSIZE_PARM,			"H_TSIZE_PARM"}, \
+	{H_TRACE_PARM,			"H_TRACE_PARM"}, \
+	{H_MASK_PARM,			"H_MASK_PARM"}, \
+	{H_MCG_FULL,			"H_MCG_FULL"}, \
+	{H_ALIAS_EXIST,			"H_ALIAS_EXIST"}, \
+	{H_P_COUNTER,			"H_P_COUNTER"}, \
+	{H_TABLE_FULL,			"H_TABLE_FULL"}, \
+	{H_ALT_TABLE,			"H_ALT_TABLE"}, \
+	{H_MR_CONDITION,		"H_MR_CONDITION"}, \
+	{H_NOT_ENOUGH_RESOURCES,	"H_NOT_ENOUGH_RESOURCES"}, \
+	{H_R_STATE,			"H_R_STATE"}, \
+	{H_RESCINDED,			"H_RESCINDED"}, \
+	{H_P2,				"H_P2"}, \
+	{H_P3,				"H_P3"}, \
+	{H_P4,				"H_P4"}, \
+	{H_P5,				"H_P5"}, \
+	{H_P6,				"H_P6"}, \
+	{H_P7,				"H_P7"}, \
+	{H_P8,				"H_P8"}, \
+	{H_P9,				"H_P9"}, \
+	{H_TOO_BIG,			"H_TOO_BIG"}, \
+	{H_OVERLAP,			"H_OVERLAP"}, \
+	{H_INTERRUPT,			"H_INTERRUPT"}, \
+	{H_BAD_DATA,			"H_BAD_DATA"}, \
+	{H_NOT_ACTIVE,			"H_NOT_ACTIVE"}, \
+	{H_SG_LIST,			"H_SG_LIST"}, \
+	{H_OP_MODE,			"H_OP_MODE"}, \
+	{H_COP_HW,			"H_COP_HW"}, \
+	{H_UNSUPPORTED_FLAG_START,	"H_UNSUPPORTED_FLAG_START"}, \
+	{H_UNSUPPORTED_FLAG_END,	"H_UNSUPPORTED_FLAG_END"}, \
+	{H_MULTI_THREADS_ACTIVE,	"H_MULTI_THREADS_ACTIVE"}, \
+	{H_OUTSTANDING_COP_OPS,		"H_OUTSTANDING_COP_OPS"}
 
 TRACE_EVENT(kvm_guest_enter,
 	TP_PROTO(struct kvm_vcpu *vcpu),
@@ -298,7 +278,7 @@ TRACE_EVENT(kvm_page_fault_enter,
 	TP_ARGS(vcpu, hptep, memslot, ea, dsisr),
 
 	TP_STRUCT__entry(
-		__field(int,		vcpu_id	)
+		__field(int,		vcpu_id)
 		__field(unsigned long,	hpte_v)
 		__field(unsigned long,	hpte_r)
 		__field(unsigned long,	gpte_r)
@@ -315,12 +295,11 @@ TRACE_EVENT(kvm_page_fault_enter,
 		__entry->gpte_r	  = hptep[2];
 		__entry->ea	  = ea;
 		__entry->dsisr	  = dsisr;
-		__entry->base_gfn = memslot ? memslot->base_gfn: -1UL;
-		__entry->slot_flags = memslot ? memslot->flags: 0;
+		__entry->base_gfn = memslot ? memslot->base_gfn : -1UL;
+		__entry->slot_flags = memslot ? memslot->flags : 0;
 	),
 
-	TP_printk("VCPU %d: hpte=0x%lx:0x%lx guest=0x%lx "
-		  "ea=0x%lx,%x slot=0x%llx,0x%x",
+	TP_printk("VCPU %d: hpte=0x%lx:0x%lx guest=0x%lx ea=0x%lx,%x slot=0x%llx,0x%x",
 		   __entry->vcpu_id,
 		   __entry->hpte_v, __entry->hpte_r, __entry->gpte_r,
 		   __entry->ea, __entry->dsisr,
@@ -333,7 +312,7 @@ TRACE_EVENT(kvm_page_fault_exit,
 	TP_ARGS(vcpu, hptep, ret),
 
 	TP_STRUCT__entry(
-		__field(int,		vcpu_id	)
+		__field(int,		vcpu_id)
 		__field(unsigned long,	hpte_v)
 		__field(unsigned long,	hpte_r)
 		__field(long,		ret)
@@ -357,7 +336,7 @@ TRACE_EVENT(kvm_hcall_enter,
 	TP_ARGS(vcpu),
 
 	TP_STRUCT__entry(
-		__field(int,		vcpu_id	)
+		__field(int,		vcpu_id)
 		__field(unsigned long,	req)
 		__field(unsigned long,	gpr4)
 		__field(unsigned long,	gpr5)
@@ -386,7 +365,7 @@ TRACE_EVENT(kvm_hcall_exit,
 	TP_ARGS(vcpu, ret),
 
 	TP_STRUCT__entry(
-		__field(int,		vcpu_id	)
+		__field(int,		vcpu_id)
 		__field(unsigned long,	ret)
 		__field(unsigned long,	hcall_rc)
 	),
@@ -459,7 +438,7 @@ TRACE_EVENT(kvmppc_run_vcpu_enter,
 	TP_ARGS(vcpu),
 
 	TP_STRUCT__entry(
-		__field(int,		vcpu_id	)
+		__field(int,		vcpu_id)
 		__field(pid_t,		tgid)
 	),
 
@@ -477,9 +456,9 @@ TRACE_EVENT(kvmppc_run_vcpu_exit,
 	TP_ARGS(vcpu, run),
 
 	TP_STRUCT__entry(
-		__field(int,		vcpu_id	)
-		__field(int,		exit	)
-		__field(int,		ret	)
+		__field(int,		vcpu_id)
+		__field(int,		exit)
+		__field(int,		ret)
 	),
 
 	TP_fast_assign(
