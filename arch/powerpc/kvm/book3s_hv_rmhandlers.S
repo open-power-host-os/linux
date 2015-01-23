@@ -292,6 +292,7 @@ kvm_start_guest:
 	beq	kvm_no_guest
 
 kvm_secondary_got_guest:
+
 	/* Set HSTATE_DSCR(r13) to something sensible */
 	ld	r6, PACA_DSCR(r13)
 	std	r6, HSTATE_DSCR(r13)
