@@ -118,7 +118,7 @@ static int __init cma_activate_area(struct cma *cma)
 		}
 		init_cma_reserved_pageblock(pfn_to_page(base_pfn));
 	} while (--i);
-
+	adjust_managed_cma_page_count(zone, cma->count);
 	mutex_init(&cma->lock);
 	return 0;
 
@@ -368,6 +368,7 @@ struct page *cma_alloc(struct cma *cma, int count, unsigned int align)
 		mutex_unlock(&cma_mutex);
 		if (ret == 0) {
 			page = pfn_to_page(pfn);
+			adjust_managed_cma_page_count(page_zone(page), -count);
 			break;
 		}
 
@@ -412,6 +413,7 @@ bool cma_release(struct cma *cma, struct page *pages, int count)
 	VM_BUG_ON(pfn + count > cma->base_pfn + cma->count);
 
 	free_contig_range(pfn, count);
+	adjust_managed_cma_page_count(page_zone(pages), count);
 	cma_clear_bitmap(cma, pfn, count);
 
 	return true;
