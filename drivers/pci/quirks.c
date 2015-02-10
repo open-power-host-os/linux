@@ -3237,6 +3237,12 @@ static const struct pci_dev_reset_methods pci_dev_reset_methods[] = {
 
 	{ PCI_VENDOR_ID_IBM, PCI_ANY_ID,
 		reset_fundamental },
+	{ PCI_VENDOR_ID_BROADCOM, PCI_DEVICE_ID_NX2_57800,
+		reset_fundamental },
+	{ PCI_VENDOR_ID_BROADCOM, PCI_DEVICE_ID_NX2_57840,
+		reset_fundamental },
+	{ PCI_VENDOR_ID_BROADCOM, PCI_DEVICE_ID_NX2_57810,
+		reset_fundamental },
 	{ PCI_VENDOR_ID_MELLANOX, PCI_ANY_ID,
 		reset_fundamental },
 	{ PCI_VENDOR_ID_TI, PCI_ANY_ID,
