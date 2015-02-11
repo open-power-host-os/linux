@@ -74,9 +74,8 @@ long kvmppc_ioba_validate(struct kvmppc_spapr_tce_table *stt,
 {
 	unsigned long mask = (1 << IOMMU_PAGE_SHIFT_4K) - 1;
 	unsigned long idx = ioba >> IOMMU_PAGE_SHIFT_4K;
-	unsigned long size = stt->window_size >> IOMMU_PAGE_SHIFT_4K;
 
-	if ((ioba & mask) || (size + npages <= idx))
+	if ((ioba & mask) || (stt->size + npages <= idx))
 		return H_PARAMETER;
 
 	return H_SUCCESS;

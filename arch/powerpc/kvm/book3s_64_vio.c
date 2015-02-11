@@ -40,10 +40,9 @@
 #include <asm/iommu.h>
 #include <asm/tce.h>
 
-static long kvmppc_stt_npages(unsigned long window_size)
+static long kvmppc_stt_npages(unsigned long size)
 {
-	return ALIGN((window_size >> IOMMU_PAGE_SHIFT_4K)
-		     * sizeof(u64), PAGE_SIZE) / PAGE_SIZE;
+	return ALIGN(size * sizeof(u64), PAGE_SIZE) / PAGE_SIZE;
 }
 
 static long kvmppc_account_memlimit(long npages, bool inc)
@@ -92,8 +91,7 @@ static void release_spapr_tce_table(struct rcu_head *head)
 {
 	struct kvmppc_spapr_tce_table *stt = container_of(head,
 			struct kvmppc_spapr_tce_table, rcu);
-	int i;
-	long npages = kvmppc_stt_npages(stt->window_size);
+	long i, npages = kvmppc_stt_npages(stt->size);
 
 	for (i = 0; i < npages; i++)
 		__free_page(stt->pages[i]);
@@ -106,7 +104,7 @@ static int kvm_spapr_tce_fault(struct vm_area_struct *vma, struct vm_fault *vmf)
 	struct kvmppc_spapr_tce_table *stt = vma->vm_file->private_data;
 	struct page *page;
 
-	if (vmf->pgoff >= kvmppc_stt_npages(stt->window_size))
+	if (vmf->pgoff >= kvmppc_stt_npages(stt->size))
 		return VM_FAULT_SIGBUS;
 
 	page = stt->pages[vmf->pgoff];
@@ -133,7 +131,7 @@ static int kvm_spapr_tce_release(struct inode *inode, struct file *filp)
 
 	kvm_put_kvm(stt->kvm);
 
-	kvmppc_account_memlimit(kvmppc_stt_npages(stt->window_size), false);
+	kvmppc_account_memlimit(kvmppc_stt_npages(stt->size), false);
 	call_rcu(&stt->rcu, release_spapr_tce_table);
 
 	return 0;
@@ -148,7 +146,7 @@ long kvm_vm_ioctl_create_spapr_tce(struct kvm *kvm,
 				   struct kvm_create_spapr_tce *args)
 {
 	struct kvmppc_spapr_tce_table *stt = NULL;
-	long npages;
+	long npages, size;
 	int ret = -ENOMEM;
 	int i;
 
@@ -158,7 +156,8 @@ long kvm_vm_ioctl_create_spapr_tce(struct kvm *kvm,
 			return -EBUSY;
 	}
 
-	npages = kvmppc_stt_npages(args->window_size);
+	size = args->window_size >> IOMMU_PAGE_SHIFT_4K;
+	npages = kvmppc_stt_npages(size);
 	ret = kvmppc_account_memlimit(npages, true);
 	if (ret) {
 		stt = NULL;
@@ -171,7 +170,8 @@ long kvm_vm_ioctl_create_spapr_tce(struct kvm *kvm,
 		goto fail;
 
 	stt->liobn = args->liobn;
-	stt->window_size = args->window_size;
+	stt->page_shift = IOMMU_PAGE_SHIFT_4K;
+	stt->size = size;
 	stt->kvm = kvm;
 
 	for (i = 0; i < npages; i++) {
