@@ -917,19 +917,19 @@ static void kvmppc_set_lpcr(struct kvm_vcpu *vcpu, u64 new_lpcr,
 		bool preserve_top32)
 {
 	struct kvmppc_vcore *vc = vcpu->arch.vcore;
+	struct kvm *kvm = vcpu->kvm;
 	u64 mask;
 
+	mutex_lock(&kvm->lock);
 	spin_lock(&vc->lock);
 	/*
 	 * If ILE (interrupt little-endian) has changed, update the
 	 * MSR_LE bit in the intr_msr for each vcpu in this vcore.
 	 */
 	if ((new_lpcr & LPCR_ILE) != (vc->lpcr & LPCR_ILE)) {
-		struct kvm *kvm = vcpu->kvm;
 		struct kvm_vcpu *vcpu;
 		int i;
 
-		mutex_lock(&kvm->lock);
 		kvm_for_each_vcpu(i, vcpu, kvm) {
 			if (vcpu->arch.vcore != vc)
 				continue;
@@ -938,7 +938,6 @@ static void kvmppc_set_lpcr(struct kvm_vcpu *vcpu, u64 new_lpcr,
 			else
 				vcpu->arch.intr_msr &= ~MSR_LE;
 		}
-		mutex_unlock(&kvm->lock);
 	}
 
 	/*
@@ -955,6 +954,7 @@ static void kvmppc_set_lpcr(struct kvm_vcpu *vcpu, u64 new_lpcr,
 		mask &= 0xFFFFFFFF;
 	vc->lpcr = (vc->lpcr & ~mask) | (new_lpcr & mask);
 	spin_unlock(&vc->lock);
+	mutex_unlock(&kvm->lock);
 }
 
 static int kvmppc_get_one_reg_hv(struct kvm_vcpu *vcpu, u64 id,
