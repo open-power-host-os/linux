@@ -948,6 +948,7 @@ struct kvm_device_attr {
 #define  KVM_DEV_VFIO_GROUP			1
 #define   KVM_DEV_VFIO_GROUP_ADD			1
 #define   KVM_DEV_VFIO_GROUP_DEL			2
+#define   KVM_DEV_VFIO_GROUP_SET_SPAPR_TCE_LIOBN	3
 
 enum kvm_device_type {
 	KVM_DEV_TYPE_FSL_MPIC_20	= 1,
@@ -963,6 +964,13 @@ enum kvm_device_type {
 	KVM_DEV_TYPE_FLIC,
 #define KVM_DEV_TYPE_FLIC		KVM_DEV_TYPE_FLIC
 	KVM_DEV_TYPE_MAX,
+};
+
+struct kvm_vfio_spapr_tce_liobn {
+	__u32	argsz;
+	__s32	fd;
+	__u32	liobn;
+	__u64	start_addr;
 };
 
 /*
