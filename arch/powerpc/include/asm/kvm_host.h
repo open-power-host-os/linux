@@ -397,6 +397,14 @@ struct kvmppc_slb {
 	u8 base_page_size;	/* MMU_PAGE_xxx */
 };
 
+/* Struct used to accumulate timing information in HV real mode code */
+struct kvmhv_tb_accumulator {
+	u64	seqcount;	/* used to synchronize access, also count * 2 */
+	u64	tb_total;	/* total time in timebase ticks */
+	u64	tb_min;		/* min time */
+	u64	tb_max;		/* max time */
+};
+
 # ifdef CONFIG_PPC_FSL_BOOK3E
 #define KVMPPC_BOOKE_IAC_NUM	2
 #define KVMPPC_BOOKE_DAC_NUM	2
@@ -686,6 +694,17 @@ struct kvm_vcpu_arch {
 	u64 busy_preempt;
 
 	u32 emul_inst;
+
+	struct kvmhv_tb_accumulator *cur_activity;	/* What we're timing */
+	u64	cur_tb_start;			/* when it started */
+	struct kvmhv_tb_accumulator rm_entry;	/* real-mode entry code */
+	struct kvmhv_tb_accumulator rm_intr;	/* real-mode intr handling */
+	struct kvmhv_tb_accumulator rm_exit;	/* real-mode exit code */
+	struct kvmhv_tb_accumulator guest_time;	/* guest execution */
+	struct kvmhv_tb_accumulator cede_time;	/* time napping inside guest */
+
+	struct dentry *debugfs_dir;
+	struct dentry *debugfs_timings;
 #endif
 #ifdef CONFIG_KVM_BOOK3S_64_HANDLER
 	unsigned long *tce_tmp_hpas;	/* TCE cache for TCE_PUT_INDIRECT */
