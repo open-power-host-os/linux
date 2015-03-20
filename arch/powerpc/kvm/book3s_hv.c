@@ -1782,6 +1782,7 @@ static int kvmppc_grab_hwthread(int cpu)
 
 	/* Ensure the thread won't go into the kernel if it wakes */
 	tpaca->kvm_hstate.kvm_vcpu = NULL;
+	tpaca->kvm_hstate.kvm_vcore = NULL;
 	tpaca->kvm_hstate.napping = 0;
 	smp_wmb();
 	tpaca->kvm_hstate.hwthread_req = 1;
@@ -1813,6 +1814,7 @@ static void kvmppc_release_hwthread(int cpu)
 	tpaca = &paca[cpu];
 	tpaca->kvm_hstate.hwthread_req = 0;
 	tpaca->kvm_hstate.kvm_vcpu = NULL;
+	tpaca->kvm_hstate.kvm_vcore = NULL;
 }
 
 static void kvmppc_start_thread(struct kvm_vcpu *vcpu)
@@ -1828,13 +1830,13 @@ static void kvmppc_start_thread(struct kvm_vcpu *vcpu)
 	}
 	cpu = vc->pcpu + vcpu->arch.ptid;
 	tpaca = &paca[cpu];
-	tpaca->kvm_hstate.kvm_vcore = mvc;
+	tpaca->kvm_hstate.kvm_vcpu = vcpu;
 	tpaca->kvm_hstate.ptid = cpu - mvc->pcpu;
 	vcpu->cpu = mvc->pcpu;
 	vcpu->arch.thread_cpu = cpu;
-	/* Order stores to hstate.kvm_vcore etc. before store to kvm_vcpu */
+	/* Order stores to hstate.kvm_vcpu etc. before store to kvm_vcore */
 	smp_wmb();
-	tpaca->kvm_hstate.kvm_vcpu = vcpu;
+	tpaca->kvm_hstate.kvm_vcore = mvc;
 	if (cpu != smp_processor_id())
 		kvmppc_ipi_thread(cpu);
 }
@@ -1847,12 +1849,12 @@ static void kvmppc_wait_for_nap(void)
 	for (loops = 0; loops < 1000000; ++loops) {
 		/*
 		 * Check if all threads are finished.
-		 * We set the vcpu pointer when starting a thread
+		 * We set the vcore pointer when starting a thread
 		 * and the thread clears it when finished, so we look
-		 * for any threads that still have a non-NULL vcpu ptr.
+		 * for any threads that still have a non-NULL vcore ptr.
 		 */
 		for (i = 1; i < threads_per_subcore; ++i)
-			if (paca[cpu + i].kvm_hstate.kvm_vcpu)
+			if (paca[cpu + i].kvm_hstate.kvm_vcore)
 				break;
 		if (i == threads_per_subcore) {
 			HMT_medium();
@@ -1862,7 +1864,7 @@ static void kvmppc_wait_for_nap(void)
 	}
 	HMT_medium();
 	for (i = 1; i < threads_per_subcore; ++i)
-		if (paca[cpu + i].kvm_hstate.kvm_vcpu)
+		if (paca[cpu + i].kvm_hstate.kvm_vcore)
 			pr_err("KVM: CPU %d seems to be stuck\n", cpu + i);
 }
 

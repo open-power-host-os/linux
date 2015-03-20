@@ -315,10 +315,10 @@ kvm_start_guest:
 	cmpdi	r3, 0
 	bge	kvm_no_guest
 
-	/* get vcpu pointer, NULL if we have no vcpu to run */
-	ld	r4,HSTATE_KVM_VCPU(r13)
-	cmpdi	r4,0
-	/* if we have no vcpu to run, go back to sleep */
+	/* get vcore pointer, NULL if we have nothing to run */
+	ld	r5,HSTATE_KVM_VCORE(r13)
+	cmpdi	r5,0
+	/* if we have no vcore to run, go back to sleep */
 	beq	kvm_no_guest
 
 kvm_secondary_got_guest:
@@ -327,21 +327,23 @@ kvm_secondary_got_guest:
 	ld	r6, PACA_DSCR(r13)
 	std	r6, HSTATE_DSCR(r13)
 
-	/* Order load of vcore, ptid etc. after load of vcpu */
+	/* Order load of vcpu after load of vcore */
 	lwsync
+	ld	r4, HSTATE_KVM_VCPU(r13)
 	bl	kvmppc_hv_entry
 
 	/* Back from the guest, go back to nap */
-	/* Clear our vcpu pointer so we don't come back in early */
+	/* Clear our vcpu and vcore pointers so we don't come back in early */
 	li	r0, 0
+	std	r0, HSTATE_KVM_VCPU(r13)
 	/*
-	 * Once we clear HSTATE_KVM_VCPU(r13), the code in
+	 * Once we clear HSTATE_KVM_VCORE(r13), the code in
 	 * kvmppc_run_core() is going to assume that all our vcpu
 	 * state is visible in memory.  This lwsync makes sure
 	 * that that is true.
 	 */
 	lwsync
-	std	r0, HSTATE_KVM_VCPU(r13)
+	std	r0, HSTATE_KVM_VCORE(r13)
 
 /*
  * At this point we have finished executing in the guest.
@@ -374,8 +376,8 @@ kvm_no_guest:
 	b	power7_wakeup_loss
 
 53:	HMT_LOW
-	ld	r4, HSTATE_KVM_VCPU(r13)
-	cmpdi	r4, 0
+	ld	r5, HSTATE_KVM_VCORE(r13)
+	cmpdi	r5, 0
 	beq	kvm_no_guest
 	HMT_MEDIUM
 	b	kvm_secondary_got_guest
