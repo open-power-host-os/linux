@@ -227,12 +227,13 @@ kvm_novcpu_wakeup:
 	cmpdi	r4, 0
 	beq	kvmppc_primary_no_guest
 
+#ifdef CONFIG_KVM_BOOK3S_HV_EXIT_TIMING
 	addi	r3, r4, VCPU_TB_RMENTRY
 	bl	kvmhv_start_timing
+#endif
 	b	kvmppc_got_guest
 
 kvm_novcpu_exit:
-	ld	r4, HSTATE_KVM_VCPU(r13)
 	b	hdec_soon
 
 /*
@@ -381,12 +382,14 @@ kvmppc_hv_entry:
 	li	r6, KVM_GUEST_MODE_HOST_HV
 	stb	r6, HSTATE_IN_GUEST(r13)
 
+#ifdef CONFIG_KVM_BOOK3S_HV_EXIT_TIMING
 	/* Store initial timestamp */
 	cmpdi	r4, 0
 	beq	1f
 	addi	r3, r4, VCPU_TB_RMENTRY
 	bl	kvmhv_start_timing
 1:
+#endif
 	/* Clear out SLB */
 	li	r6,0
 	slbmte	r6,r6
@@ -891,9 +894,11 @@ fast_guest_return:
 	li	r9, KVM_GUEST_MODE_GUEST_HV
 	stb	r9, HSTATE_IN_GUEST(r13)
 
+#ifdef CONFIG_KVM_BOOK3S_HV_EXIT_TIMING
 	/* Accumulate timing */
 	addi	r3, r4, VCPU_TB_GUEST
 	bl	kvmhv_accumulate_time
+#endif
 
 	/* Enter guest */
 
@@ -932,6 +937,7 @@ END_FTR_SECTION_IFSET(CPU_FTR_HAS_PPR)
 	hrfid
 	b	.
 
+#ifdef CONFIG_KVM_BOOK3S_HV_EXIT_TIMING
 secondary_too_late:
 	cmpdi	r4, 0
 	beq	11f
@@ -940,11 +946,13 @@ secondary_too_late:
 11:	b	kvmhv_switch_to_host
 
 hdec_soon:
+	ld	r4, HSTATE_KVM_VCPU(r13)
 	cmpdi	r4, 0
 	beq	12f
 	addi	r3, r4, VCPU_TB_RMEXIT
 	bl	kvmhv_accumulate_time
 12:	b	kvmhv_do_exit
+#endif
 
 /******************************************************************************
  *                                                                            *
@@ -1031,6 +1039,7 @@ END_FTR_SECTION_IFSET(CPU_FTR_HAS_PPR)
 
 	stw	r12,VCPU_TRAP(r9)
 
+#ifdef CONFIG_KVM_BOOK3S_HV_EXIT_TIMING
 	addi	r3, r9, VCPU_TB_RMINTR
 	mr	r4, r9
 	bl	kvmhv_accumulate_time
@@ -1038,6 +1047,7 @@ END_FTR_SECTION_IFSET(CPU_FTR_HAS_PPR)
 	ld	r6, VCPU_GPR(R6)(r9)
 	ld	r7, VCPU_GPR(R7)(r9)
 	ld	r8, VCPU_GPR(R8)(r9)
+#endif
 
 	/* Save HEIR (HV emulation assist reg) in emul_inst
 	   if this is an HEI (HV emulation interrupt, e40) */
@@ -1110,9 +1120,11 @@ guest_exit_cont:		/* r9 = vcpu, r12 = trap, r13 = paca */
 	cmpwi	r12, BOOK3S_INTERRUPT_MACHINE_CHECK
 	beq	machine_check_realmode
 mc_cont:
+#ifdef CONFIG_KVM_BOOK3S_HV_EXIT_TIMING
 	addi	r3, r9, VCPU_TB_RMEXIT
 	mr	r4, r9
 	bl	kvmhv_accumulate_time
+#endif
 
 	/* Save guest CTRL register, set runlatch to 1 */
 6:	mfspr	r6,SPRN_CTRLF
@@ -1457,6 +1469,9 @@ END_FTR_SECTION_IFSET(CPU_FTR_ARCH_207S)
 	slbia
 	ptesync
 
+#ifndef CONFIG_KVM_BOOK3S_HV_EXIT_TIMING
+hdec_soon:
+#endif
 kvmhv_do_exit:			/* r12 = trap, r13 = paca */
 	/*
 	 * POWER7/POWER8 guest -> host partition switch code.
@@ -1516,6 +1531,9 @@ kvmhv_do_exit:			/* r12 = trap, r13 = paca */
 	addi	r6,r6,PACA_SIZE
 	bne	42b
 
+#ifndef CONFIG_KVM_BOOK3S_HV_EXIT_TIMING
+secondary_too_late:
+#endif
 kvmhv_switch_to_host:
 	/* Secondary threads wait for primary to do partition switch */
 43:	ld	r5,HSTATE_KVM_VCORE(r13)
@@ -1602,6 +1620,7 @@ END_FTR_SECTION_IFSET(CPU_FTR_ARCH_207S)
 1:	addi	r8,r8,16
 	.endr
 
+#ifdef CONFIG_KVM_BOOK3S_HV_EXIT_TIMING
 	/* Finish timing, if we have a vcpu */
 	ld	r4, HSTATE_KVM_VCPU(r13)
 	cmpdi	r4, 0
@@ -1609,6 +1628,7 @@ END_FTR_SECTION_IFSET(CPU_FTR_ARCH_207S)
 	beq	2f
 	bl	kvmhv_accumulate_time
 2:
+#endif
 	/* Unset guest mode */
 	li	r0, KVM_GUEST_MODE_NONE
 	stb	r0, HSTATE_IN_GUEST(r13)
@@ -2116,9 +2136,11 @@ _GLOBAL(kvmppc_h_cede)
 	/* save FP state */
 	bl	kvmppc_save_fp
 
+#ifdef CONFIG_KVM_BOOK3S_HV_EXIT_TIMING
 	ld	r4, HSTATE_KVM_VCPU(r13)
 	addi	r3, r4, VCPU_TB_CEDE
 	bl	kvmhv_accumulate_time
+#endif
 
 	/*
 	 * Take a nap until a decrementer or external or doobell interrupt
@@ -2160,8 +2182,10 @@ kvm_end_cede:
 	/* Woken by external or decrementer interrupt */
 	ld	r1, HSTATE_HOST_R1(r13)
 
+#ifdef CONFIG_KVM_BOOK3S_HV_EXIT_TIMING
 	addi	r3, r4, VCPU_TB_RMINTR
 	bl	kvmhv_accumulate_time
+#endif
 
 	/* load up FP state */
 	bl	kvmppc_load_fp
@@ -2499,6 +2523,7 @@ kvmppc_fix_pmao:
 	isync
 	blr
 
+#ifdef CONFIG_KVM_BOOK3S_HV_EXIT_TIMING
 /*
  * Start timing an activity
  * r3 = pointer to time accumulation struct, r4 = vcpu
@@ -2543,3 +2568,4 @@ kvmhv_accumulate_time:
 	addi	r8, r8, 1
 	std	r8, TAS_SEQCOUNT(r5)
 	blr
+#endif

@@ -693,7 +693,9 @@ struct kvm_vcpu_arch {
 	u64 busy_preempt;
 
 	u32 emul_inst;
+#endif
 
+#ifdef CONFIG_KVM_BOOK3S_HV_EXIT_TIMING
 	struct kvmhv_tb_accumulator *cur_activity;	/* What we're timing */
 	u64	cur_tb_start;			/* when it started */
 	struct kvmhv_tb_accumulator rm_entry;	/* real-mode entry code */
@@ -704,7 +706,7 @@ struct kvm_vcpu_arch {
 
 	struct dentry *debugfs_dir;
 	struct dentry *debugfs_timings;
-#endif
+#endif /* CONFIG_KVM_BOOK3S_HV_EXIT_TIMING */
 #ifdef CONFIG_KVM_BOOK3S_64_HANDLER
 	unsigned long *tce_tmp_hpas;	/* TCE cache for TCE_PUT_INDIRECT */
 	/*
