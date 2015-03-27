@@ -131,20 +131,6 @@ long int kvmppc_rm_h_confer(struct kvm_vcpu *vcpu, int target,
 	return rv;
 }
 
-int kvmppc_hwrng_present(void)
-{
-	return powernv_hwrng_present();
-}
-EXPORT_SYMBOL_GPL(kvmppc_hwrng_present);
-
-long kvmppc_h_random(struct kvm_vcpu *vcpu)
-{
-	if (powernv_get_random_real_mode(&vcpu->arch.gpr[4]))
-		return H_SUCCESS;
-
-	return H_HARDWARE;
-}
-
 /*
  * When running HV mode KVM we need to block certain operations while KVM VMs
  * exist in the system. We use a counter of VMs to track this.
@@ -187,3 +173,17 @@ int kvmppc_hcall_impl_hv_realmode(unsigned long cmd)
 	return 0;
 }
 EXPORT_SYMBOL_GPL(kvmppc_hcall_impl_hv_realmode);
+
+int kvmppc_hwrng_present(void)
+{
+	return powernv_hwrng_present();
+}
+EXPORT_SYMBOL_GPL(kvmppc_hwrng_present);
+
+long kvmppc_h_random(struct kvm_vcpu *vcpu)
+{
+	if (powernv_get_random_real_mode(&vcpu->arch.gpr[4]))
+		return H_SUCCESS;
+
+	return H_HARDWARE;
+}

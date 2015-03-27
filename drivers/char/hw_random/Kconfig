@@ -283,7 +283,7 @@ config HW_RANDOM_PSERIES
 
 config HW_RANDOM_POWERNV
 	tristate "PowerNV Random Number Generator support"
-	depends on HW_RANDOM && PPC_POWERNV
+	depends on PPC_POWERNV
 	default HW_RANDOM
 	---help---
 	  This is the driver for Random Number Generator hardware found

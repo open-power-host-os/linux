@@ -225,9 +225,6 @@ extern int kvmppc_xics_get_xive(struct kvm *kvm, u32 irq, u32 *server,
 extern int kvmppc_xics_int_on(struct kvm *kvm, u32 irq);
 extern int kvmppc_xics_int_off(struct kvm *kvm, u32 irq);
 
-extern int kvmppc_hwrng_present(void);
-
-
 void kvmppc_core_dequeue_debug(struct kvm_vcpu *vcpu);
 void kvmppc_core_queue_debug(struct kvm_vcpu *vcpu);
 
@@ -319,6 +316,8 @@ static inline bool is_kvmppc_hv_enabled(struct kvm *kvm)
 {
 	return kvm->arch.kvm_ops == kvmppc_hv_ops;
 }
+
+extern int kvmppc_hwrng_present(void);
 
 /*
  * Cuts out inst bits with ordering according to spec.

@@ -33,7 +33,11 @@ static DEFINE_PER_CPU(struct powernv_rng *, powernv_rng);
 
 int powernv_hwrng_present(void)
 {
-	return __raw_get_cpu_var(powernv_rng) != NULL;
+	struct powernv_rng *rng;
+
+	rng = get_cpu_var(powernv_rng);
+	put_cpu_var(rng);
+	return rng != NULL;
 }
 
 static unsigned long rng_whiten(struct powernv_rng *rng, unsigned long val)
@@ -56,7 +60,7 @@ int powernv_get_random_real_mode(unsigned long *v)
 {
 	struct powernv_rng *rng;
 
-	rng = __raw_get_cpu_var(powernv_rng);
+	rng = raw_cpu_read(powernv_rng);
 
 	*v = rng_whiten(rng, in_rm64(rng->regs_real));
 
