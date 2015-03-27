@@ -331,12 +331,6 @@ static int set_subcores_per_core(int new_mode)
 	struct split_state *state;
 	int cpu;
 
-	/* Split 2 is broken upto POWER8 DD 2.0 so disable it here */
-	if (new_mode == 2) {
-		pr_err("subcores per core = 2 disabled due to hardware bug.\n");
-		return -EINVAL;
-	}
-
 	if (kvm_hv_mode_active()) {
 		pr_err("Unable to change split core mode while KVM active.\n");
 		return -EBUSY;

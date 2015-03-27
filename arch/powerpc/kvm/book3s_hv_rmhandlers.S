@@ -2310,7 +2310,7 @@ ALT_FTR_SECTION_END_IFSET(CPU_FTR_ARCH_207S)
 	beq	0f
 BEGIN_FTR_SECTION
 	cmpwi	r6, 5			/* privileged doorbell? */
-	beq	5f
+	beq	0f
 	cmpwi	r6, 3			/* hypervisor doorbell? */
 	beq	3f
 END_FTR_SECTION_IFSET(CPU_FTR_ARCH_207S)
@@ -2320,17 +2320,6 @@ END_FTR_SECTION_IFSET(CPU_FTR_ARCH_207S)
 	/* hypervisor doorbell */
 3:	li	r12, BOOK3S_INTERRUPT_H_DOORBELL
 	li	r3, 1
-	/* re-send it to ourselves */
-	mfspr	r6, SPRN_TIR
-	lbz	r6, HSTATE_PTID(r13)
-	oris	r6, r6, (PPC_DBELL_SERVER << (63-36))@h
-	PPC_MSGSND(6)
-	blr
-
-	/* privileged doorbell - re-send it to ourselves */
-5:	lbz	r6, HSTATE_PTID(r13)
-	oris	r6, r6, (PPC_DBELL_SERVER << (63-36))@h
-	PPC_MSGSNDP(6)
 	blr
 
 /*
