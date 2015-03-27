@@ -30,7 +30,6 @@
 #include <linux/kvm_para.h>
 #include <linux/list.h>
 #include <linux/atomic.h>
-#include <linux/tracepoint.h>
 #include <linux/hashtable.h>
 #include <asm/kvm_asm.h>
 #include <asm/processor.h>

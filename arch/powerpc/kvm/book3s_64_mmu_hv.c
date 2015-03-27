@@ -1572,8 +1572,7 @@ static ssize_t debugfs_htab_read(struct file *file, char __user *buf,
 		v = be64_to_cpu(hptp[0]) & ~HPTE_V_HVLOCK;
 		hr = be64_to_cpu(hptp[1]);
 		gr = kvm->arch.revmap[i].guest_rpte;
-		asm volatile(PPC_RELEASE_BARRIER "" : : : "memory");
-		hptp[0] = cpu_to_be64(v);
+		unlock_hpte(hptp, v);
 		preempt_enable();
 
 		if (!(v & (HPTE_V_VALID | HPTE_V_ABSENT)))

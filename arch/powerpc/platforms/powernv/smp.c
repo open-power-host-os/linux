@@ -31,7 +31,6 @@
 #include <asm/xics.h>
 #include <asm/opal.h>
 #include <asm/runlatch.h>
-#include <asm/processor.h>
 #include <asm/code-patching.h>
 #include <asm/dbell.h>
 
