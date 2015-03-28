@@ -366,3 +366,5 @@ SYSCALL_SPU(seccomp)
 SYSCALL_SPU(getrandom)
 SYSCALL_SPU(memfd_create)
 SYSCALL_SPU(bpf)
+SYSCALL(ni_syscall) /* sys_execveat */
+PPC64ONLY(switch_endian)
