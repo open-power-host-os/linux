@@ -133,7 +133,7 @@ long kvmppc_do_h_enter(struct kvm *kvm, unsigned long flags,
 	pte_t *ptep;
 	unsigned int writing;
 	unsigned long mmu_seq;
-	unsigned long rcbits;
+	unsigned long rcbits, irq_flags = 0;
 
 	psize = hpte_page_size(pteh, ptel);
 	if (!psize)
@@ -169,7 +169,16 @@ long kvmppc_do_h_enter(struct kvm *kvm, unsigned long flags,
 
 	/* Translate to host virtual address */
 	hva = __gfn_to_hva_memslot(memslot, gfn);
-	ptep = find_linux_pte_or_hugepte(pgdir, hva, &hpage_shift);
+	/*
+	 * If we had a page table table change after lookup, we would
+	 * retry via mmu_notifier_retry.
+	 */
+	if (realmode)
+		ptep = __find_linux_pte_or_hugepte(pgdir, hva, &hpage_shift);
+	else {
+		local_irq_save(irq_flags);
+		ptep = find_linux_pte_or_hugepte(pgdir, hva, &hpage_shift);
+	}
 	if (ptep) {
 		pte_t pte;
 		unsigned long host_pte_size;
@@ -182,8 +191,11 @@ long kvmppc_do_h_enter(struct kvm *kvm, unsigned long flags,
 		 * We should always find the guest page size
 		 * to <= host page size, if host is using hugepage
 		 */
-		if (host_pte_size < psize)
+		if (host_pte_size < psize) {
+			if (!realmode)
+				local_irq_restore(flags);
 			return H_PARAMETER;
+		}
 
 		pte = kvmppc_read_update_linux_pte(ptep, writing, hpage_shift);
 		if (pte_present(pte) && !pte_numa(pte)) {
@@ -268,6 +280,8 @@ long kvmppc_do_h_enter(struct kvm *kvm, unsigned long flags,
 				return H_PTEG_FULL;
 			}
 		}
+		if (!realmode)
+			local_irq_restore(irq_flags);
 	}
 
 	/* Save away the guest's idea of the second HPTE dword */
