@@ -312,11 +312,11 @@ config CRYPTO_DEV_S5P
 	  algorithms execution.
 
 config CRYPTO_DEV_NX
-	bool "Support for IBM Power7+ in-Nest cryptographic acceleration"
-	depends on PPC64 && IBMVIO && !CPU_LITTLE_ENDIAN
+	bool "Support for IBM Power in-Nest cryptographic acceleration"
+	depends on PPC64
 	default n
 	help
-	  Support for Power7+ in-Nest cryptographic acceleration.
+	  Support for Power in-Nest cryptographic acceleration.
 
 if CRYPTO_DEV_NX
 	source "drivers/crypto/nx/Kconfig"
