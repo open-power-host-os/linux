@@ -38,4 +38,14 @@ config CRYPTO_DEV_NX_PSERIES_COMPRESS
 	  algorithm.  This supports NX hardware on the pSeries platform.
 	  If you choose 'M' here, this module will be called nx_compress_pseries.
 
+config CRYPTO_DEV_NX_POWERNV_COMPRESS
+	tristate "Compression acceleration support on PowerNV platform"
+	depends on PPC_POWERNV
+	default y
+	help
+	  Support for Power in-Nest compression acceleration. This
+	  module supports acceleration for compressing memory with the 842
+	  algorithm.  This supports NX hardware on the PowerNV platform.
+	  If you choose 'M' here, this module will be called nx_compress_powernv.
+
 endif
