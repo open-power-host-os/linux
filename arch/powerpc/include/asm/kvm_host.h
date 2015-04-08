@@ -178,6 +178,7 @@ struct kvmppc_spapr_tce_table {
 	u64 liobn;
 	struct rcu_head rcu;
 	u32 page_shift;
+	u64 offset;		/* in pages */
 	u64 size;		/* in pages */
 	struct page *pages[0];
 };
