@@ -72,8 +72,8 @@ EXPORT_SYMBOL_GPL(kvmppc_find_table);
 long kvmppc_ioba_validate(struct kvmppc_spapr_tce_table *stt,
 		unsigned long ioba, unsigned long npages)
 {
-	unsigned long mask = (1 << IOMMU_PAGE_SHIFT_4K) - 1;
-	unsigned long idx = ioba >> IOMMU_PAGE_SHIFT_4K;
+	unsigned long mask = (1 << stt->page_shift) - 1;
+	unsigned long idx = ioba >> stt->page_shift;
 
 	if ((ioba & mask) || (idx < stt->offset) ||
 			(stt->offset + stt->size + npages <= idx))
@@ -96,7 +96,7 @@ EXPORT_SYMBOL_GPL(kvmppc_ioba_validate);
  */
 long kvmppc_tce_validate(struct kvmppc_spapr_tce_table *stt, unsigned long tce)
 {
-	unsigned long mask = ((1 << IOMMU_PAGE_SHIFT_4K) - 1) &
+	unsigned long mask = ((1 << stt->page_shift) - 1) &
 			~(TCE_PCI_WRITE | TCE_PCI_READ);
 
 	if (tce & mask)
@@ -194,7 +194,7 @@ long kvmppc_rm_h_put_tce(struct kvm_vcpu *vcpu, unsigned long liobn,
 		if (!ret)
 			ret = kvmppc_tce_validate(stt, tce);
 		if (!ret)
-			kvmppc_tce_put(stt, ioba >> IOMMU_PAGE_SHIFT_4K, tce);
+			kvmppc_tce_put(stt, ioba >> stt->page_shift, tce);
 	}
 
 
@@ -241,7 +241,7 @@ long kvmppc_rm_h_put_tce_indirect(struct kvm_vcpu *vcpu,
 	if (!stt)
 		return H_TOO_HARD;
 
-	entry = ioba >> IOMMU_PAGE_SHIFT_4K;
+	entry = ioba >> stt->page_shift;
 	/*
 	 * The spec says that the maximum size of the list is 512 TCEs
 	 * so the whole table addressed resides in 4K page
@@ -322,8 +322,8 @@ long kvmppc_rm_h_stuff_tce(struct kvm_vcpu *vcpu,
 	if (ret || (tce_value & (TCE_PCI_WRITE | TCE_PCI_READ)))
 		return H_PARAMETER;
 
-	for (i = 0; i < npages; ++i, ioba += IOMMU_PAGE_SIZE_4K)
-		kvmppc_tce_put(stt, ioba >> IOMMU_PAGE_SHIFT_4K, tce_value);
+	for (i = 0; i < npages; ++i, ioba += (1 << stt->page_shift))
+		kvmppc_tce_put(stt, ioba >> stt->page_shift, tce_value);
 
 	return H_SUCCESS;
 }
@@ -338,7 +338,7 @@ long kvmppc_h_get_tce(struct kvm_vcpu *vcpu, unsigned long liobn,
 	if (stt) {
 		ret = kvmppc_ioba_validate(stt, ioba, 1);
 		if (!ret) {
-			unsigned long idx = (ioba >> IOMMU_PAGE_SHIFT_4K) -
+			unsigned long idx = (ioba >> stt->page_shift) -
 				stt->offset;
 			struct page *page = stt->pages[idx / TCES_PER_PAGE];
 			u64 *tbl = (u64 *)page_address(page);

@@ -224,7 +224,7 @@ long kvmppc_h_put_tce(struct kvm_vcpu *vcpu,
 	if (ret)
 		return ret;
 
-	kvmppc_tce_put(stt, ioba >> IOMMU_PAGE_SHIFT_4K, tce);
+	kvmppc_tce_put(stt, ioba >> stt->page_shift, tce);
 
 	return H_SUCCESS;
 }
@@ -243,7 +243,7 @@ long kvmppc_h_put_tce_indirect(struct kvm_vcpu *vcpu,
 	if (!stt)
 		return H_TOO_HARD;
 
-	entry = ioba >> IOMMU_PAGE_SHIFT_4K;
+	entry = ioba >> stt->page_shift;
 	/*
 	 * SPAPR spec says that the maximum size of the list is 512 TCEs
 	 * so the whole table fits in 4K page
@@ -305,8 +305,8 @@ long kvmppc_h_stuff_tce(struct kvm_vcpu *vcpu,
 	if (ret || (tce_value & (TCE_PCI_WRITE | TCE_PCI_READ)))
 		return H_PARAMETER;
 
-	for (i = 0; i < npages; ++i, ioba += IOMMU_PAGE_SIZE_4K)
-		kvmppc_tce_put(stt, ioba >> IOMMU_PAGE_SHIFT_4K, tce_value);
+	for (i = 0; i < npages; ++i, ioba += (1 << stt->page_shift))
+		kvmppc_tce_put(stt, ioba >> stt->page_shift, tce_value);
 
 	return H_SUCCESS;
 }
