@@ -45,13 +45,56 @@ static long kvmppc_stt_npages(unsigned long window_size)
 		     * sizeof(u64), PAGE_SIZE) / PAGE_SIZE;
 }
 
+static long kvmppc_account_memlimit(long npages, bool inc)
+{
+	long ret = 0;
+	const long bytes = sizeof(struct kvmppc_spapr_tce_table) +
+			(abs(npages) * sizeof(struct page *));
+	const long stt_pages = ALIGN(bytes, PAGE_SIZE) / PAGE_SIZE;
+
+	if (!current || !current->mm)
+		return ret; /* process exited */
+
+	npages += stt_pages;
+
+	down_write(&current->mm->mmap_sem);
+
+	if (inc) {
+		long locked, lock_limit;
+
+		locked = current->mm->locked_vm + npages;
+		lock_limit = rlimit(RLIMIT_MEMLOCK) >> PAGE_SHIFT;
+		if (locked > lock_limit && !capable(CAP_IPC_LOCK))
+			ret = -ENOMEM;
+		else
+			current->mm->locked_vm += npages;
+	} else {
+		if (npages > current->mm->locked_vm)
+			npages = current->mm->locked_vm;
+
+		current->mm->locked_vm -= npages;
+	}
+
+	pr_debug("[%d] RLIMIT_MEMLOCK KVM %c%ld %ld/%ld%s\n", current->pid,
+			inc ? '+' : '-',
+			npages << PAGE_SHIFT,
+			current->mm->locked_vm << PAGE_SHIFT,
+			rlimit(RLIMIT_MEMLOCK),
+			ret ? " - exceeded" : "");
+
+	up_write(&current->mm->mmap_sem);
+
+	return ret;
+}
+
 static void release_spapr_tce_table(struct rcu_head *head)
 {
 	struct kvmppc_spapr_tce_table *stt = container_of(head,
 			struct kvmppc_spapr_tce_table, rcu);
 	int i;
+	long npages = kvmppc_stt_npages(stt->window_size);
 
-	for (i = 0; i < kvmppc_stt_npages(stt->window_size); i++)
+	for (i = 0; i < npages; i++)
 		__free_page(stt->pages[i]);
 
 	kfree(stt);
@@ -89,6 +132,7 @@ static int kvm_spapr_tce_release(struct inode *inode, struct file *filp)
 
 	kvm_put_kvm(stt->kvm);
 
+	kvmppc_account_memlimit(kvmppc_stt_npages(stt->window_size), false);
 	call_rcu(&stt->rcu, release_spapr_tce_table);
 
 	return 0;
@@ -114,6 +158,11 @@ long kvm_vm_ioctl_create_spapr_tce(struct kvm *kvm,
 	}
 
 	npages = kvmppc_stt_npages(args->window_size);
+	ret = kvmppc_account_memlimit(npages, true);
+	if (ret) {
+		stt = NULL;
+		goto fail;
+	}
 
 	stt = kzalloc(sizeof(*stt) + npages * sizeof(struct page *),
 		      GFP_KERNEL);
