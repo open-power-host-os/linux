@@ -30,6 +30,8 @@ extern struct mm_iommu_table_group_mem_t *mm_iommu_lookup(unsigned long ua,
 		unsigned long size);
 extern long mm_iommu_ua_to_hpa(struct mm_iommu_table_group_mem_t *mem,
 		unsigned long ua, unsigned long *hpa);
+extern long mm_iommu_rm_ua_to_hpa(struct mm_iommu_table_group_mem_t *mem,
+		unsigned long ua, unsigned long *hpa);
 extern long mm_iommu_mapped_update(struct mm_iommu_table_group_mem_t *mem,
 		bool inc);
 #endif

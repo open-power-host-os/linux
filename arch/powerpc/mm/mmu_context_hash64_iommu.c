@@ -160,7 +160,7 @@ struct mm_iommu_table_group_mem_t *mm_iommu_lookup(unsigned long ua,
 {
 	struct mm_iommu_table_group_mem_t *mem, *ret = NULL;
 
-	list_for_each_entry_rcu(mem,
+	list_for_each_entry_rcu_notrace(mem,
 			&current->mm->context.iommu_group_mem_list,
 			next) {
 		if ((mem->ua <= ua) &&
@@ -189,6 +189,26 @@ long mm_iommu_ua_to_hpa(struct mm_iommu_table_group_mem_t *mem,
 	return 0;
 }
 EXPORT_SYMBOL_GPL(mm_iommu_ua_to_hpa);
+
+long mm_iommu_rm_ua_to_hpa(struct mm_iommu_table_group_mem_t *mem,
+		unsigned long ua, unsigned long *hpa)
+{
+	const long entry = (ua - mem->ua) >> PAGE_SHIFT;
+	void *va = &mem->hpas[entry];
+	unsigned long *ra;
+
+	if (entry >= mem->entries)
+		return -EFAULT;
+
+	ra = real_vmalloc_addr(va);
+	if (!ra)
+		return -EFAULT;
+
+	*hpa = *ra | (ua & ~PAGE_MASK);
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(mm_iommu_rm_ua_to_hpa);
 
 long mm_iommu_mapped_update(struct mm_iommu_table_group_mem_t *mem, bool inc)
 {
