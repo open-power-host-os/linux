@@ -1974,10 +1974,11 @@ static void kvmppc_vcore_preempt(struct kvmppc_vcore *vc)
 
 static void kvmppc_vcore_end_preempt(struct kvmppc_vcore *vc)
 {
-	struct preempted_vcore_list *lp = this_cpu_ptr(&preempted_vcores);
+	struct preempted_vcore_list *lp;
 
 	kvmppc_core_end_stolen(vc);
 	if (!list_empty(&vc->preempt_list)) {
+		lp = &per_cpu(preempted_vcores, vc->pcpu);
 		spin_lock(&lp->lock);
 		list_del_init(&vc->preempt_list);
 		spin_unlock(&lp->lock);
@@ -2296,9 +2297,14 @@ static void post_guest_process(struct kvmppc_vcore *vc, bool is_master)
 	}
 	list_del_init(&vc->preempt_list);
 	if (!is_master) {
-		vc->vcore_state = vc->runner ? VCORE_PREEMPT : VCORE_INACTIVE;
-		if (still_running > 0)
+		if (still_running > 0) {
 			kvmppc_vcore_preempt(vc);
+		} else if (vc->runner) {
+			vc->vcore_state = VCORE_PREEMPT;
+			kvmppc_core_start_stolen(vc);
+		} else {
+			vc->vcore_state = VCORE_INACTIVE;
+		}
 		if (vc->n_runnable > 0 && vc->runner == NULL) {
 			/* make sure there's a candidate runner awake */
 			vcpu = list_first_entry(&vc->runnable_threads,
