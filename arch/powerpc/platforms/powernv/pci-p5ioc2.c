@@ -87,6 +87,7 @@ static struct iommu_table_ops pnv_p5ioc2_iommu_ops = {
 	.set = pnv_tce_build,
 #ifdef CONFIG_IOMMU_API
 	.exchange = pnv_tce_xchg,
+	.exchange_rm = pnv_tce_xchg,
 #endif
 	.clear = pnv_tce_free,
 	.get = pnv_tce_get,
