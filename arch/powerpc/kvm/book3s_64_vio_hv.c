@@ -14,6 +14,7 @@
  *
  * Copyright 2010 Paul Mackerras, IBM Corp. <paulus@au1.ibm.com>
  * Copyright 2011 David Gibson, IBM Corporation <dwg@au1.ibm.com>
+ * Copyright 2013 Alexey Kardashevskiy, IBM Corporation <aik@au1.ibm.com>
  */
 
 #include <linux/types.h>
@@ -30,6 +31,7 @@
 #include <asm/kvm_ppc.h>
 #include <asm/kvm_book3s.h>
 #include <asm/mmu-hash64.h>
+#include <asm/mmu_context.h>
 #include <asm/hvcall.h>
 #include <asm/synch.h>
 #include <asm/ppc-opcode.h>
@@ -37,6 +39,7 @@
 #include <asm/udbg.h>
 #include <asm/iommu.h>
 #include <asm/tce.h>
+#include <asm/iommu.h>
 
 #define TCES_PER_PAGE	(PAGE_SIZE / sizeof(u64))
 
@@ -46,7 +49,7 @@
  * WARNING: This will be called in real or virtual mode on HV KVM and virtual
  *          mode on PR KVM
  */
-static struct kvmppc_spapr_tce_table *kvmppc_find_table(struct kvm_vcpu *vcpu,
+struct kvmppc_spapr_tce_table *kvmppc_find_table(struct kvm_vcpu *vcpu,
 		unsigned long liobn)
 {
 	struct kvm *kvm = vcpu->kvm;
@@ -58,6 +61,7 @@ static struct kvmppc_spapr_tce_table *kvmppc_find_table(struct kvm_vcpu *vcpu,
 
 	return NULL;
 }
+EXPORT_SYMBOL_GPL(kvmppc_find_table);
 
 /*
  * Validates IO address.
@@ -151,11 +155,32 @@ void kvmppc_tce_put(struct kvmppc_spapr_tce_table *stt,
 }
 EXPORT_SYMBOL_GPL(kvmppc_tce_put);
 
-/* WARNING: This will be called in real-mode on HV KVM and virtual
- *          mode on PR KVM
- */
-long kvmppc_h_put_tce(struct kvm_vcpu *vcpu, unsigned long liobn,
-		      unsigned long ioba, unsigned long tce)
+long kvmppc_gpa_to_ua(struct kvm *kvm, unsigned long gpa,
+		unsigned long *ua, unsigned long **prmap)
+{
+	unsigned long gfn = gpa >> PAGE_SHIFT;
+	struct kvm_memory_slot *memslot;
+
+	memslot = search_memslots(kvm_memslots(kvm), gfn);
+	if (!memslot)
+		return -EINVAL;
+
+	*ua = __gfn_to_hva_memslot(memslot, gfn) |
+		(gpa & ~(PAGE_MASK | TCE_PCI_READ | TCE_PCI_WRITE));
+
+#ifdef CONFIG_KVM_BOOK3S_HV_POSSIBLE
+	if (prmap)
+		*prmap = real_vmalloc_addr(&memslot->arch.rmap[
+				gfn - memslot->base_gfn]);
+#endif
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(kvmppc_gpa_to_ua);
+
+#ifdef CONFIG_KVM_BOOK3S_HV_POSSIBLE
+long kvmppc_rm_h_put_tce(struct kvm_vcpu *vcpu, unsigned long liobn,
+		unsigned long ioba, unsigned long tce)
 {
 	struct kvmppc_spapr_tce_table *stt = kvmppc_find_table(vcpu, liobn);
 	long ret = H_TOO_HARD;
@@ -174,7 +199,133 @@ long kvmppc_h_put_tce(struct kvm_vcpu *vcpu, unsigned long liobn,
 
 	return ret;
 }
-EXPORT_SYMBOL_GPL(kvmppc_h_put_tce);
+
+static long kvmppc_rm_ua_to_hpa(struct kvm_vcpu *vcpu,
+		unsigned long ua, unsigned long *phpa)
+{
+	pte_t *ptep, pte;
+	unsigned shift = 0;
+
+	ptep = find_linux_pte_or_hugepte(vcpu->arch.pgdir, ua, &shift);
+	if (!ptep || !pte_present(*ptep))
+		return -ENXIO;
+	pte = *ptep;
+
+	if (!shift)
+		shift = PAGE_SHIFT;
+
+	/* Avoid handling anything potentially complicated in realmode */
+	if (shift > PAGE_SHIFT)
+		return -EAGAIN;
+
+	if (!pte_young(pte))
+		return -EAGAIN;
+
+	*phpa = (pte_pfn(pte) << PAGE_SHIFT) | (ua & ((1 << shift) - 1)) |
+			(ua & ~PAGE_MASK);
+
+	return 0;
+}
+
+long kvmppc_rm_h_put_tce_indirect(struct kvm_vcpu *vcpu,
+		unsigned long liobn, unsigned long ioba,
+		unsigned long tce_list,	unsigned long npages)
+{
+	struct kvmppc_spapr_tce_table *stt;
+	long i, ret = H_SUCCESS;
+	unsigned long tces, entry, ua = 0;
+	unsigned long *rmap = NULL;
+
+	stt = kvmppc_find_table(vcpu, liobn);
+	if (!stt)
+		return H_TOO_HARD;
+
+	entry = ioba >> IOMMU_PAGE_SHIFT_4K;
+	/*
+	 * The spec says that the maximum size of the list is 512 TCEs
+	 * so the whole table addressed resides in 4K page
+	 */
+	if (npages > 512)
+		return H_PARAMETER;
+
+	if (tce_list & ~IOMMU_PAGE_MASK_4K)
+		return H_PARAMETER;
+
+	ret = kvmppc_ioba_validate(stt, ioba, npages);
+	if (ret)
+		return ret;
+
+	if (mm_iommu_preregistered()) {
+		/*
+		 * We get here if guest memory was pre-registered which
+		 * is normally VFIO case and gpa->hpa translation does not
+		 * depend on hpt.
+		 */
+		struct mm_iommu_table_group_mem_t *mem;
+
+		if (kvmppc_gpa_to_ua(vcpu->kvm, tce_list, &ua, NULL))
+			return H_TOO_HARD;
+
+		mem = mm_iommu_lookup(ua, IOMMU_PAGE_SIZE_4K);
+		if (!mem || mm_iommu_rm_ua_to_hpa(mem, ua, &tces))
+			return H_TOO_HARD;
+	} else {
+		/*
+		 * This is emulated devices case.
+		 * We do not require memory to be preregistered in this case
+		 * so lock rmap and do find_linux_pte_or_hugepte().
+		 */
+		if (kvmppc_gpa_to_ua(vcpu->kvm, tce_list, &ua, &rmap))
+			return H_TOO_HARD;
+
+		lock_rmap(rmap);
+		if (kvmppc_rm_ua_to_hpa(vcpu, ua, &tces)) {
+			ret = H_TOO_HARD;
+			goto unlock_exit;
+		}
+	}
+
+	for (i = 0; i < npages; ++i) {
+		unsigned long tce = be64_to_cpu(((u64 *)tces)[i]);
+
+		ret = kvmppc_tce_validate(stt, tce);
+		if (ret)
+			goto unlock_exit;
+
+		kvmppc_tce_put(stt, entry + i, tce);
+	}
+
+unlock_exit:
+	if (rmap)
+		unlock_rmap(rmap);
+
+	return ret;
+}
+
+long kvmppc_rm_h_stuff_tce(struct kvm_vcpu *vcpu,
+		unsigned long liobn, unsigned long ioba,
+		unsigned long tce_value, unsigned long npages)
+{
+	struct kvmppc_spapr_tce_table *stt;
+	long i, ret;
+
+	stt = kvmppc_find_table(vcpu, liobn);
+	if (!stt)
+		return H_TOO_HARD;
+
+	ret = kvmppc_ioba_validate(stt, ioba, npages);
+	if (ret)
+		return ret;
+
+	ret = kvmppc_tce_validate(stt, tce_value);
+	if (ret || (tce_value & (TCE_PCI_WRITE | TCE_PCI_READ)))
+		return H_PARAMETER;
+
+	for (i = 0; i < npages; ++i, ioba += IOMMU_PAGE_SIZE_4K)
+		kvmppc_tce_put(stt, ioba >> IOMMU_PAGE_SHIFT_4K, tce_value);
+
+	return H_SUCCESS;
+}
 
 long kvmppc_h_get_tce(struct kvm_vcpu *vcpu, unsigned long liobn,
 		      unsigned long ioba)
@@ -198,3 +349,5 @@ long kvmppc_h_get_tce(struct kvm_vcpu *vcpu, unsigned long liobn,
 	return ret;
 }
 EXPORT_SYMBOL_GPL(kvmppc_h_get_tce);
+
+#endif /* KVM_BOOK3S_HV_POSSIBLE */
