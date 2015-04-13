@@ -38,6 +38,7 @@
 #include <linux/pci.h>
 #include <linux/iommu.h>
 #include <linux/sched.h>
+#include <linux/vmalloc.h>
 #include <asm/io.h>
 #include <asm/prom.h>
 #include <asm/iommu.h>
@@ -739,6 +740,8 @@ void iommu_reset_table(struct iommu_table *tbl, const char *node_name)
 		free_pages((unsigned long) tbl->it_map, order);
 	}
 
+	WARN_ON(tbl->it_userspace);
+
 	memset(tbl, 0, sizeof(*tbl));
 }
 
@@ -1016,6 +1019,7 @@ int iommu_take_ownership(struct iommu_table *tbl)
 {
 	unsigned long flags, i, sz = (tbl->it_size + 7) >> 3;
 	int ret = 0;
+	unsigned long *uas;
 
 	/*
 	 * VFIO does not control TCE entries allocation and the guest
@@ -1026,6 +1030,10 @@ int iommu_take_ownership(struct iommu_table *tbl)
 	 */
 	if (!tbl->it_ops->exchange)
 		return -EINVAL;
+
+	uas = vzalloc(sizeof(*uas) * tbl->it_size);
+	if (!uas)
+		return -ENOMEM;
 
 	spin_lock_irqsave(&tbl->large_pool.lock, flags);
 	for (i = 0; i < tbl->nr_pools; i++)
@@ -1044,6 +1052,13 @@ int iommu_take_ownership(struct iommu_table *tbl)
 		memset(tbl->it_map, 0xff, sz);
 	}
 
+	if (ret) {
+		vfree(uas);
+	} else {
+		BUG_ON(tbl->it_userspace);
+		tbl->it_userspace = uas;
+	}
+
 	for (i = 0; i < tbl->nr_pools; i++)
 		spin_unlock(&tbl->pools[i].lock);
 	spin_unlock_irqrestore(&tbl->large_pool.lock, flags);
@@ -1055,6 +1070,9 @@ EXPORT_SYMBOL_GPL(iommu_take_ownership);
 void iommu_release_ownership(struct iommu_table *tbl)
 {
 	unsigned long flags, i, sz = (tbl->it_size + 7) >> 3;
+
+	vfree(tbl->it_userspace);
+	tbl->it_userspace = NULL;
 
 	spin_lock_irqsave(&tbl->large_pool.lock, flags);
 	for (i = 0; i < tbl->nr_pools; i++)

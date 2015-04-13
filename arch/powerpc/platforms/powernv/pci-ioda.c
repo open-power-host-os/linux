@@ -25,6 +25,7 @@
 #include <linux/memblock.h>
 #include <linux/iommu.h>
 #include <linux/sizes.h>
+#include <linux/vmalloc.h>
 
 #include <asm/sections.h>
 #include <asm/io.h>
@@ -1111,6 +1112,14 @@ static void pnv_ioda2_tce_free(struct iommu_table *tbl, long index,
 		pnv_pci_ioda2_tce_invalidate(tbl, index, npages, false);
 }
 
+void pnv_pci_ioda2_free_table(struct iommu_table *tbl)
+{
+	vfree(tbl->it_userspace);
+	tbl->it_userspace = NULL;
+
+	pnv_pci_free_table(tbl);
+}
+
 static struct iommu_table_ops pnv_ioda2_iommu_ops = {
 	.set = pnv_ioda2_tce_build,
 #ifdef CONFIG_IOMMU_API
@@ -1118,7 +1127,7 @@ static struct iommu_table_ops pnv_ioda2_iommu_ops = {
 #endif
 	.clear = pnv_ioda2_tce_free,
 	.get = pnv_tce_get,
-	.free = pnv_pci_free_table,
+	.free = pnv_pci_ioda2_free_table,
 };
 
 static void pnv_pci_ioda_setup_opal_tce_kill(struct pnv_phb *phb,
@@ -1342,12 +1351,21 @@ static long pnv_pci_ioda2_create_table(struct iommu_table_group *table_group,
 	int nid = pe->phb->hose->node;
 	__u64 bus_offset = num ? pe->tce_bypass_base : 0;
 	long ret;
+	unsigned long *uas, uas_cb = sizeof(*uas) * (window_size >> page_shift);
+
+	uas = vzalloc(uas_cb);
+	if (!uas)
+		return -ENOMEM;
 
 	ret = pnv_pci_create_table(table_group, nid, bus_offset, page_shift,
 			window_size, levels, tbl);
-	if (ret)
+	if (ret) {
+		vfree(uas);
 		return ret;
+	}
 
+	BUG_ON(tbl->it_userspace);
+	tbl->it_userspace = uas;
 	tbl->it_ops = &pnv_ioda2_iommu_ops;
 	if (pe->tce_inval_reg)
 		tbl->it_type |= (TCE_PCI_SWINV_CREATE | TCE_PCI_SWINV_FREE);
