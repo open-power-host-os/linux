@@ -749,12 +749,8 @@ void iommu_free_table(struct iommu_table *tbl, const char *node_name)
 
 	iommu_reset_table(tbl, node_name);
 
-#ifdef CONFIG_IOMMU_API
-	if (tbl->it_group) {
-		iommu_group_put(tbl->it_group);
-		BUG_ON(tbl->it_group);
-	}
-#endif
+	/* iommu_free_table() is only used by VIO so no groups expected here */
+	BUG_ON(tbl->it_table_group);
 
 	/* free table */
 	kfree(tbl);
@@ -904,11 +900,11 @@ EXPORT_SYMBOL_GPL(iommu_direction_to_tce_perm);
  */
 static void group_release(void *iommu_data)
 {
-	struct iommu_table *tbl = iommu_data;
-	tbl->it_group = NULL;
+	struct iommu_table_group *table_group = iommu_data;
+	table_group->group = NULL;
 }
 
-void iommu_register_group(struct iommu_table *tbl,
+void iommu_register_group(struct iommu_table_group *table_group,
 		int pci_domain_number, unsigned long pe_num)
 {
 	struct iommu_group *grp;
@@ -920,8 +916,8 @@ void iommu_register_group(struct iommu_table *tbl,
 				PTR_ERR(grp));
 		return;
 	}
-	tbl->it_group = grp;
-	iommu_group_set_iommudata(grp, tbl, group_release);
+	table_group->group = grp;
+	iommu_group_set_iommudata(grp, table_group, group_release);
 	name = kasprintf(GFP_KERNEL, "domain%d-pe%lx",
 			pci_domain_number, pe_num);
 	if (!name)
@@ -1109,7 +1105,7 @@ int iommu_add_device(struct device *dev)
 	}
 
 	tbl = get_iommu_table_base(dev);
-	if (!tbl || !tbl->it_group) {
+	if (!tbl || !tbl->it_table_group || !tbl->it_table_group->group) {
 		pr_debug("%s: Skipping device %s with no tbl\n",
 			 __func__, dev_name(dev));
 		return 0;
@@ -1117,7 +1113,7 @@ int iommu_add_device(struct device *dev)
 
 	pr_debug("%s: Adding %s to iommu group %d\n",
 		 __func__, dev_name(dev),
-		 iommu_group_id(tbl->it_group));
+		 iommu_group_id(tbl->it_table_group->group));
 
 	if (PAGE_SIZE < IOMMU_PAGE_SIZE(tbl)) {
 		pr_err("%s: Invalid IOMMU page size %lx (%lx) on %s\n",
@@ -1126,7 +1122,7 @@ int iommu_add_device(struct device *dev)
 		return -EINVAL;
 	}
 
-	return iommu_group_add_device(tbl->it_group, dev);
+	return iommu_group_add_device(tbl->it_table_group->group, dev);
 }
 EXPORT_SYMBOL_GPL(iommu_add_device);
 

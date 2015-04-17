@@ -154,7 +154,7 @@ struct pci_dn {
 	int	devfn;			/* pci device and function number */
 
 	struct  pci_controller *phb;	/* for pci devices */
-	struct	iommu_table *iommu_table;	/* for phb's or bridges */
+	struct	iommu_table_group *table_group;	/* for phb's or bridges */
 	struct	device_node *node;	/* back-pointer to the device_node */
 
 	int	pci_ext_config_space;	/* for pci devices */
