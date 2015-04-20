@@ -27,6 +27,7 @@
 #include <linux/hugetlb.h>
 #include <linux/list.h>
 #include <linux/anon_inodes.h>
+#include <linux/iommu.h>
 
 #include <asm/tlbflush.h>
 #include <asm/kvm_ppc.h>
@@ -92,9 +93,17 @@ static void release_spapr_tce_table(struct rcu_head *head)
 	struct kvmppc_spapr_tce_table *stt = container_of(head,
 			struct kvmppc_spapr_tce_table, rcu);
 	long i, npages = kvmppc_stt_npages(stt->size);
+	struct kvmppc_spapr_tce_group *kg;
 
 	for (i = 0; i < npages; i++)
 		__free_page(stt->pages[i]);
+
+	while (!list_empty(&stt->groups)) {
+		kg = list_first_entry(&stt->groups,
+				struct kvmppc_spapr_tce_group, next);
+		list_del(&kg->next);
+		kfree(kg);
+	}
 
 	kfree(stt);
 }
@@ -126,8 +135,14 @@ static int kvm_spapr_tce_mmap(struct file *file, struct vm_area_struct *vma)
 static int kvm_spapr_tce_release(struct inode *inode, struct file *filp)
 {
 	struct kvmppc_spapr_tce_table *stt = filp->private_data;
+	struct kvmppc_spapr_tce_group *kg;
 
 	list_del_rcu(&stt->list);
+
+	list_for_each_entry_rcu(kg, &stt->groups, next)	{
+		iommu_group_put(kg->refgrp);
+		kg->refgrp = NULL;
+	}
 
 	kvm_put_kvm(stt->kvm);
 
@@ -141,6 +156,74 @@ static const struct file_operations kvm_spapr_tce_fops = {
 	.mmap           = kvm_spapr_tce_mmap,
 	.release	= kvm_spapr_tce_release,
 };
+
+extern long kvm_spapr_tce_attach_iommu_group(struct kvm *kvm,
+				unsigned long liobn,
+				phys_addr_t start_addr,
+				struct iommu_group *grp)
+{
+	struct kvmppc_spapr_tce_table *stt = NULL;
+	struct iommu_table_group *table_group;
+	long i;
+	bool found = false;
+	struct kvmppc_spapr_tce_group *kg;
+	struct iommu_table *tbltmp;
+
+	/* Check this LIOBN hasn't been previously allocated */
+	list_for_each_entry_rcu(stt, &kvm->arch.spapr_tce_tables, list) {
+		if (stt->liobn == liobn) {
+			if ((stt->offset << stt->page_shift) != start_addr)
+				return -EINVAL;
+
+			found = true;
+			break;
+		}
+	}
+
+	if (!found)
+		return -ENODEV;
+
+	/* Find IOMMU group and table at @start_addr */
+	table_group = iommu_group_get_iommudata(grp);
+	if (!table_group)
+		return -EFAULT;
+
+	tbltmp = NULL;
+	for (i = 0; i < IOMMU_TABLE_GROUP_MAX_TABLES; ++i) {
+		struct iommu_table *tbl = &table_group->tables[i];
+
+		if ((tbl->it_page_shift == stt->page_shift) &&
+				(tbl->it_offset == stt->offset)) {
+			tbltmp = tbl;
+			break;
+		}
+	}
+	if (!tbltmp)
+		return -ENODEV;
+
+	list_for_each_entry_rcu(kg, &stt->groups, next) {
+		if (kg->refgrp == grp)
+			return -EBUSY;
+		/*
+		 * Check if the table is in the list already.
+		 * We might be dealing with 2 cases here:
+		 * 1) shared IOMMU table for IODA2 - all groups will have
+		 * the same actual table which only needs to be updated once
+		 * so @stt must have tbl==NULL
+		 * 2) invidual IOMMU tables (IODA1, P5IOC2) - each group has
+		 * its own table.
+		 */
+		if (kg->tbl && (kg->tbl->it_base == tbltmp->it_base))
+			tbltmp = NULL;
+	}
+
+	kg = kzalloc(sizeof(*kg), GFP_KERNEL);
+	kg->refgrp = grp;
+	kg->tbl = tbltmp;
+	list_add_rcu(&kg->next, &stt->groups);
+
+	return 0;
+}
 
 long kvm_vm_ioctl_create_spapr_tce(struct kvm *kvm,
 				   struct kvm_create_spapr_tce_64 *args)
@@ -177,6 +260,7 @@ long kvm_vm_ioctl_create_spapr_tce(struct kvm *kvm,
 	stt->offset = args->offset;
 	stt->size = size;
 	stt->kvm = kvm;
+	INIT_LIST_HEAD_RCU(&stt->groups);
 
 	for (i = 0; i < npages; i++) {
 		stt->pages[i] = alloc_page(GFP_KERNEL | __GFP_ZERO);

@@ -172,6 +172,12 @@ struct kvmppc_pginfo {
 	atomic_t refcnt;
 };
 
+struct kvmppc_spapr_tce_group {
+	struct list_head next;
+	struct iommu_group *refgrp;/* for reference counting only */
+	struct iommu_table *tbl;
+};
+
 struct kvmppc_spapr_tce_table {
 	struct list_head list;
 	struct kvm *kvm;
@@ -180,6 +186,7 @@ struct kvmppc_spapr_tce_table {
 	u32 page_shift;
 	u64 offset;		/* in pages */
 	u64 size;		/* in pages */
+	struct list_head groups;
 	struct page *pages[0];
 };
 

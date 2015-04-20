@@ -164,6 +164,10 @@ extern void kvmppc_map_vrma(struct kvm_vcpu *vcpu,
 			struct kvm_memory_slot *memslot, unsigned long porder);
 extern int kvmppc_pseries_do_hcall(struct kvm_vcpu *vcpu);
 
+extern long kvm_spapr_tce_attach_iommu_group(struct kvm *kvm,
+				unsigned long liobn,
+				phys_addr_t start_addr,
+				struct iommu_group *grp);
 extern long kvm_vm_ioctl_create_spapr_tce(struct kvm *kvm,
 				struct kvm_create_spapr_tce_64 *args);
 extern struct kvmppc_spapr_tce_table *kvmppc_find_table(
