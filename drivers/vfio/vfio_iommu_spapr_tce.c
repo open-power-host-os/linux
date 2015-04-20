@@ -21,6 +21,7 @@
 #include <linux/vfio.h>
 #include <asm/iommu.h>
 #include <asm/tce.h>
+#include <asm/mmu_context.h>
 
 #define DRIVER_VERSION  "0.1"
 #define DRIVER_AUTHOR   "aik@ozlabs.ru"
@@ -91,7 +92,57 @@ struct tce_container {
 	struct iommu_group *grp;
 	bool enabled;
 	unsigned long locked_pages;
+	bool v2;
 };
+
+static long tce_unregister_pages(struct tce_container *container,
+		__u64 vaddr, __u64 size)
+{
+	long ret;
+	struct mm_iommu_table_group_mem_t *mem;
+
+	if ((vaddr & ~PAGE_MASK) || (size & ~PAGE_MASK))
+		return -EINVAL;
+
+	mem = mm_iommu_get(vaddr, size >> PAGE_SHIFT);
+	if (!mem)
+		return -EINVAL;
+
+	ret = mm_iommu_put(mem); /* undo kref_get() from mm_iommu_get() */
+	if (!ret)
+		ret = mm_iommu_put(mem);
+
+	return ret;
+}
+
+static long tce_register_pages(struct tce_container *container,
+		__u64 vaddr, __u64 size)
+{
+	long ret = 0;
+	struct mm_iommu_table_group_mem_t *mem;
+	unsigned long entries = size >> PAGE_SHIFT;
+
+	if ((vaddr & ~PAGE_MASK) || (size & ~PAGE_MASK) ||
+			((vaddr + size) < vaddr))
+		return -EINVAL;
+
+	mem = mm_iommu_get(vaddr, entries);
+	if (!mem) {
+		ret = try_increment_locked_vm(entries);
+		if (ret)
+			return ret;
+
+		ret = mm_iommu_alloc(vaddr, entries, &mem);
+		if (ret) {
+			decrement_locked_vm(entries);
+			return ret;
+		}
+	}
+
+	container->enabled = true;
+
+	return 0;
+}
 
 static bool tce_page_is_contained(struct page *page, unsigned page_shift)
 {
@@ -205,7 +256,7 @@ static void *tce_iommu_open(unsigned long arg)
 {
 	struct tce_container *container;
 
-	if (arg != VFIO_SPAPR_TCE_IOMMU) {
+	if ((arg != VFIO_SPAPR_TCE_IOMMU) && (arg != VFIO_SPAPR_TCE_v2_IOMMU)) {
 		pr_err("tce_vfio: Wrong IOMMU type\n");
 		return ERR_PTR(-EINVAL);
 	}
@@ -215,6 +266,7 @@ static void *tce_iommu_open(unsigned long arg)
 		return ERR_PTR(-ENOMEM);
 
 	mutex_init(&container->lock);
+	container->v2 = arg == VFIO_SPAPR_TCE_v2_IOMMU;
 
 	return container;
 }
@@ -243,6 +295,47 @@ static void tce_iommu_unuse_page(struct tce_container *container,
 	put_page(page);
 }
 
+static int tce_iommu_use_page_v2(unsigned long tce, unsigned long size,
+		unsigned long *phpa, struct mm_iommu_table_group_mem_t **pmem)
+{
+	long ret = 0;
+	struct mm_iommu_table_group_mem_t *mem;
+
+	mem = mm_iommu_lookup(tce, size);
+	if (!mem)
+		return -EINVAL;
+
+	ret = mm_iommu_ua_to_hpa(mem, tce, phpa);
+	if (ret)
+		return -EINVAL;
+
+	*pmem = mem;
+
+	return 0;
+}
+
+static void tce_iommu_unuse_page_v2(struct iommu_table *tbl,
+		unsigned long entry)
+{
+	struct mm_iommu_table_group_mem_t *mem = NULL;
+	int ret;
+	unsigned long hpa = 0;
+	unsigned long *pua = IOMMU_TABLE_USERSPACE_ENTRY(tbl, entry);
+
+	if (!pua || !current || !current->mm)
+		return;
+
+	ret = tce_iommu_use_page_v2(*pua, IOMMU_PAGE_SIZE(tbl),
+			&hpa, &mem);
+	if (ret)
+		pr_debug("%s: tce %lx at #%lx was not cached, ret=%d\n",
+				__func__, *pua, entry, ret);
+	if (mem)
+		mm_iommu_mapped_update(mem, false);
+
+	*pua = 0;
+}
+
 static int tce_iommu_clear(struct tce_container *container,
 		struct iommu_table *tbl,
 		unsigned long entry, unsigned long pages)
@@ -260,6 +353,11 @@ static int tce_iommu_clear(struct tce_container *container,
 
 		if (direction == DMA_NONE)
 			continue;
+
+		if (container->v2) {
+			tce_iommu_unuse_page_v2(tbl, entry);
+			continue;
+		}
 
 		tce_iommu_unuse_page(container, oldtce);
 	}
@@ -327,6 +425,62 @@ static long tce_iommu_build(struct tce_container *container,
 	return ret;
 }
 
+static long tce_iommu_build_v2(struct tce_container *container,
+		struct iommu_table *tbl,
+		unsigned long entry, unsigned long tce, unsigned long pages,
+		enum dma_data_direction direction)
+{
+	long i, ret = 0;
+	struct page *page;
+	unsigned long hpa;
+	enum dma_data_direction dirtmp;
+
+	for (i = 0; i < pages; ++i) {
+		struct mm_iommu_table_group_mem_t *mem = NULL;
+		unsigned long *pua = IOMMU_TABLE_USERSPACE_ENTRY(tbl,
+				entry + i);
+
+		ret = tce_iommu_use_page_v2(tce, IOMMU_PAGE_SIZE(tbl),
+				&hpa, &mem);
+		if (ret)
+			break;
+
+		page = pfn_to_page(hpa >> PAGE_SHIFT);
+		if (!tce_page_is_contained(page, tbl->it_page_shift)) {
+			ret = -EPERM;
+			break;
+		}
+
+		/* Preserve offset within IOMMU page */
+		hpa |= tce & IOMMU_PAGE_MASK(tbl) & ~PAGE_MASK;
+		dirtmp = direction;
+
+		ret = iommu_tce_xchg(tbl, entry + i, &hpa, &dirtmp);
+		if (ret) {
+			/* dirtmp cannot be DMA_NONE here */
+			tce_iommu_unuse_page_v2(tbl, entry + i);
+			pr_err("iommu_tce: %s failed ioba=%lx, tce=%lx, ret=%ld\n",
+					__func__, entry << tbl->it_page_shift,
+					tce, ret);
+			break;
+		}
+
+		mm_iommu_mapped_update(mem, true);
+
+		if (dirtmp != DMA_NONE)
+			tce_iommu_unuse_page_v2(tbl, entry + i);
+
+		*pua = tce;
+
+		tce += IOMMU_PAGE_SIZE(tbl);
+	}
+
+	if (ret)
+		tce_iommu_clear(container, tbl, entry, i);
+
+	return ret;
+}
+
 static long tce_iommu_ioctl(void *iommu_data,
 				 unsigned int cmd, unsigned long arg)
 {
@@ -338,6 +492,7 @@ static long tce_iommu_ioctl(void *iommu_data,
 	case VFIO_CHECK_EXTENSION:
 		switch (arg) {
 		case VFIO_SPAPR_TCE_IOMMU:
+		case VFIO_SPAPR_TCE_v2_IOMMU:
 			ret = 1;
 			break;
 		default:
@@ -425,11 +580,18 @@ static long tce_iommu_ioctl(void *iommu_data,
 		if (ret)
 			return ret;
 
-		ret = tce_iommu_build(container, tbl,
-				param.iova >> tbl->it_page_shift,
-				param.vaddr,
-				param.size >> tbl->it_page_shift,
-				direction);
+		if (container->v2)
+			ret = tce_iommu_build_v2(container, tbl,
+					param.iova >> tbl->it_page_shift,
+					param.vaddr,
+					param.size >> tbl->it_page_shift,
+					direction);
+		else
+			ret = tce_iommu_build(container, tbl,
+					param.iova >> tbl->it_page_shift,
+					param.vaddr,
+					param.size >> tbl->it_page_shift,
+					direction);
 
 		iommu_flush_tce(tbl);
 
@@ -474,7 +636,60 @@ static long tce_iommu_ioctl(void *iommu_data,
 
 		return ret;
 	}
+	case VFIO_IOMMU_SPAPR_REGISTER_MEMORY: {
+		struct vfio_iommu_spapr_register_memory param;
+
+		if (!container->v2)
+			break;
+
+		minsz = offsetofend(struct vfio_iommu_spapr_register_memory,
+				size);
+
+		if (copy_from_user(&param, (void __user *)arg, minsz))
+			return -EFAULT;
+
+		if (param.argsz < minsz)
+			return -EINVAL;
+
+		/* No flag is supported now */
+		if (param.flags)
+			return -EINVAL;
+
+		mutex_lock(&container->lock);
+		ret = tce_register_pages(container, param.vaddr, param.size);
+		mutex_unlock(&container->lock);
+
+		return ret;
+	}
+	case VFIO_IOMMU_SPAPR_UNREGISTER_MEMORY: {
+		struct vfio_iommu_spapr_register_memory param;
+
+		if (!container->v2)
+			break;
+
+		minsz = offsetofend(struct vfio_iommu_spapr_register_memory,
+				size);
+
+		if (copy_from_user(&param, (void __user *)arg, minsz))
+			return -EFAULT;
+
+		if (param.argsz < minsz)
+			return -EINVAL;
+
+		/* No flag is supported now */
+		if (param.flags)
+			return -EINVAL;
+
+		mutex_lock(&container->lock);
+		tce_unregister_pages(container, param.vaddr, param.size);
+		mutex_unlock(&container->lock);
+
+		return 0;
+	}
 	case VFIO_IOMMU_ENABLE:
+		if (container->v2)
+			break;
+
 		mutex_lock(&container->lock);
 		ret = tce_iommu_enable(container);
 		mutex_unlock(&container->lock);
@@ -482,6 +697,9 @@ static long tce_iommu_ioctl(void *iommu_data,
 
 
 	case VFIO_IOMMU_DISABLE:
+		if (container->v2)
+			break;
+
 		mutex_lock(&container->lock);
 		tce_iommu_disable(container);
 		mutex_unlock(&container->lock);

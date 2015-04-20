@@ -427,6 +427,29 @@ The code flow from the example above should be slightly changed:
 
 	....
 
+5) There is v2 of SPAPR TCE IOMMU. It deprecates VFIO_IOMMU_ENABLE/
+VFIO_IOMMU_DISABLE and implements 2 new ioctls:
+VFIO_IOMMU_SPAPR_REGISTER_MEMORY and VFIO_IOMMU_SPAPR_UNREGISTER_MEMORY
+(which are unsupported in v1 IOMMU).
+
+PPC64 paravirtualized guests generate a lot of map/unmap requests,
+and the handling of those includes pinning/unpinning pages and updating
+mm::locked_vm counter to make sure we do not exceed the rlimit.
+The v2 IOMMU splits accounting and pinning into separate operations:
+
+- VFIO_IOMMU_SPAPR_REGISTER_MEMORY/VFIO_IOMMU_SPAPR_UNREGISTER_MEMORY ioctls
+receive a user space address and size of the block to be pinned.
+Bisecting is not supported and VFIO_IOMMU_UNREGISTER_MEMORY is expected to
+be called with the exact address and size used for registering
+the memory block. The userspace is not expected to call these often.
+The ranges are stored in a linked list in a VFIO container.
+
+- VFIO_IOMMU_MAP_DMA/VFIO_IOMMU_UNMAP_DMA ioctls only update the actual
+IOMMU table and do not do pinning; instead these check that the userspace
+address is from pre-registered range.
+
+This separation helps in optimizing DMA for guests.
+
 -------------------------------------------------------------------------------
 
 [1] VFIO was originally an acronym for "Virtual Function I/O" in its
