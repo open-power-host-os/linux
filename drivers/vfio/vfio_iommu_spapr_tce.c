@@ -239,14 +239,7 @@ static void tce_iommu_unuse_page(struct tce_container *container,
 {
 	struct page *page;
 
-	if (!(oldtce & (TCE_PCI_READ | TCE_PCI_WRITE)))
-		return;
-
 	page = pfn_to_page(oldtce >> PAGE_SHIFT);
-
-	if (oldtce & TCE_PCI_WRITE)
-		SetPageDirty(page);
-
 	put_page(page);
 }
 
@@ -255,10 +248,17 @@ static int tce_iommu_clear(struct tce_container *container,
 		unsigned long entry, unsigned long pages)
 {
 	unsigned long oldtce;
+	long ret;
+	enum dma_data_direction direction;
 
 	for ( ; pages; --pages, ++entry) {
-		oldtce = iommu_clear_tce(tbl, entry);
-		if (!oldtce)
+		direction = DMA_NONE;
+		oldtce = 0;
+		ret = iommu_tce_xchg(tbl, entry, &oldtce, &direction);
+		if (ret)
+			continue;
+
+		if (direction == DMA_NONE)
 			continue;
 
 		tce_iommu_unuse_page(container, oldtce);
@@ -283,12 +283,13 @@ static int tce_iommu_use_page(unsigned long tce, unsigned long *hpa)
 
 static long tce_iommu_build(struct tce_container *container,
 		struct iommu_table *tbl,
-		unsigned long entry, unsigned long tce, unsigned long pages)
+		unsigned long entry, unsigned long tce, unsigned long pages,
+		enum dma_data_direction direction)
 {
 	long i, ret = 0;
 	struct page *page;
 	unsigned long hpa;
-	enum dma_data_direction direction = iommu_tce_direction(tce);
+	enum dma_data_direction dirtmp;
 
 	for (i = 0; i < pages; ++i) {
 		unsigned long offset = tce & IOMMU_PAGE_MASK(tbl) & ~PAGE_MASK;
@@ -304,8 +305,8 @@ static long tce_iommu_build(struct tce_container *container,
 		}
 
 		hpa |= offset;
-		ret = iommu_tce_build(tbl, entry + i, (unsigned long) __va(hpa),
-				direction);
+		dirtmp = direction;
+		ret = iommu_tce_xchg(tbl, entry + i, &hpa, &dirtmp);
 		if (ret) {
 			tce_iommu_unuse_page(container, hpa);
 			pr_err("iommu_tce: %s failed ioba=%lx, tce=%lx, ret=%ld\n",
@@ -313,6 +314,10 @@ static long tce_iommu_build(struct tce_container *container,
 					tce, ret);
 			break;
 		}
+
+		if (dirtmp != DMA_NONE)
+			tce_iommu_unuse_page(container, hpa);
+
 		tce += IOMMU_PAGE_SIZE(tbl);
 	}
 
@@ -377,7 +382,7 @@ static long tce_iommu_ioctl(void *iommu_data,
 	case VFIO_IOMMU_MAP_DMA: {
 		struct vfio_iommu_type1_dma_map param;
 		struct iommu_table *tbl;
-		unsigned long tce;
+		enum dma_data_direction direction;
 
 		if (!container->enabled)
 			return -EPERM;
@@ -398,24 +403,33 @@ static long tce_iommu_ioctl(void *iommu_data,
 		if (!tbl)
 			return -ENXIO;
 
-		if ((param.size & ~IOMMU_PAGE_MASK(tbl)) ||
-				(param.vaddr & ~IOMMU_PAGE_MASK(tbl)))
+		if (param.size & ~IOMMU_PAGE_MASK(tbl))
+			return -EINVAL;
+
+		if (param.vaddr & (TCE_PCI_READ | TCE_PCI_WRITE))
 			return -EINVAL;
 
 		/* iova is checked by the IOMMU API */
-		tce = param.vaddr;
 		if (param.flags & VFIO_DMA_MAP_FLAG_READ)
-			tce |= TCE_PCI_READ;
-		if (param.flags & VFIO_DMA_MAP_FLAG_WRITE)
-			tce |= TCE_PCI_WRITE;
+			if (param.flags & VFIO_DMA_MAP_FLAG_WRITE)
+				direction = DMA_BIDIRECTIONAL;
+			else
+				direction = DMA_TO_DEVICE;
+		else
+			if (param.flags & VFIO_DMA_MAP_FLAG_WRITE)
+				direction = DMA_FROM_DEVICE;
+			else
+				return -EINVAL;
 
-		ret = iommu_tce_put_param_check(tbl, param.iova, tce);
+		ret = iommu_tce_put_param_check(tbl, param.iova, param.vaddr);
 		if (ret)
 			return ret;
 
 		ret = tce_iommu_build(container, tbl,
 				param.iova >> tbl->it_page_shift,
-				tce, param.size >> tbl->it_page_shift);
+				param.vaddr,
+				param.size >> tbl->it_page_shift,
+				direction);
 
 		iommu_flush_tce(tbl);
 
