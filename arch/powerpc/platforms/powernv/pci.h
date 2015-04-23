@@ -240,6 +240,8 @@ extern long pnv_pci_create_table(struct iommu_table_group *table_group, int nid,
 		__u64 bus_offset, __u32 page_shift, __u64 window_size,
 		__u32 levels, struct iommu_table *tbl);
 extern void pnv_pci_free_table(struct iommu_table *tbl);
+extern unsigned long pnv_get_table_size(__u32 page_shift,
+		__u64 window_size, __u32 levels);
 extern void pnv_pci_init_p5ioc2_hub(struct device_node *np);
 extern void pnv_pci_init_ioda_hub(struct device_node *np);
 extern void pnv_pci_init_ioda2_phb(struct device_node *np);

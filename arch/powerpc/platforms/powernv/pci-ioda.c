@@ -1342,6 +1342,18 @@ static void pnv_pci_ioda2_setup_bypass_pe(struct pnv_phb *phb,
 }
 
 #ifdef CONFIG_IOMMU_API
+static unsigned long pnv_pci_ioda2_get_table_size(__u32 page_shift,
+		__u64 window_size, __u32 levels)
+{
+	unsigned long ret = pnv_get_table_size(page_shift, window_size, levels);
+
+	if (!ret)
+		return ret;
+
+	/* Add size of it_userspace */
+	return ret + (window_size >> page_shift) * sizeof(unsigned long);
+}
+
 static long pnv_pci_ioda2_create_table(struct iommu_table_group *table_group,
 		int num, __u32 page_shift, __u64 window_size, __u32 levels,
 		struct iommu_table *tbl)
@@ -1366,6 +1378,7 @@ static long pnv_pci_ioda2_create_table(struct iommu_table_group *table_group,
 
 	BUG_ON(tbl->it_userspace);
 	tbl->it_userspace = uas;
+	tbl->it_allocated_size += uas_cb;
 	tbl->it_ops = &pnv_ioda2_iommu_ops;
 	if (pe->tce_inval_reg)
 		tbl->it_type |= (TCE_PCI_SWINV_CREATE | TCE_PCI_SWINV_FREE);
@@ -1440,6 +1453,7 @@ static void pnv_ioda2_release_ownership(struct iommu_table_group *table_group)
 }
 
 static struct iommu_table_group_ops pnv_pci_ioda2_ops = {
+	.get_table_size = pnv_pci_ioda2_get_table_size,
 	.create_table = pnv_pci_ioda2_create_table,
 	.set_window = pnv_pci_ioda2_set_window,
 	.unset_window = pnv_pci_ioda2_unset_window,

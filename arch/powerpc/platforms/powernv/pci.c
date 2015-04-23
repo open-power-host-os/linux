@@ -680,6 +680,38 @@ void pnv_pci_setup_iommu_table(struct iommu_table *tbl,
 	tbl->it_type = TCE_PCI;
 }
 
+unsigned long pnv_get_table_size(__u32 page_shift,
+		__u64 window_size, __u32 levels)
+{
+	unsigned long bytes = 0;
+	const unsigned window_shift = ilog2(window_size);
+	unsigned entries_shift = window_shift - page_shift;
+	unsigned table_shift = entries_shift + 3;
+	unsigned long tce_table_size = max(0x1000UL, 1UL << table_shift);
+	unsigned long direct_table_size;
+
+	if (!levels || (levels > POWERNV_IOMMU_MAX_LEVELS) ||
+			(window_size > memory_hotplug_max()) ||
+			!is_power_of_2(window_size))
+		return 0;
+
+	/* Calculate a direct table size from window_size and levels */
+	entries_shift = ROUND_UP(entries_shift, levels) / levels;
+	table_shift = entries_shift + 3;
+	table_shift = max_t(unsigned, table_shift, PAGE_SHIFT);
+	direct_table_size =  1UL << table_shift;
+
+	for ( ; levels; --levels) {
+		bytes += ROUND_UP(tce_table_size, direct_table_size);
+
+		tce_table_size /= direct_table_size;
+		tce_table_size <<= 3;
+		tce_table_size = ROUND_UP(tce_table_size, direct_table_size);
+	}
+
+	return bytes;
+}
+
 static __be64 *pnv_alloc_tce_table_pages(int nid, unsigned shift,
 		unsigned levels, unsigned long limit,
 		unsigned long *tce_table_allocated)
@@ -758,6 +790,10 @@ long pnv_pci_create_table(struct iommu_table_group *table_group, int nid,
 				tbl->it_level_size, tbl->it_indirect_levels);
 		return -ENOMEM;
 	}
+
+	tbl->it_allocated_size = pnv_get_table_size(page_shift, window_size,
+			levels);
+	WARN_ON(!tbl->it_allocated_size);
 
 	/* Setup linux iommu table */
 	pnv_pci_setup_iommu_table(tbl, addr, tce_table_size, bus_offset,
