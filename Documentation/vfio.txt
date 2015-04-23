@@ -289,10 +289,12 @@ PPC64 sPAPR implementation note
 
 This implementation has some specifics:
 
-1) Only one IOMMU group per container is supported as an IOMMU group
-represents the minimal entity which isolation can be guaranteed for and
-groups are allocated statically, one per a Partitionable Endpoint (PE)
+1) On older systems (POWER7 with P5IOC2/IODA1) only one IOMMU group per
+container is supported as an IOMMU table is allocated at the boot time,
+one table per a IOMMU group which is a Partitionable Endpoint (PE)
 (PE is often a PCI domain but not always).
+Newer systems (POWER8 with IODA2) have improved hardware design which allows
+to remove this limitation and have multiple IOMMU groups per a VFIO container.
 
 2) The hardware supports so called DMA windows - the PCI address range
 within which DMA transfer is allowed, any attempt to access address space
