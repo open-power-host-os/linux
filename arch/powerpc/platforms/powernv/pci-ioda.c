@@ -1227,6 +1227,52 @@ static void pnv_pci_ioda_setup_dma_pe(struct pnv_phb *phb,
 		__free_pages(tce_mem, get_order(TCE32_TABLE_SIZE * segs));
 }
 
+static long pnv_pci_ioda2_set_window(struct iommu_table_group *table_group,
+		struct iommu_table *tbl)
+{
+	struct pnv_ioda_pe *pe = container_of(table_group, struct pnv_ioda_pe,
+			table_group);
+	struct pnv_phb *phb = pe->phb;
+	int64_t rc;
+	const __u64 start_addr = tbl->it_offset << tbl->it_page_shift;
+	const __u64 win_size = tbl->it_size << tbl->it_page_shift;
+
+	pe_info(pe, "Setting up window at %llx..%llx "
+			"pgsize=0x%x tablesize=0x%lx\n",
+			start_addr, start_addr + win_size - 1,
+			1UL << tbl->it_page_shift, tbl->it_size << 3);
+
+	tbl->it_table_group = &pe->table_group;
+
+	/*
+	 * Map TCE table through TVT. The TVE index is the PE number
+	 * shifted by 1 bit for 32-bits DMA space.
+	 */
+	rc = opal_pci_map_pe_dma_window(phb->opal_id,
+			pe->pe_number,
+			pe->pe_number << 1,
+			1,
+			__pa(tbl->it_base),
+			tbl->it_size << 3,
+			1ULL << tbl->it_page_shift);
+	if (rc) {
+		pe_err(pe, "Failed to configure TCE table, err %ld\n", rc);
+		goto fail;
+	}
+
+	pnv_pci_ioda2_tvt_invalidate(pe);
+
+	/* Store fully initialized *tbl (may be external) in PE */
+	pe->table_group.tables[0] = *tbl;
+
+	return 0;
+fail:
+	if (pe->tce32_seg >= 0)
+		pe->tce32_seg = -1;
+
+	return rc;
+}
+
 static void pnv_pci_ioda2_set_bypass(struct pnv_ioda_pe *pe, bool enable)
 {
 	uint16_t window_id = (pe->pe_number << 1 ) + 1;
@@ -1335,20 +1381,15 @@ static void pnv_pci_ioda2_setup_dma_pe(struct pnv_phb *phb,
 	pe->table_group.ops = &pnv_pci_ioda2_ops;
 #endif
 
-	/*
-	 * Map TCE table through TVT. The TVE index is the PE number
-	 * shifted by 1 bit for 32-bits DMA space.
-	 */
-	rc = opal_pci_map_pe_dma_window(phb->opal_id, pe->pe_number,
-			pe->pe_number << 1, 1, __pa(tbl->it_base),
-			tbl->it_size << 3, 1ULL << tbl->it_page_shift);
+	rc = pnv_pci_ioda2_set_window(&pe->table_group, tbl);
 	if (rc) {
 		pe_err(pe, "Failed to configure 32-bit TCE table,"
 		       " err %ld\n", rc);
-		goto fail;
+		pnv_pci_free_table(tbl);
+		if (pe->tce32_seg >= 0)
+			pe->tce32_seg = -1;
+		return;
 	}
-
-	pnv_pci_ioda2_tvt_invalidate(pe);
 
 	/* OPAL variant of PHB3 invalidated TCEs */
 	if (pe->tce_inval_reg)
@@ -1362,11 +1403,6 @@ static void pnv_pci_ioda2_setup_dma_pe(struct pnv_phb *phb,
 
 	/* Also create a bypass window */
 	pnv_pci_ioda2_setup_bypass_pe(phb, pe);
-	return;
-fail:
-	if (pe->tce32_seg >= 0)
-		pe->tce32_seg = -1;
-	pnv_pci_free_table(tbl);
 }
 
 static void pnv_ioda_setup_dma(struct pnv_phb *phb)
