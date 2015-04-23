@@ -47,6 +47,8 @@
 #define cfg_dbg(fmt...)	do { } while(0)
 //#define cfg_dbg(fmt...)	printk(fmt)
 
+#define ROUND_UP(x, n) (((x) + (n) - 1ULL) & ~((n) - 1ULL))
+
 #ifdef CONFIG_PCI_MSI
 static int pnv_setup_msi_irqs(struct pci_dev *pdev, int nvec, int type)
 {
@@ -595,6 +597,19 @@ struct pci_ops pnv_pci_ops = {
 static __be64 *pnv_tce(struct iommu_table *tbl, long idx)
 {
 	__be64 *tmp = ((__be64 *)tbl->it_base);
+	int  level = tbl->it_indirect_levels;
+	const long shift = ilog2(tbl->it_level_size);
+	unsigned long mask = (tbl->it_level_size - 1) << (level * shift);
+
+	while (level) {
+		int n = (idx & mask) >> (level * shift);
+		unsigned long tce = be64_to_cpu(tmp[n]);
+
+		tmp = __va(tce & ~(TCE_PCI_READ | TCE_PCI_WRITE));
+		idx &= ~mask;
+		mask >>= shift;
+		--level;
+	}
 
 	return tmp + idx;
 }
@@ -666,12 +681,18 @@ void pnv_pci_setup_iommu_table(struct iommu_table *tbl,
 }
 
 static __be64 *pnv_alloc_tce_table_pages(int nid, unsigned shift,
+		unsigned levels, unsigned long limit,
 		unsigned long *tce_table_allocated)
 {
 	struct page *tce_mem = NULL;
-	__be64 *addr;
+	__be64 *addr, *tmp;
 	unsigned order = max_t(unsigned, shift, PAGE_SHIFT) - PAGE_SHIFT;
 	unsigned long local_allocated = 1UL << (order + PAGE_SHIFT);
+	unsigned entries = 1UL << (shift - 3);
+	long i;
+
+	if (limit == *tce_table_allocated)
+		return NULL;
 
 	tce_mem = alloc_pages_node(nid, GFP_KERNEL, order);
 	if (!tce_mem) {
@@ -680,14 +701,33 @@ static __be64 *pnv_alloc_tce_table_pages(int nid, unsigned shift,
 	}
 	addr = page_address(tce_mem);
 	memset(addr, 0, local_allocated);
-	*tce_table_allocated = local_allocated;
+
+	--levels;
+	if (!levels) {
+		/* Update tce_table_allocated with bottom level table size only */
+		*tce_table_allocated += local_allocated;
+		return addr;
+	}
+
+	for (i = 0; i < entries; ++i) {
+		tmp = pnv_alloc_tce_table_pages(nid, shift, levels, limit,
+				tce_table_allocated);
+		if (!tmp)
+			break;
+
+		addr[i] = cpu_to_be64(__pa(tmp) |
+				TCE_PCI_READ | TCE_PCI_WRITE);
+	}
 
 	return addr;
 }
 
+static void pnv_free_tce_table_pages(unsigned long addr, unsigned long size,
+		unsigned level);
+
 long pnv_pci_create_table(struct iommu_table_group *table_group, int nid,
 		__u64 bus_offset, __u32 page_shift, __u64 window_size,
-		struct iommu_table *tbl)
+		__u32 levels, struct iommu_table *tbl)
 {
 	void *addr;
 	unsigned long tce_table_allocated = 0;
@@ -696,16 +736,34 @@ long pnv_pci_create_table(struct iommu_table_group *table_group, int nid,
 	unsigned table_shift = entries_shift + 3;
 	const unsigned long tce_table_size = max(0x1000UL, 1UL << table_shift);
 
+	if (!levels || (levels > POWERNV_IOMMU_MAX_LEVELS))
+		return -EINVAL;
+
 	if ((window_size > memory_hotplug_max()) || !is_power_of_2(window_size))
 		return -EINVAL;
 
+	/* Adjust direct table size from window_size and levels */
+	entries_shift = ROUND_UP(entries_shift, levels) / levels;
+	table_shift = entries_shift + 3;
+	table_shift = max_t(unsigned, table_shift, PAGE_SHIFT);
+
 	/* Allocate TCE table */
 	addr = pnv_alloc_tce_table_pages(nid, table_shift,
-			&tce_table_allocated);
+			levels, tce_table_size, &tce_table_allocated);
+	if (!addr)
+		return -ENOMEM;
+
+	if (tce_table_size != tce_table_allocated) {
+		pnv_free_tce_table_pages((unsigned long) addr,
+				tbl->it_level_size, tbl->it_indirect_levels);
+		return -ENOMEM;
+	}
 
 	/* Setup linux iommu table */
 	pnv_pci_setup_iommu_table(tbl, addr, tce_table_size, bus_offset,
 			page_shift);
+	tbl->it_level_size = 1ULL << (table_shift - 3);
+	tbl->it_indirect_levels = levels - 1;
 
 	pr_info("Created TCE table: window size = %08llx, "
 			"tablesize = %lx (%lx), start @%08llx\n",
@@ -715,12 +773,38 @@ long pnv_pci_create_table(struct iommu_table_group *table_group, int nid,
 	return 0;
 }
 
+static void pnv_free_tce_table_pages(unsigned long addr, unsigned long size,
+		unsigned level)
+{
+	addr &= ~(TCE_PCI_READ | TCE_PCI_WRITE);
+
+	if (level) {
+		long i;
+		u64 *tmp = (u64 *) addr;
+
+		for (i = 0; i < size; ++i) {
+			unsigned long hpa = be64_to_cpu(tmp[i]);
+
+			if (!(hpa & (TCE_PCI_READ | TCE_PCI_WRITE)))
+				continue;
+
+			pnv_free_tce_table_pages((unsigned long) __va(hpa),
+					size, level - 1);
+		}
+	}
+
+	free_pages(addr, get_order(size << 3));
+}
+
 void pnv_pci_free_table(struct iommu_table *tbl)
 {
+	const unsigned long size = tbl->it_indirect_levels ?
+			tbl->it_level_size : tbl->it_size;
+
 	if (!tbl->it_size)
 		return;
 
-	free_pages(tbl->it_base, get_order(tbl->it_size << 3));
+	pnv_free_tce_table_pages(tbl->it_base, size, tbl->it_indirect_levels);
 	iommu_reset_table(tbl, "pnv");
 }
 

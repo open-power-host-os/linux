@@ -1234,13 +1234,17 @@ static long pnv_pci_ioda2_set_window(struct iommu_table_group *table_group,
 			table_group);
 	struct pnv_phb *phb = pe->phb;
 	int64_t rc;
+	const unsigned long size = tbl->it_indirect_levels ?
+			tbl->it_level_size : tbl->it_size;
 	const __u64 start_addr = tbl->it_offset << tbl->it_page_shift;
 	const __u64 win_size = tbl->it_size << tbl->it_page_shift;
 
 	pe_info(pe, "Setting up window at %llx..%llx "
-			"pgsize=0x%x tablesize=0x%lx\n",
+			"pgsize=0x%x tablesize=0x%lx "
+			"levels=%d levelsize=%x\n",
 			start_addr, start_addr + win_size - 1,
-			1UL << tbl->it_page_shift, tbl->it_size << 3);
+			1UL << tbl->it_page_shift, tbl->it_size << 3,
+			tbl->it_indirect_levels + 1, tbl->it_level_size << 3);
 
 	tbl->it_table_group = &pe->table_group;
 
@@ -1251,9 +1255,9 @@ static long pnv_pci_ioda2_set_window(struct iommu_table_group *table_group,
 	rc = opal_pci_map_pe_dma_window(phb->opal_id,
 			pe->pe_number,
 			pe->pe_number << 1,
-			1,
+			tbl->it_indirect_levels + 1,
 			__pa(tbl->it_base),
-			tbl->it_size << 3,
+			size << 3,
 			1ULL << tbl->it_page_shift);
 	if (rc) {
 		pe_err(pe, "Failed to configure TCE table, err %ld\n", rc);
@@ -1366,7 +1370,8 @@ static void pnv_pci_ioda2_setup_dma_pe(struct pnv_phb *phb,
 		phb->ioda.m32_pci_base);
 
 	rc = pnv_pci_create_table(&pe->table_group, pe->phb->hose->node,
-			0, IOMMU_PAGE_SHIFT_4K, phb->ioda.m32_pci_base, tbl);
+			0, IOMMU_PAGE_SHIFT_4K, phb->ioda.m32_pci_base,
+			POWERNV_IOMMU_DEFAULT_LEVELS, tbl);
 	if (rc) {
 		pe_err(pe, "Failed to create 32-bit TCE table, err %ld", rc);
 		return;
