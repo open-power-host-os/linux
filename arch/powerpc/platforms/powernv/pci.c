@@ -21,7 +21,9 @@
 #include <linux/io.h>
 #include <linux/msi.h>
 #include <linux/iommu.h>
+#include <linux/memblock.h>
 
+#include <asm/mmzone.h>
 #include <asm/sections.h>
 #include <asm/io.h>
 #include <asm/prom.h>
@@ -661,6 +663,65 @@ void pnv_pci_setup_iommu_table(struct iommu_table *tbl,
 	tbl->it_size = tce_size >> 3;
 	tbl->it_busno = 0;
 	tbl->it_type = TCE_PCI;
+}
+
+static __be64 *pnv_alloc_tce_table_pages(int nid, unsigned shift,
+		unsigned long *tce_table_allocated)
+{
+	struct page *tce_mem = NULL;
+	__be64 *addr;
+	unsigned order = max_t(unsigned, shift, PAGE_SHIFT) - PAGE_SHIFT;
+	unsigned long local_allocated = 1UL << (order + PAGE_SHIFT);
+
+	tce_mem = alloc_pages_node(nid, GFP_KERNEL, order);
+	if (!tce_mem) {
+		pr_err("Failed to allocate a TCE memory, order=%d\n", order);
+		return NULL;
+	}
+	addr = page_address(tce_mem);
+	memset(addr, 0, local_allocated);
+	*tce_table_allocated = local_allocated;
+
+	return addr;
+}
+
+long pnv_pci_create_table(struct iommu_table_group *table_group, int nid,
+		__u64 bus_offset, __u32 page_shift, __u64 window_size,
+		struct iommu_table *tbl)
+{
+	void *addr;
+	unsigned long tce_table_allocated = 0;
+	const unsigned window_shift = ilog2(window_size);
+	unsigned entries_shift = window_shift - page_shift;
+	unsigned table_shift = entries_shift + 3;
+	const unsigned long tce_table_size = max(0x1000UL, 1UL << table_shift);
+
+	if ((window_size > memory_hotplug_max()) || !is_power_of_2(window_size))
+		return -EINVAL;
+
+	/* Allocate TCE table */
+	addr = pnv_alloc_tce_table_pages(nid, table_shift,
+			&tce_table_allocated);
+
+	/* Setup linux iommu table */
+	pnv_pci_setup_iommu_table(tbl, addr, tce_table_size, bus_offset,
+			page_shift);
+
+	pr_info("Created TCE table: window size = %08llx, "
+			"tablesize = %lx (%lx), start @%08llx\n",
+			window_size, tce_table_size, tce_table_allocated,
+			bus_offset);
+
+	return 0;
+}
+
+void pnv_pci_free_table(struct iommu_table *tbl)
+{
+	if (!tbl->it_size)
+		return;
+
+	free_pages(tbl->it_base, get_order(tbl->it_size << 3));
+	iommu_reset_table(tbl, "pnv");
 }
 
 static void pnv_pci_dma_dev_setup(struct pci_dev *pdev)
