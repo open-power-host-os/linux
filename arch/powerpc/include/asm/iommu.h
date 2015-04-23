@@ -92,7 +92,6 @@ struct iommu_table {
 	unsigned long  it_page_shift;/* table iommu page size */
 	struct iommu_table_group *it_table_group;
 	struct iommu_table_ops *it_ops;
-	void (*set_bypass)(struct iommu_table *tbl, bool enable);
 };
 
 /* Pure 2^n version of get_order */
@@ -127,11 +126,23 @@ extern struct iommu_table *iommu_init_table(struct iommu_table * tbl,
 
 #define IOMMU_TABLE_GROUP_MAX_TABLES	1
 
+struct iommu_table_group;
+
+struct iommu_table_group_ops {
+	/*
+	 * Switches ownership from the kernel itself to an external
+	 * user. While onwership is taken, the kernel cannot use IOMMU itself.
+	 */
+	void (*take_ownership)(struct iommu_table_group *table_group);
+	void (*release_ownership)(struct iommu_table_group *table_group);
+};
+
 struct iommu_table_group {
 #ifdef CONFIG_IOMMU_API
 	struct iommu_group *group;
 #endif
 	struct iommu_table tables[IOMMU_TABLE_GROUP_MAX_TABLES];
+	struct iommu_table_group_ops *ops;
 };
 
 #ifdef CONFIG_IOMMU_API
