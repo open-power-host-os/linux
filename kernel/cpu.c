@@ -20,7 +20,6 @@
 #include <linux/gfp.h>
 #include <linux/suspend.h>
 #include <linux/lockdep.h>
-#include <linux/tick.h>
 #include <trace/events/power.h>
 
 #include "smpboot.h"
@@ -414,9 +413,6 @@ static int __ref _cpu_down(unsigned int cpu, int tasks_frozen)
 	 */
 	while (!idle_cpu(cpu))
 		cpu_relax();
-
-	/* Handover timekeeping and broadcast duties to the current cpu */
-	tick_handover_tk(cpu);
 
 	/* This actually kills the CPU. */
 	__cpu_die(cpu);
