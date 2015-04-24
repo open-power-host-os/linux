@@ -107,6 +107,7 @@ extern int tick_check_oneshot_change(int allow_nohz);
 extern struct tick_sched *tick_get_tick_sched(int cpu);
 extern void tick_irq_enter(void);
 extern int tick_oneshot_mode_active(void);
+extern void hotplug_cpu__broadcast_tick_pull(int dead_cpu);
 #  ifndef arch_needs_cpu
 #   define arch_needs_cpu() (0)
 #  endif
@@ -115,6 +116,7 @@ static inline void tick_clock_notify(void) { }
 static inline int tick_check_oneshot_change(int allow_nohz) { return 0; }
 static inline void tick_irq_enter(void) { }
 static inline int tick_oneshot_mode_active(void) { return 0; }
+static inline void hotplug_cpu__broadcast_tick_pull(int dead_cpu) { }
 # endif
 
 #else /* CONFIG_GENERIC_CLOCKEVENTS */
@@ -124,6 +126,7 @@ static inline void tick_clock_notify(void) { }
 static inline int tick_check_oneshot_change(int allow_nohz) { return 0; }
 static inline void tick_irq_enter(void) { }
 static inline int tick_oneshot_mode_active(void) { return 0; }
+static inline void hotplug_cpu__broadcast_tick_pull(int dead_cpu) { }
 #endif /* !CONFIG_GENERIC_CLOCKEVENTS */
 
 # ifdef CONFIG_NO_HZ_COMMON
