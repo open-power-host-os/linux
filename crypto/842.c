@@ -479,3 +479,4 @@ module_exit(crypto842_mod_exit);
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("842 Compression Algorithm");
 MODULE_AUTHOR("Dan Streetman <ddstreet@ieee.org>");
+MODULE_ALIAS_CRYPTO("842");
