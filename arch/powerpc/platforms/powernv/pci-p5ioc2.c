@@ -83,18 +83,30 @@ static void pnv_pci_init_p5ioc2_msis(struct pnv_phb *phb)
 static void pnv_pci_init_p5ioc2_msis(struct pnv_phb *phb) { }
 #endif /* CONFIG_PCI_MSI */
 
+static struct iommu_table_ops pnv_p5ioc2_iommu_ops = {
+	.set = pnv_tce_build,
+#ifdef CONFIG_IOMMU_API
+	.exchange = pnv_tce_xchg,
+	.exchange_rm = pnv_tce_xchg,
+#endif
+	.clear = pnv_tce_free,
+	.get = pnv_tce_get,
+};
+
 static void pnv_pci_p5ioc2_dma_dev_setup(struct pnv_phb *phb,
 					 struct pci_dev *pdev)
 {
-	if (phb->p5ioc2.iommu_table.it_map == NULL) {
-		iommu_init_table(&phb->p5ioc2.iommu_table, phb->hose->node,
-				&pnv_iommu_ops);
-		iommu_register_group(&phb->p5ioc2.iommu_table,
-				NULL, NULL,
+	if (phb->p5ioc2.table_group.tables[0].it_map == NULL) {
+		phb->p5ioc2.table_group.tables[0].it_ops =
+				&pnv_p5ioc2_iommu_ops;
+		iommu_init_table(&phb->p5ioc2.table_group.tables[0],
+				phb->hose->node);
+		iommu_register_group(&phb->p5ioc2.table_group,
 				pci_domain_nr(phb->hose->bus), phb->opal_id);
 	}
 
-	set_iommu_table_base_and_group(&pdev->dev, &phb->p5ioc2.iommu_table);
+	set_iommu_table_base_and_group(&pdev->dev,
+			&phb->p5ioc2.table_group.tables[0]);
 }
 
 static void __init pnv_pci_init_p5ioc2_phb(struct device_node *np, u64 hub_id,
@@ -105,6 +117,8 @@ static void __init pnv_pci_init_p5ioc2_phb(struct device_node *np, u64 hub_id,
 	u64 phb_id;
 	int64_t rc;
 	static int primary = 1;
+	struct iommu_table_group *table_group;
+	struct iommu_table *tbl;
 
 	pr_info(" Initializing p5ioc2 PHB %s\n", np->full_name);
 
@@ -168,11 +182,17 @@ static void __init pnv_pci_init_p5ioc2_phb(struct device_node *np, u64 hub_id,
 	/* Setup MSI support */
 	pnv_pci_init_p5ioc2_msis(phb);
 
+	/* Setup iommu */
+	table_group = &phb->p5ioc2.table_group;
+	tbl = &phb->p5ioc2.table_group.tables[0];
+	tbl->it_table_group = table_group;
+
 	/* Setup TCEs */
 	phb->dma_dev_setup = pnv_pci_p5ioc2_dma_dev_setup;
-	pnv_pci_setup_iommu_table(&phb->p5ioc2.iommu_table,
-				  tce_mem, tce_size, 0,
+	pnv_pci_setup_iommu_table(tbl, tce_mem, tce_size, 0,
 				  IOMMU_PAGE_SHIFT_4K);
+	table_group->tce32_start = tbl->it_offset << tbl->it_page_shift;
+	table_group->tce32_size = tbl->it_size << tbl->it_page_shift;
 }
 
 void __init pnv_pci_init_p5ioc2_hub(struct device_node *np)

@@ -32,6 +32,7 @@
 #include <asm/kvm_ppc.h>
 #include <asm/kvm_book3s.h>
 #include <asm/mmu-hash64.h>
+#include <asm/mmu_context.h>
 #include <asm/hvcall.h>
 #include <asm/synch.h>
 #include <asm/ppc-opcode.h>
@@ -39,46 +40,52 @@
 #include <asm/udbg.h>
 #include <asm/iommu.h>
 #include <asm/tce.h>
+#include <asm/iommu.h>
 
 #define TCES_PER_PAGE	(PAGE_SIZE / sizeof(u64))
-#define ERROR_ADDR      (~(unsigned long)0x0)
 
 /* Finds a TCE table descriptor by LIOBN.
  *
  * WARNING: This will be called in real or virtual mode on HV KVM and virtual
  *          mode on PR KVM
  */
-static struct iommu_group *find_group_by_liobn_rm(struct kvm *kvm, unsigned long liobn)
-{
-	struct kvmppc_spapr_iommu_grp *kvmgrp;
-	const unsigned key = KVMPPC_SPAPR_IOMMU_GRP_HASH(liobn);
-
-	hash_for_each_possible_rcu_notrace(kvm->arch.iommu_grp_hash_tab, kvmgrp,
-			hash_node, key) {
-		if (kvmgrp->liobn == liobn)
-			return kvmgrp->grp;
-	}
-
-	return NULL;
-}
-
-struct kvmppc_spapr_tce_table *kvmppc_find_tce_table(struct kvm *kvm,
+struct kvmppc_spapr_tce_table *kvmppc_find_table(struct kvm_vcpu *vcpu,
 		unsigned long liobn)
 {
-	struct kvmppc_spapr_tce_table *tt;
+	struct kvm *kvm = vcpu->kvm;
+	struct kvmppc_spapr_tce_table *stt;
 
-	list_for_each_entry(tt, &kvm->arch.spapr_tce_tables, list) {
-		if (tt->liobn == liobn)
-			return tt;
-	}
+	list_for_each_entry_rcu_notrace(stt, &kvm->arch.spapr_tce_tables, list)
+		if (stt->liobn == liobn)
+			return stt;
 
 	return NULL;
 }
-EXPORT_SYMBOL_GPL(kvmppc_find_tce_table);
+EXPORT_SYMBOL_GPL(kvmppc_find_table);
+
+/*
+ * Validates IO address.
+ *
+ * WARNING: This will be called in real-mode on HV KVM and virtual
+ *          mode on PR KVM
+ */
+long kvmppc_ioba_validate(struct kvmppc_spapr_tce_table *stt,
+		unsigned long ioba, unsigned long npages)
+{
+	unsigned long mask = (1 << stt->page_shift) - 1;
+	unsigned long idx = ioba >> stt->page_shift;
+
+	if ((ioba & mask) || (idx < stt->offset) ||
+			(stt->offset + stt->size + npages <= idx))
+		return H_PARAMETER;
+
+	return H_SUCCESS;
+}
+EXPORT_SYMBOL_GPL(kvmppc_ioba_validate);
 
 /*
  * Validates TCE address.
- * At the moment only flags are validated.
+ * At the moment flags and page mask are validated.
  * As the host kernel does not access those addresses (just puts them
  * to the table and user space is supposed to process them), we can skip
  * checking other things (such as TCE is a guest RAM address or the page
@@ -87,9 +94,12 @@ EXPORT_SYMBOL_GPL(kvmppc_find_tce_table);
  * WARNING: This will be called in real-mode on HV KVM and virtual
  *          mode on PR KVM
  */
-long kvmppc_tce_validate(unsigned long tce)
+long kvmppc_tce_validate(struct kvmppc_spapr_tce_table *stt, unsigned long tce)
 {
-	if (tce & ~(IOMMU_PAGE_MASK_4K | TCE_PCI_WRITE | TCE_PCI_READ))
+	unsigned long mask = ((1 << stt->page_shift) - 1) &
+			~(TCE_PCI_WRITE | TCE_PCI_READ);
+
+	if (tce & mask)
 		return H_PARAMETER;
 
 	return H_SUCCESS;
@@ -132,195 +142,180 @@ static u64 *kvmppc_page_address(struct page *page)
  * WARNING: This will be called in real-mode on HV KVM and virtual
  *          mode on PR KVM
  */
-void kvmppc_tce_put(struct kvmppc_spapr_tce_table *tt,
-		unsigned long ioba, unsigned long tce)
+void kvmppc_tce_put(struct kvmppc_spapr_tce_table *stt,
+		unsigned long idx, unsigned long tce)
 {
-	unsigned long idx = ioba >> SPAPR_TCE_SHIFT;
 	struct page *page;
 	u64 *tbl;
 
-	page = tt->pages[idx / TCES_PER_PAGE];
+	idx -= stt->offset;
+	page = stt->pages[idx / TCES_PER_PAGE];
 	tbl = kvmppc_page_address(page);
 
 	tbl[idx % TCES_PER_PAGE] = tce;
 }
 EXPORT_SYMBOL_GPL(kvmppc_tce_put);
 
-#ifdef CONFIG_KVM_BOOK3S_HV_POSSIBLE
-/*
- * Converts guest physical address to host physical address.
- *
- * Tries to increase page counter via get_page_unless_zero() and
- * returns ERROR_ADDR if failed.
- *
- * Returns ERROR_ADDR if the page has gone before we increased
- * page use counter. *pg may not be NULL if put_page_unless_one()
- * failed to put the page.
- */
-static unsigned long kvmppc_rm_gpa_to_hpa_and_get(struct kvm_vcpu *vcpu,
-		unsigned long gpa, struct page **pg)
+long kvmppc_gpa_to_ua(struct kvm *kvm, unsigned long gpa,
+		unsigned long *ua, unsigned long **prmap)
 {
-	struct kvm_memory_slot *memslot;
-	pte_t *ptep, pte;
-	unsigned long hva, hpa = ERROR_ADDR;
 	unsigned long gfn = gpa >> PAGE_SHIFT;
-	unsigned shift = 0;
+	struct kvm_memory_slot *memslot;
 
-	memslot = search_memslots(kvm_memslots_raw(vcpu->kvm), gfn);
+	memslot = search_memslots(kvm_memslots(kvm), gfn);
 	if (!memslot)
-		return ERROR_ADDR;
+		return -EINVAL;
 
-	hva = __gfn_to_hva_memslot(memslot, gfn);
+	*ua = __gfn_to_hva_memslot(memslot, gfn) |
+		(gpa & ~(PAGE_MASK | TCE_PCI_READ | TCE_PCI_WRITE));
 
-	ptep = find_linux_pte_or_hugepte(vcpu->arch.pgdir, hva, &shift);
-	if (!ptep || !pte_present(*ptep))
-		return ERROR_ADDR;
-	pte = *ptep;
+#ifdef CONFIG_KVM_BOOK3S_HV_POSSIBLE
+	if (prmap)
+		*prmap = real_vmalloc_addr(&memslot->arch.rmap[
+				gfn - memslot->base_gfn]);
+#endif
 
-	if (!shift)
-		shift = PAGE_SHIFT;
+	return 0;
+}
+EXPORT_SYMBOL_GPL(kvmppc_gpa_to_ua);
 
-	/* Avoid handling anything potentially complicated in realmode */
-	if (shift > PAGE_SHIFT)
-		return ERROR_ADDR;
+#ifdef CONFIG_KVM_BOOK3S_HV_POSSIBLE
+static long kvmppc_rm_tce_iommu_mapped_dec(struct iommu_table *tbl,
+		unsigned long entry)
+{
+	struct mm_iommu_table_group_mem_t *mem = NULL;
+	const unsigned long pgsize = 1ULL << tbl->it_page_shift;
+	unsigned long *pua = IOMMU_TABLE_USERSPACE_ENTRY(tbl, entry);
 
-	if ((gpa & TCE_PCI_WRITE) && !(pte_write(pte) && pte_dirty(pte)))
-		return ERROR_ADDR;
+	if (!pua)
+		return H_SUCCESS;
 
-	if (!pte_young(pte))
-		return ERROR_ADDR;
+	pua = real_vmalloc_addr(pua);
+	if (!pua)
+		return H_SUCCESS;
 
-	/* Increase page counter */
-	*pg = realmode_pfn_to_page(pte_pfn(pte));
-	if (!*pg || PageCompound(*pg) || !get_page_unless_zero(*pg)) {
-		*pg = NULL;
-		return ERROR_ADDR;
-	}
+	mem = mm_iommu_lookup(*pua, pgsize);
+	if (!mem)
+		return H_HARDWARE;
 
-	hpa = (pte_pfn(pte) << PAGE_SHIFT) + (gpa & ((1 << shift) - 1));
+	if (mm_iommu_mapped_update(mem, false) < 0)
+		return H_HARDWARE;
 
-	/*
-	 * Page has gone since we got pte, safer to put
-	 * the request to virt mode
-	 */
-	if (unlikely(pte_val(pte) != pte_val(*ptep))) {
-		hpa = ERROR_ADDR;
-		/* Try drop the page, if failed, let virtmode do that */
-		if (put_page_unless_one(*pg))
-			*pg = NULL;
-	}
+	*pua = 0;
 
-	return hpa;
+	return H_SUCCESS;
 }
 
+static long kvmppc_rm_tce_iommu_unmap(struct iommu_table *tbl,
+		unsigned long entry)
+{
+	enum dma_data_direction dir = DMA_NONE;
+	unsigned long hpa = 0;
+
+	if (iommu_tce_xchg_rm(tbl, entry, &hpa, &dir))
+		return H_HARDWARE;
+
+	if (dir == DMA_NONE)
+		return H_SUCCESS;
+
+	return kvmppc_rm_tce_iommu_mapped_dec(tbl, entry);
+}
+
+long kvmppc_rm_tce_iommu_map(struct kvm *kvm, struct iommu_table *tbl,
+		unsigned long entry, unsigned long tce)
+{
+	unsigned long hpa, ua;
+	enum dma_data_direction dir = DMA_NONE;
+	struct mm_iommu_table_group_mem_t *mem;
+	unsigned long *pua = IOMMU_TABLE_USERSPACE_ENTRY(tbl, entry);
+	long ret;
+
+	if (kvmppc_gpa_to_ua(kvm, tce, &ua, NULL))
+		return H_HARDWARE;
+
+	mem = mm_iommu_lookup(ua, 1ULL << tbl->it_page_shift);
+	if (!mem)
+		return H_HARDWARE;
+
+	if (mm_iommu_rm_ua_to_hpa(mem, ua, &hpa))
+		return H_HARDWARE;
+
+	dir = iommu_tce_direction(tce);
+	ret = iommu_tce_xchg_rm(tbl, entry, &hpa, &dir);
+	if (ret)
+		return H_TOO_HARD;
+
+	if (dir != DMA_NONE)
+		kvmppc_rm_tce_iommu_mapped_dec(tbl, entry);
+
+	pua = real_vmalloc_addr(pua);
+	if (!pua)
+		return H_HARDWARE;
+
+	*pua = ua;
+
+	return mm_iommu_mapped_update(mem, true);
+}
+EXPORT_SYMBOL_GPL(kvmppc_rm_tce_iommu_map);
+
 static long kvmppc_rm_h_put_tce_iommu(struct kvm_vcpu *vcpu,
-		struct iommu_group *grp, unsigned long liobn,
+		struct iommu_table *tbl, unsigned long liobn,
 		unsigned long ioba, unsigned long tce)
 {
-	int ret = 0;
-	struct iommu_table *tbl = iommu_group_get_iommudata(grp);
-	unsigned long hpa;
-	struct page *pg = NULL;
-
-	if (!tbl)
-		return H_RESCINDED;
+	const unsigned long entry = ioba >> tbl->it_page_shift;
 
 	/* Clear TCE */
 	if (!(tce & (TCE_PCI_READ | TCE_PCI_WRITE))) {
 		if (iommu_tce_clear_param_check(tbl, ioba, 0, 1))
 			return H_PARAMETER;
 
-		if (iommu_free_tces(tbl, ioba >> IOMMU_PAGE_SHIFT_4K, 1, true))
-			return H_TOO_HARD;
-
-		return H_SUCCESS;
+		return kvmppc_rm_tce_iommu_unmap(tbl, entry);
 	}
 
 	/* Put TCE */
 	if (iommu_tce_put_param_check(tbl, ioba, tce))
 		return H_PARAMETER;
 
-	hpa = kvmppc_rm_gpa_to_hpa_and_get(vcpu, tce, &pg);
-
-	if (hpa == ERROR_ADDR) {
-		vcpu->arch.tce_tmp_hpas[0] = hpa;
-		vcpu->arch.tce_rm_fail = pg ? TCERM_GETPAGE : TCERM_NONE;
-		return H_TOO_HARD;
-	}
-
-	ret = iommu_tce_build(tbl, ioba >> IOMMU_PAGE_SHIFT_4K,
-			      &hpa, 1, true);
-
-	if (ret) {
-		vcpu->arch.tce_tmp_hpas[0] = hpa;
-		vcpu->arch.tce_rm_fail = pg ? TCERM_GETPAGE : TCERM_NONE;
-		return H_TOO_HARD;
-	}
-
-	return H_SUCCESS;
+	return kvmppc_rm_tce_iommu_map(vcpu->kvm, tbl, entry, tce);
 }
 
 static long kvmppc_rm_h_put_tce_indirect_iommu(struct kvm_vcpu *vcpu,
-		struct iommu_group *grp, unsigned long ioba,
-		unsigned long *tces, unsigned long npages)
+		struct iommu_table *tbl, unsigned long ioba,
+		u64 *tces, unsigned long npages)
 {
 	int i, ret;
-	unsigned long hpa;
-	struct iommu_table *tbl = iommu_group_get_iommudata(grp);
+	const unsigned long entry = ioba >> tbl->it_page_shift;
 
-	if (!tbl)
-		return H_RESCINDED;
-
-	/* Check all TCEs */
 	for (i = 0; i < npages; ++i) {
 		if (iommu_tce_put_param_check(tbl, ioba +
-				(i << IOMMU_PAGE_SHIFT_4K), tces[i]))
+				(i << tbl->it_page_shift),
+				be64_to_cpu(tces[i])))
 			return H_PARAMETER;
 	}
 
-	/* Translate TCEs and go get_page() */
 	for (i = 0; i < npages; ++i) {
-		struct page *pg = NULL;
-
-		hpa = kvmppc_rm_gpa_to_hpa_and_get(vcpu, tces[i], &pg);
-		if (hpa == ERROR_ADDR) {
-			vcpu->arch.tce_tmp_hpas[i] = 0xBAADF00D; /* poison */
-			vcpu->arch.tce_tmp_num = i;
-			vcpu->arch.tce_rm_fail = pg ?
-					TCERM_GETPAGE : TCERM_NONE;
-			return H_TOO_HARD;
-		}
-		vcpu->arch.tce_tmp_hpas[i] = hpa;
-	}
-
-	/* Put TCEs to the table */
-	ret = iommu_tce_build(tbl, (ioba >> IOMMU_PAGE_SHIFT_4K),
-			vcpu->arch.tce_tmp_hpas, npages, true);
-	if (ret == -EAGAIN) {
-		vcpu->arch.tce_rm_fail = TCERM_PUTTCE;
-		return H_TOO_HARD;
-	} else if (ret) {
-		return H_HARDWARE;
+		ret = kvmppc_rm_tce_iommu_map(vcpu->kvm, tbl, entry + i,
+				be64_to_cpu(tces[i]));
+		if (ret)
+			return ret;
 	}
 
 	return H_SUCCESS;
 }
 
 static long kvmppc_rm_h_stuff_tce_iommu(struct kvm_vcpu *vcpu,
-		struct iommu_group *grp,
+		struct iommu_table *tbl,
 		unsigned long liobn, unsigned long ioba,
 		unsigned long tce_value, unsigned long npages)
 {
-	struct iommu_table *tbl = iommu_group_get_iommudata(grp);
-
-	if (!tbl)
-		return H_RESCINDED;
+	unsigned long i;
+	const unsigned long entry = ioba >> tbl->it_page_shift;
 
 	if (iommu_tce_clear_param_check(tbl, ioba, tce_value, npages))
 		return H_PARAMETER;
 
-	if (iommu_free_tces(tbl, ioba >> IOMMU_PAGE_SHIFT_4K, npages, true))
-		return H_TOO_HARD;
+	for (i = 0; i < npages; ++i)
+		kvmppc_rm_tce_iommu_unmap(tbl, entry + i);
 
 	return H_SUCCESS;
 }
@@ -328,54 +323,79 @@ static long kvmppc_rm_h_stuff_tce_iommu(struct kvm_vcpu *vcpu,
 long kvmppc_rm_h_put_tce(struct kvm_vcpu *vcpu, unsigned long liobn,
 		unsigned long ioba, unsigned long tce)
 {
-	long ret;
-	struct kvmppc_spapr_tce_table *tt;
-	struct iommu_group *grp = NULL;
+	struct kvmppc_spapr_tce_table *stt = kvmppc_find_table(vcpu, liobn);
+	long ret = H_TOO_HARD;
+	struct kvmppc_spapr_tce_group *kg;
 
-	vcpu->arch.tce_rm_fail = TCERM_NONE;
-	vcpu->arch.tce_tmp_num = 0;
+	/* udbg_printf("H_PUT_TCE(): liobn=0x%lx ioba=0x%lx, tce=0x%lx\n", */
+	/* 	    liobn, ioba, tce); */
 
-	tt = kvmppc_find_tce_table(vcpu->kvm, liobn);
-	if (!tt) {
-		grp = find_group_by_liobn_rm(vcpu->kvm, liobn);
-		if (!grp)
-			return H_TOO_HARD;
+	if (!stt)
+		return H_TOO_HARD;
+
+	ret = kvmppc_ioba_validate(stt, ioba, 1);
+	if (ret)
+		return ret;
+
+	ret = kvmppc_tce_validate(stt, tce);
+	if (ret)
+		return ret;
+
+	list_for_each_entry_rcu_notrace(kg, &stt->groups, next) {
+		if (!kg->tbl)
+			continue;
+		ret = kvmppc_rm_h_put_tce_iommu(vcpu, kg->tbl,
+				liobn, ioba, tce);
+		if (ret)
+			return ret;
 	}
 
-	if (grp)
-		return kvmppc_rm_h_put_tce_iommu(vcpu, grp, liobn, ioba, tce);
-
-	/* Emulated IO */
-	if (ioba >= tt->window_size)
-		return H_PARAMETER;
-
-	ret = kvmppc_tce_validate(tce);
-	if (!ret)
-		kvmppc_tce_put(tt, ioba, tce);
+	kvmppc_tce_put(stt, ioba >> stt->page_shift, tce);
 
 	return ret;
+}
+
+static long kvmppc_rm_ua_to_hpa(struct kvm_vcpu *vcpu,
+		unsigned long ua, unsigned long *phpa)
+{
+	pte_t *ptep, pte;
+	unsigned shift = 0;
+
+	ptep = find_linux_pte_or_hugepte(vcpu->arch.pgdir, ua, &shift);
+	if (!ptep || !pte_present(*ptep))
+		return -ENXIO;
+	pte = *ptep;
+
+	if (!shift)
+		shift = PAGE_SHIFT;
+
+	/* Avoid handling anything potentially complicated in realmode */
+	if (shift > PAGE_SHIFT)
+		return -EAGAIN;
+
+	if (!pte_young(pte))
+		return -EAGAIN;
+
+	*phpa = (pte_pfn(pte) << PAGE_SHIFT) | (ua & ((1 << shift) - 1)) |
+			(ua & ~PAGE_MASK);
+
+	return 0;
 }
 
 long kvmppc_rm_h_put_tce_indirect(struct kvm_vcpu *vcpu,
 		unsigned long liobn, unsigned long ioba,
 		unsigned long tce_list,	unsigned long npages)
 {
-	struct kvmppc_spapr_tce_table *tt;
+	struct kvmppc_spapr_tce_table *stt;
 	long i, ret = H_SUCCESS;
-	unsigned long tces;
-	struct page *pg = NULL;
-	struct iommu_group *grp = NULL;
+	unsigned long tces, entry, ua = 0;
+	unsigned long *rmap = NULL;
 
-	vcpu->arch.tce_rm_fail = TCERM_NONE;
-	vcpu->arch.tce_tmp_num = 0;
+	stt = kvmppc_find_table(vcpu, liobn);
+	if (!stt)
+		return H_TOO_HARD;
 
-	tt = kvmppc_find_tce_table(vcpu->kvm, liobn);
-	if (!tt) {
-		grp = find_group_by_liobn_rm(vcpu->kvm, liobn);
-		if (!grp)
-			return H_TOO_HARD;
-	}
-
+	entry = ioba >> stt->page_shift;
 	/*
 	 * The spec says that the maximum size of the list is 512 TCEs
 	 * so the whole table addressed resides in 4K page
@@ -386,40 +406,64 @@ long kvmppc_rm_h_put_tce_indirect(struct kvm_vcpu *vcpu,
 	if (tce_list & ~IOMMU_PAGE_MASK_4K)
 		return H_PARAMETER;
 
-	if (tt && ((ioba + (npages << IOMMU_PAGE_SHIFT_4K)) > tt->window_size))
-		return H_PARAMETER;
+	ret = kvmppc_ioba_validate(stt, ioba, npages);
+	if (ret)
+		return ret;
 
-	tces = kvmppc_rm_gpa_to_hpa_and_get(vcpu, tce_list, &pg);
-	if (tces == ERROR_ADDR) {
-		vcpu->arch.tce_rm_fail = pg ? TCERM_GETLISTPAGE : TCERM_NONE;
-		return H_TOO_HARD;
+	if (mm_iommu_preregistered()) {
+		/*
+		 * We get here if guest memory was pre-registered which
+		 * is normally VFIO case and gpa->hpa translation does not
+		 * depend on hpt.
+		 */
+		struct mm_iommu_table_group_mem_t *mem;
+		struct kvmppc_spapr_tce_group *kg;
+
+		if (kvmppc_gpa_to_ua(vcpu->kvm, tce_list, &ua, NULL))
+			return H_TOO_HARD;
+
+		mem = mm_iommu_lookup(ua, IOMMU_PAGE_SIZE_4K);
+		if (!mem || mm_iommu_rm_ua_to_hpa(mem, ua, &tces))
+			return H_TOO_HARD;
+
+
+		list_for_each_entry_rcu_notrace(kg, &stt->groups, next) {
+			if (!kg->tbl)
+				continue;
+			ret = kvmppc_rm_h_put_tce_indirect_iommu(vcpu,
+					kg->tbl, ioba, (u64 *)tces, npages);
+			if (ret)
+				return ret;
+		}
+	} else {
+		/*
+		 * This is emulated devices case.
+		 * We do not require memory to be preregistered in this case
+		 * so lock rmap and do find_linux_pte_or_hugepte().
+		 */
+		if (kvmppc_gpa_to_ua(vcpu->kvm, tce_list, &ua, &rmap))
+			return H_TOO_HARD;
+
+		lock_rmap(rmap);
+		if (kvmppc_rm_ua_to_hpa(vcpu, ua, &tces)) {
+			ret = H_TOO_HARD;
+			goto unlock_exit;
+		}
 	}
 
-	if (grp) {
-		ret = kvmppc_rm_h_put_tce_indirect_iommu(vcpu,
-				grp, ioba, (unsigned long *)tces, npages);
-		if (ret == H_TOO_HARD)
-			return ret;
-
-		goto put_page_exit;
-	}
-
-	/* Emulated IO */
 	for (i = 0; i < npages; ++i) {
-		ret = kvmppc_tce_validate(((unsigned long *)tces)[i]);
+		unsigned long tce = be64_to_cpu(((u64 *)tces)[i]);
+
+		ret = kvmppc_tce_validate(stt, tce);
 		if (ret)
-			goto put_page_exit;
+			goto unlock_exit;
+
+		kvmppc_tce_put(stt, entry + i, tce);
 	}
 
-	for (i = 0; i < npages; ++i)
-		kvmppc_tce_put(tt, ioba + (i << IOMMU_PAGE_SHIFT_4K),
-				((unsigned long *)tces)[i]);
-
-put_page_exit:
-	if (pg && !put_page_unless_one(pg)) {
-		vcpu->arch.tce_rm_fail = TCERM_PUTLISTPAGE;
-		ret = H_TOO_HARD;
-	}
+unlock_exit:
+	if (rmap)
+		unlock_rmap(rmap);
 
 	return ret;
 }
@@ -428,32 +472,60 @@ long kvmppc_rm_h_stuff_tce(struct kvm_vcpu *vcpu,
 		unsigned long liobn, unsigned long ioba,
 		unsigned long tce_value, unsigned long npages)
 {
-	struct kvmppc_spapr_tce_table *tt;
+	struct kvmppc_spapr_tce_table *stt;
+	struct kvmppc_spapr_tce_group *kg;
 	long i, ret;
-	struct iommu_group *grp = NULL;
 
-	tt = kvmppc_find_tce_table(vcpu->kvm, liobn);
-	if (!tt) {
-		grp = find_group_by_liobn_rm(vcpu->kvm, liobn);
-		if (!grp)
-			return H_TOO_HARD;
-	}
+	stt = kvmppc_find_table(vcpu, liobn);
+	if (!stt)
+		return H_TOO_HARD;
 
-	if (grp)
-		return kvmppc_rm_h_stuff_tce_iommu(vcpu, grp, liobn, ioba,
-				tce_value, npages);
+	ret = kvmppc_ioba_validate(stt, ioba, npages);
+	if (ret)
+		return ret;
 
-	/* Emulated IO */
-	if ((ioba + (npages << IOMMU_PAGE_SHIFT_4K)) > tt->window_size)
-		return H_PARAMETER;
-
-	ret = kvmppc_tce_validate(tce_value);
+	ret = kvmppc_tce_validate(stt, tce_value);
 	if (ret || (tce_value & (TCE_PCI_WRITE | TCE_PCI_READ)))
 		return H_PARAMETER;
 
-	for (i = 0; i < npages; ++i, ioba += IOMMU_PAGE_SIZE_4K)
-		kvmppc_tce_put(tt, ioba, tce_value);
+
+	list_for_each_entry_rcu_notrace(kg, &stt->groups, next) {
+		if (!kg->tbl)
+			continue;
+		ret = kvmppc_rm_h_stuff_tce_iommu(vcpu, kg->tbl, liobn, ioba,
+				tce_value, npages);
+		if (ret)
+			return ret;
+	}
+
+	for (i = 0; i < npages; ++i, ioba += (1 << stt->page_shift))
+		kvmppc_tce_put(stt, ioba >> stt->page_shift, tce_value);
 
 	return H_SUCCESS;
 }
+
+long kvmppc_h_get_tce(struct kvm_vcpu *vcpu, unsigned long liobn,
+		      unsigned long ioba)
+{
+	struct kvmppc_spapr_tce_table *stt = kvmppc_find_table(vcpu, liobn);
+	long ret = H_TOO_HARD;
+
+
+	if (stt) {
+		ret = kvmppc_ioba_validate(stt, ioba, 1);
+		if (!ret) {
+			unsigned long idx = (ioba >> stt->page_shift) -
+				stt->offset;
+			struct page *page = stt->pages[idx / TCES_PER_PAGE];
+			u64 *tbl = (u64 *)page_address(page);
+
+			vcpu->arch.gpr[4] = tbl[idx % TCES_PER_PAGE];
+		}
+	}
+
+
+	return ret;
+}
+EXPORT_SYMBOL_GPL(kvmppc_h_get_tce);
+
 #endif /* KVM_BOOK3S_HV_POSSIBLE */

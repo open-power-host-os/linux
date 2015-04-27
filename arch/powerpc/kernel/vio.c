@@ -1196,10 +1196,12 @@ static struct iommu_table *vio_build_iommu_table(struct vio_dev *dev)
 	tbl->it_type = TCE_VB;
 	tbl->it_blocksize = 16;
 
-	return iommu_init_table(tbl, -1,
-			firmware_has_feature(FW_FEATURE_LPAR) ?
-			&iommu_table_lpar_multi_ops :
-			&iommu_table_pseries_ops);
+	if (firmware_has_feature(FW_FEATURE_LPAR))
+		tbl->it_ops = &iommu_table_lpar_multi_ops;
+	else
+		tbl->it_ops = &iommu_table_pseries_ops;
+
+	return iommu_init_table(tbl, -1);
 }
 
 /**

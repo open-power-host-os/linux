@@ -1553,3 +1553,17 @@ void setup_initial_memory_limit(phys_addr_t first_memblock_base,
 	/* Finally limit subsequent allocations */
 	memblock_set_current_limit(ppc64_rma_size);
 }
+
+/* Translate address of a vmalloc'd thing to a linear map address */
+void *real_vmalloc_addr(void *x)
+{
+	unsigned long addr = (unsigned long) x;
+	pte_t *p;
+
+	p = find_linux_pte_or_hugepte(swapper_pg_dir, addr, NULL);
+	if (!p || !pte_present(*p))
+		return NULL;
+	/* assume we don't have huge pages in vmalloc space... */
+	addr = (pte_pfn(*p) << PAGE_SHIFT) | (addr & ~PAGE_MASK);
+	return __va(addr);
+}

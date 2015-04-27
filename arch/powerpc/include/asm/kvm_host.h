@@ -173,35 +173,22 @@ struct kvmppc_pginfo {
 	atomic_t refcnt;
 };
 
+struct kvmppc_spapr_tce_group {
+	struct list_head next;
+	struct iommu_group *refgrp;/* for reference counting only */
+	struct iommu_table *tbl;
+};
+
 struct kvmppc_spapr_tce_table {
 	struct list_head list;
+	struct kvm *kvm;
 	u64 liobn;
-	u32 window_size;
-	enum { KVMPPC_TCET_EMULATED, KVMPPC_TCET_IOMMU } type;
-	union {
-		/* KVMPPC_TCET_EMULATED */
-		struct {
-			struct kvm *kvm;
-		};
-		/* KVMPPC_TCET_IOMMU */
-		struct {
-			struct iommu_group *grp;
-			struct vfio_group *vfio_grp;
-		};
-	};
-	struct page *pages[0]; /* KVMPPC_TCET_EMULATED */
-};
-
-struct kvmppc_spapr_tce_iommu_device {
-	struct list_head tables;
-};
-
-#define KVMPPC_SPAPR_IOMMU_GRP_HASH(liobn)	hash_32(liobn, 32)
-
-struct kvmppc_spapr_iommu_grp {
-	struct hlist_node hash_node;
-	unsigned long liobn;
-	struct iommu_group *grp;
+	struct rcu_head rcu;
+	u32 page_shift;
+	u64 offset;		/* in pages */
+	u64 size;		/* in pages */
+	struct list_head groups;
+	struct page *pages[0];
 };
 
 /* XICS components, defined in book3s_xics.c */
@@ -268,10 +255,7 @@ struct kvm_arch {
 #endif
 #ifdef CONFIG_PPC_BOOK3S_64
 	struct list_head spapr_tce_tables;
-	struct kvmppc_spapr_tce_iommu_device *tcedev;
 	struct list_head rtas_tokens;
-	DECLARE_HASHTABLE(iommu_grp_hash_tab, ilog2(4));
-	spinlock_t iommu_grp_write_lock;
 	DECLARE_BITMAP(enabled_hcalls, MAX_HCALL_OPCODE/4 + 1);
 #endif
 #ifdef CONFIG_KVM_MPIC
@@ -715,31 +699,6 @@ struct kvm_vcpu_arch {
 	struct dentry *debugfs_dir;
 	struct dentry *debugfs_timings;
 #endif /* CONFIG_KVM_BOOK3S_HV_EXIT_TIMING */
-#ifdef CONFIG_KVM_BOOK3S_64_HANDLER
-	unsigned long *tce_tmp_hpas;	/* TCE cache for TCE_PUT_INDIRECT */
-	/*
-	 * Number of handled TCEs in cache,
-	 * valid for TCERM_GETPAGE and TCERM_NONE
-	 */
-	unsigned long tce_tmp_num;
-	enum {
-		/* Continue handling request from tce_tmp_num in virtmode */
-		TCERM_NONE,
-		/* get_page() got a wrong page, undo this in virtmode and try again */
-		TCERM_GETPAGE,
-		/* get_page(tce_list) got a wrong page, undo this in virtmode and try again */
-		TCERM_GETLISTPAGE,
-		/* tce_build() failed, retry in virtmode (for PUT_INDIRECT only) */
-		TCERM_PUTTCE,
-		/* put_page(tce_list) failed, do put_page in virtmode */
-		TCERM_PUTLISTPAGE,
-		/*
-		 * Realmode does not specifically signal for failed put_page(tce)
-		 * as it clears TCEs which it managed to put so virtmode
-		 * can just put remaining non-zero TCEs
-		 */
-	} tce_rm_fail;			/* failed stage of request processing */
-#endif
 };
 
 #define VCPU_FPR(vcpu, i)	(vcpu)->arch.fp.fpr[i][TS_FPROFFSET]
