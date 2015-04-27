@@ -20,15 +20,13 @@
 #include <linux/vfio.h>
 #include "vfio.h"
 
+#ifdef CONFIG_SPAPR_TCE_IOMMU
+#include <asm/kvm_ppc.h>
+#endif
+
 struct kvm_vfio_group {
 	struct list_head node;
 	struct vfio_group *vfio_group;
-#ifdef CONFIG_SPAPR_TCE_IOMMU
-	struct {
-		unsigned long liobn;
-		kvm_vfio_spapr_tce_release cb;
-	} spapr_tce;
-#endif
 };
 
 struct kvm_vfio {
@@ -36,8 +34,6 @@ struct kvm_vfio {
 	struct mutex lock;
 	bool noncoherent;
 };
-
-static struct kvm_device_ops kvm_vfio_ops;
 
 static struct vfio_group *kvm_vfio_group_get_external_user(struct file *filep)
 {
@@ -68,54 +64,21 @@ static void kvm_vfio_group_put_external_user(struct vfio_group *vfio_group)
 	symbol_put(vfio_group_put_external_user);
 }
 
-#ifdef CONFIG_SPAPR_TCE_IOMMU
-struct iommu_group *kvm_vfio_find_group_by_liobn(struct kvm *kvm,
-		unsigned long liobn, kvm_vfio_spapr_tce_release cb)
+static int kvm_vfio_external_user_iommu_id(struct vfio_group *vfio_group)
 {
-	struct kvm_vfio_group *kvg;
-	int group_id;
-	struct iommu_group *grp;
-	struct kvm_vfio *kv = NULL;
-	struct kvm_device *tmp;
+	int (*fn)(struct vfio_group *);
+	int ret = -1;
 
-	if (!cb)
-		return ERR_PTR(-EINVAL);
+	fn = symbol_get(vfio_external_user_iommu_id);
+	if (!fn)
+		return ret;
 
-	/* Find a VFIO KVM device */
-	list_for_each_entry(tmp, &kvm->devices, vm_node) {
-		if (tmp->ops != &kvm_vfio_ops)
-			continue;
+	ret = fn(vfio_group);
 
-		kv = tmp->private;
-		break;
-	}
+	symbol_put(vfio_external_user_iommu_id);
 
-	if (!kv)
-		return ERR_PTR(-EIO);
-
-	/* Find a group */
-	mutex_lock(&kv->lock);
-	grp = ERR_PTR(-ENODEV);
-	list_for_each_entry(kvg, &kv->group_list, node) {
-		if (kvg->spapr_tce.liobn != liobn)
-			continue;
-
-		if (kvg->spapr_tce.cb) {
-			grp = ERR_PTR(-EBUSY);
-			break;
-		}
-
-		kvg->spapr_tce.cb = cb;
-		group_id = vfio_external_user_iommu_id(kvg->vfio_group);
-		grp = iommu_group_get_by_id(group_id);
-		break;
-	}
-	mutex_unlock(&kv->lock);
-
-	return grp;
+	return ret;
 }
-EXPORT_SYMBOL_GPL(kvm_vfio_find_group_by_liobn);
-#endif
 
 static bool kvm_vfio_group_is_coherent(struct vfio_group *vfio_group)
 {
@@ -211,9 +174,6 @@ static int kvm_vfio_set_group(struct kvm_device *dev, long attr, u64 arg)
 
 		list_add_tail(&kvg->node, &kv->group_list);
 		kvg->vfio_group = vfio_group;
-#ifdef CONFIG_SPAPR_TCE_IOMMU
-		kvg->spapr_tce.liobn = -1;
-#endif
 
 		mutex_unlock(&kv->lock);
 
@@ -244,11 +204,6 @@ static int kvm_vfio_set_group(struct kvm_device *dev, long attr, u64 arg)
 				continue;
 
 			list_del(&kvg->node);
-#ifdef CONFIG_SPAPR_TCE_IOMMU
-			if (kvg->spapr_tce.cb)
-				kvg->spapr_tce.cb(dev->kvm,
-						kvg->spapr_tce.liobn);
-#endif
 			kvm_vfio_group_put_external_user(kvg->vfio_group);
 			kfree(kvg);
 			ret = 0;
@@ -272,7 +227,8 @@ static int kvm_vfio_set_group(struct kvm_device *dev, long attr, u64 arg)
 		struct kvm_vfio_group *kvg;
 		struct fd f;
 
-		minsz = offsetofend(struct kvm_vfio_spapr_tce_liobn, liobn);
+		minsz = offsetofend(struct kvm_vfio_spapr_tce_liobn,
+				start_addr);
 
 		if (copy_from_user(&param, (void __user *)arg, minsz))
 			return -EFAULT;
@@ -295,16 +251,25 @@ static int kvm_vfio_set_group(struct kvm_device *dev, long attr, u64 arg)
 		mutex_lock(&kv->lock);
 
 		list_for_each_entry(kvg, &kv->group_list, node) {
+			int group_id;
+			struct iommu_group *grp;
+
 			if (kvg->vfio_group != vfio_group)
 				continue;
 
-			if (kvg->spapr_tce.liobn != -1) {
-				ret = -EBUSY;
+			group_id = kvm_vfio_external_user_iommu_id(
+					kvg->vfio_group);
+			grp = iommu_group_get_by_id(group_id);
+			if (!grp) {
+				ret = -EFAULT;
 				break;
 			}
 
-			kvg->spapr_tce.liobn = param.liobn;
-			ret = 0;
+			ret = kvm_spapr_tce_attach_iommu_group(dev->kvm,
+					param.liobn, param.start_addr, grp);
+			if (ret)
+				iommu_group_put(grp);
+
 			break;
 		}
 

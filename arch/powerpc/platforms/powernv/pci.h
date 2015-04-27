@@ -25,16 +25,6 @@ enum pnv_phb_model {
 #define PNV_IODA_PE_SLAVE	(1 << 4)	/* Slave PE in compound case	*/
 #define PNV_IODA_PE_VF		(1 << 5)	/* PE for one VF 		*/
 
-struct pnv_ioda_pe;
-typedef void (*pnv_invalidate_fn)(struct pnv_ioda_pe *pe,
-		struct iommu_table *tbl,
-		__be64 *startp, __be64 *endp, bool rm);
-
-struct pnv_iommu_table {
-	struct iommu_table	table;
-	struct pnv_ioda_pe	*pe;
-};
-
 /* Data associated with a PE, including IOMMU tracking etc.. */
 struct pnv_phb;
 struct pnv_ioda_pe {
@@ -65,13 +55,11 @@ struct pnv_ioda_pe {
 	unsigned int		dma_weight;
 
 	/* "Base" iommu table, ie, 4K TCEs, 32-bit DMA */
-	pnv_invalidate_fn	tce_invalidate;
 	int			tce32_seg;
 	int			tce32_segcount;
-	struct pnv_iommu_table	tce32;
+	struct iommu_table_group table_group;
 	phys_addr_t		tce_inval_reg_phys;
-	bool			tce64_active;
-	struct pnv_iommu_table	tce64;
+	__be64 __iomem		*tce_inval_reg;
 
 	/* 64-bit TCE bypass region */
 	bool			tce_bypass_enabled;
@@ -155,7 +143,7 @@ struct pnv_phb {
 
 	union {
 		struct {
-			struct iommu_table iommu_table;
+			struct iommu_table_group table_group;
 		} p5ioc2;
 
 		struct {
@@ -235,8 +223,13 @@ extern struct pci_ops pnv_pci_ops;
 #ifdef CONFIG_EEH
 extern struct pnv_eeh_ops ioda_eeh_ops;
 #endif
-
-extern struct iommu_table_ops pnv_iommu_ops;
+extern int pnv_tce_build(struct iommu_table *tbl, long index, long npages,
+		unsigned long uaddr, enum dma_data_direction direction,
+		struct dma_attrs *attrs);
+extern void pnv_tce_free(struct iommu_table *tbl, long index, long npages);
+extern int pnv_tce_xchg(struct iommu_table *tbl, long index,
+		unsigned long *tce, enum dma_data_direction *direction);
+extern unsigned long pnv_tce_get(struct iommu_table *tbl, long index);
 
 void pnv_pci_dump_phb_diag_data(struct pci_controller *hose,
 				unsigned char *log_buff);
@@ -247,6 +240,14 @@ int pnv_pci_cfg_write(struct pci_dn *pdn,
 extern void pnv_pci_setup_iommu_table(struct iommu_table *tbl,
 				      void *tce_mem, u64 tce_size,
 				      u64 dma_offset, unsigned page_shift);
+#define POWERNV_IOMMU_DEFAULT_LEVELS	1
+#define POWERNV_IOMMU_MAX_LEVELS	5
+extern long pnv_pci_create_table(struct iommu_table_group *table_group, int nid,
+		__u64 bus_offset, __u32 page_shift, __u64 window_size,
+		__u32 levels, struct iommu_table *tbl);
+extern void pnv_pci_free_table(struct iommu_table *tbl);
+extern unsigned long pnv_get_table_size(__u32 page_shift,
+		__u64 window_size, __u32 levels);
 extern void pnv_pci_init_p5ioc2_hub(struct device_node *np);
 extern void pnv_pci_init_ioda_hub(struct device_node *np);
 extern void pnv_pci_init_ioda2_phb(struct device_node *np);

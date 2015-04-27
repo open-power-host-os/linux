@@ -21,20 +21,6 @@
 #include <asm/synch.h>
 #include <asm/ppc-opcode.h>
 
-/* Translate address of a vmalloc'd thing to a linear map address */
-static void *real_vmalloc_addr(void *x)
-{
-	unsigned long addr = (unsigned long) x;
-	pte_t *p;
-
-	p = find_linux_pte_or_hugepte(swapper_pg_dir, addr, NULL);
-	if (!p || !pte_present(*p))
-		return NULL;
-	/* assume we don't have huge pages in vmalloc space... */
-	addr = (pte_pfn(*p) << PAGE_SHIFT) | (addr & ~PAGE_MASK);
-	return __va(addr);
-}
-
 /* Return 1 if we need to do a global tlbie, 0 if we can use tlbiel */
 static int global_invalidates(struct kvm *kvm, unsigned long flags)
 {

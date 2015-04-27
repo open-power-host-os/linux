@@ -1902,7 +1902,7 @@ hcall_real_table:
 	.long	0		/* 0x10 - H_CLEAR_MOD */
 	.long	0		/* 0x14 - H_CLEAR_REF */
 	.long	DOTSYM(kvmppc_h_protect) - hcall_real_table
-	.long	0
+	.long	DOTSYM(kvmppc_h_get_tce) - hcall_real_table
 	.long	DOTSYM(kvmppc_rm_h_put_tce) - hcall_real_table
 	.long	0		/* 0x24 - H_SET_SPRG0 */
 	.long	DOTSYM(kvmppc_h_set_dabr) - hcall_real_table

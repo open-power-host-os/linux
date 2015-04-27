@@ -1415,7 +1415,7 @@ static int dev_has_iommu_table(struct device *dev, void *data)
 		return 0;
 
 	tbl = get_iommu_table_base(dev);
-	if (tbl && tbl->it_group) {
+	if (tbl && tbl->it_table_group) {
 		*ppdev = pdev;
 		return 1;
 	}
