@@ -337,20 +337,14 @@ out_bc:
  *
  * Called with interrupts disabled.
  */
-static void tick_handover_do_timer(int hcpu)
+void tick_handover_do_timer(int *cpup)
 {
-	if (hcpu == tick_do_timer_cpu) {
-		int cpu = smp_processor_id();
+	if (*cpup == tick_do_timer_cpu) {
+		int cpu = cpumask_first(cpu_online_mask);
 
 		tick_do_timer_cpu = (cpu < nr_cpu_ids) ? cpu :
 			TICK_DO_TIMER_NONE;
 	}
-}
-
-void tick_handover_tk(int hcpu)
-{
-	tick_handover_do_timer(hcpu);
-	tick_handover_broadcast(hcpu);
 }
 
 /*

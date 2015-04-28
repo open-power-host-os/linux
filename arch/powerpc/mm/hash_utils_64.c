@@ -1066,7 +1066,7 @@ int hash_page_mm(struct mm_struct *mm, unsigned long ea,
 #endif /* CONFIG_PPC_64K_PAGES */
 
 	/* Get PTE and page size from page tables */
-	ptep = find_linux_pte_or_hugepte(pgdir, ea, &hugeshift);
+	ptep = __find_linux_pte_or_hugepte(pgdir, ea, &hugeshift);
 	if (ptep == NULL || !pte_present(*ptep)) {
 		DBG_LOW(" no PTE !\n");
 		rc = 1;
@@ -1552,4 +1552,22 @@ void setup_initial_memory_limit(phys_addr_t first_memblock_base,
 
 	/* Finally limit subsequent allocations */
 	memblock_set_current_limit(ppc64_rma_size);
+}
+
+/* Translate address of a vmalloc'd thing to a linear map address */
+void *real_vmalloc_addr(void *x)
+{
+	unsigned long addr = (unsigned long) x;
+	pte_t *p;
+
+	/*
+	 * assume we don't have huge pages in vmalloc space...
+	 * So don't worry about THP collapse/split. Called
+	 * Only in realmode, hence won't need irq_save/restore.
+	 */
+	p = __find_linux_pte_or_hugepte(swapper_pg_dir, addr, NULL);
+	if (!p || !pte_present(*p))
+		return NULL;
+	addr = (pte_pfn(*p) << PAGE_SHIFT) | (addr & ~PAGE_MASK);
+	return __va(addr);
 }

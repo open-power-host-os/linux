@@ -669,14 +669,19 @@ static void broadcast_shutdown_local(struct clock_event_device *bc,
 	clockevents_set_mode(dev, CLOCK_EVT_MODE_SHUTDOWN);
 }
 
-void tick_handover_broadcast(int deadcpu)
+void hotplug_cpu__broadcast_tick_pull(int deadcpu)
 {
-	struct clock_event_device *bc = tick_broadcast_device.evtdev;
+	struct clock_event_device *bc;
+	unsigned long flags;
 
-	if (!bc || !broadcast_needs_cpu(bc, deadcpu))
-		return;
-	/* This moves the broadcast assignment to this cpu */
-	clockevents_program_event(bc, bc->next_event, 1);
+	raw_spin_lock_irqsave(&tick_broadcast_lock, flags);
+	bc = tick_broadcast_device.evtdev;
+
+	if (bc && broadcast_needs_cpu(bc, deadcpu)) {
+		/* This moves the broadcast assignment to this CPU: */
+		clockevents_program_event(bc, bc->next_event, 1);
+	}
+	raw_spin_unlock_irqrestore(&tick_broadcast_lock, flags);
 }
 
 /*

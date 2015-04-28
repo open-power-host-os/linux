@@ -415,9 +415,7 @@ static int __ref _cpu_down(unsigned int cpu, int tasks_frozen)
 	while (!idle_cpu(cpu))
 		cpu_relax();
 
-	/* Handover timekeeping and broadcast duties to the current cpu */
-	tick_handover_tk(cpu);
-
+	hotplug_cpu__broadcast_tick_pull(cpu);
 	/* This actually kills the CPU. */
 	__cpu_die(cpu);
 
