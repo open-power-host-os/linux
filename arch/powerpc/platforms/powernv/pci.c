@@ -783,11 +783,6 @@ long pnv_pci_create_table(struct iommu_table_group *table_group, int nid,
 	tbl->it_level_size = 1ULL << (table_shift - 3);
 	tbl->it_indirect_levels = levels - 1;
 
-	pr_info("Created TCE table: window size = %08llx, "
-			"tablesize = %lx (%lx), start @%08llx\n",
-			window_size, tce_table_size, tce_table_allocated,
-			bus_offset);
-
 	return 0;
 }
 
