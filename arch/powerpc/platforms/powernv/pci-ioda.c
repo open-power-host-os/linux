@@ -877,11 +877,11 @@ static void pnv_pci_vf_resource_shift(struct pci_dev *dev, int offset)
 		if (!pnv_pci_is_mem_pref_64(res->flags))
 			continue;
 
-		dev_info(&dev->dev, "PowerNV: Shifting VF BAR %pR to\n", res);
+		dev_dbg(&dev->dev, "PowerNV: Shifting VF BAR %pR to\n", res);
 		size = pnv_pci_sriov_resource_size(dev, PCI_IOV_RESOURCES + i);
 		res->start += size*offset;
 
-		dev_info(&dev->dev, "                         %pR\n", res);
+		dev_dbg(&dev->dev, "                         %pR\n", res);
 		pci_update_resource(dev, PCI_IOV_RESOURCES + i);
 	}
 	pdn->vfs -= offset;
@@ -1418,7 +1418,7 @@ static void pnv_ioda_setup_vf_PE(struct pci_dev *pdev, u16 vf_num)
 						OPAL_ADD_PE_TO_DOMAIN);
 
 					if (rc)
-					    pr_warn("%s: Failed to link same "
+					    pr_err("%s: Failed to link same "
 						"group PE#%d(%lld)\n",
 						__func__,
 						pdn->offset + vf_index1, rc);
@@ -1452,7 +1452,7 @@ try_again:
 				goto try_again;
 
 			mutex_unlock(&phb->ioda.pe_alloc_mutex);
-			pr_info("Failed to enable VF\n");
+			pr_err("Failed to enable VF\n");
 			pdn->offset = 0;
 			return -EBUSY;
 		}
@@ -1463,7 +1463,7 @@ try_again:
 		/* Assign M64 BAR accordingly */
 		ret = pnv_pci_vf_assign_m64(pdev, vf_num);
 		if (ret) {
-			pr_info("No enough M64 resource\n");
+			pr_err("No enough M64 resource\n");
 			goto m64_failed;
 		}
 
@@ -1917,16 +1917,6 @@ static long pnv_pci_ioda2_set_window(struct iommu_table_group *table_group,
 	int64_t rc;
 	const unsigned long size = tbl->it_indirect_levels ?
 			tbl->it_level_size : tbl->it_size;
-	const __u64 start_addr = tbl->it_offset << tbl->it_page_shift;
-	const __u64 win_size = tbl->it_size << tbl->it_page_shift;
-
-	pe_info(pe, "Setting up window#%d at %llx..%llx "
-			"pgsize=0x%x tablesize=0x%lx "
-			"levels=%d levelsize=%x\n",
-			num,
-			start_addr, start_addr + win_size - 1,
-			1UL << tbl->it_page_shift, tbl->it_size << 3,
-			tbl->it_indirect_levels + 1, tbl->it_level_size << 3);
 
 	tbl->it_table_group = &pe->table_group;
 
@@ -1964,7 +1954,6 @@ static void pnv_pci_ioda2_set_bypass(struct pnv_ioda_pe *pe, bool enable)
 	uint16_t window_id = (pe->pe_number << 1 ) + 1;
 	int64_t rc;
 
-	pe_info(pe, "%sabling 64-bit DMA bypass\n", enable ? "En" : "Dis");
 	if (enable) {
 		phys_addr_t top = memblock_end_of_DRAM();
 
@@ -2144,8 +2133,6 @@ static void pnv_pci_ioda2_setup_dma_pe(struct pnv_phb *phb,
 
 	/* The PE will reserve all possible 32-bits space */
 	pe->tce32_seg = 0;
-	pe_info(pe, "Setting up 32-bit TCE table at 0..%08x\n",
-		phb->ioda.m32_pci_base);
 
 	pe->table_group.tce32_start = 0;
 	pe->table_group.tce32_size = phb->ioda.m32_pci_base;
