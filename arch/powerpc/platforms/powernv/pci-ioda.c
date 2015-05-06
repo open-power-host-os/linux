@@ -1234,7 +1234,8 @@ static void pnv_pci_ioda2_release_dma_pe(struct pci_dev *dev, struct pnv_ioda_pe
 	if (rc)
 		pe_warn(pe, "OPAL error %ld release default DMA window\n", rc);
 
-	pnv_pci_ioda2_set_bypass(pe, false);
+	if (!(pe->flags & PNV_IODA_PE_VF))
+		pnv_pci_ioda2_set_bypass(pe, false);
 
 	pnv_pci_free_table(&pe->table_group.tables[0]);
 }
