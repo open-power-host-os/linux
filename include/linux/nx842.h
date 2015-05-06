@@ -1,11 +1,9 @@
 #ifndef __NX842_H__
 #define __NX842_H__
 
-#define __NX842_PSERIES_MEM_COMPRESS	(10240)
-#define __NX842_POWERNV_MEM_COMPRESS	(1024)
+#define __NX842_PSERIES_MEM_COMPRESS	(PAGE_SIZE * 2 + 10240)
 
-#define NX842_MEM_COMPRESS	(max_t(unsigned int,			\
-	__NX842_PSERIES_MEM_COMPRESS, __NX842_POWERNV_MEM_COMPRESS))
+#define NX842_MEM_COMPRESS	__NX842_PSERIES_MEM_COMPRESS
 
 struct nx842_constraints {
 	int alignment;
