@@ -21,13 +21,18 @@
  *          Seth Jennings <sjenning@linux.vnet.ibm.com>
  */
 
+#include <linux/kernel.h>
+#include <linux/module.h>
+#include <linux/nx842.h>
+#include <linux/of.h>
+#include <linux/slab.h>
+
 #include <asm/page.h>
 #include <asm/vio.h>
 
-#include "nx-842.h"
 #include "nx_csbcpb.h" /* struct nx_csbcpb */
 
-#define MODULE_NAME NX842_PSERIES_MODULE_NAME
+#define MODULE_NAME "nx-compress"
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Robert Jennings <rcj@linux.vnet.ibm.com>");
 MODULE_DESCRIPTION("842 H/W Compression driver for IBM Power processors");
@@ -231,6 +236,18 @@ struct nx842_workmem {
 	};
 };
 
+int nx842_get_workmem_size(void)
+{
+	return sizeof(struct nx842_workmem) + NX842_HW_PAGE_SIZE;
+}
+EXPORT_SYMBOL_GPL(nx842_get_workmem_size);
+
+int nx842_get_workmem_size_aligned(void)
+{
+	return sizeof(struct nx842_workmem);
+}
+EXPORT_SYMBOL_GPL(nx842_get_workmem_size_aligned);
+
 static int nx842_validate_result(struct device *dev,
 	struct cop_status_block *csb)
 {
@@ -283,7 +300,7 @@ static int nx842_validate_result(struct device *dev,
 }
 
 /**
- * nx842_pseries_compress - Compress data using the 842 algorithm
+ * nx842_compress - Compress data using the 842 algorithm
  *
  * Compression provide by the NX842 coprocessor on IBM Power systems.
  * The input buffer is compressed and the result is stored in the
@@ -298,7 +315,7 @@ static int nx842_validate_result(struct device *dev,
  * @out: Pointer to output buffer
  * @outlen: Length of output buffer
  * @wrkmem: ptr to buffer for working memory, size determined by
- *          NX842_MEM_COMPRESS
+ *          nx842_get_workmem_size()
  *
  * Returns:
  *   0		Success, output of length @outlen stored in the buffer at @out
@@ -308,7 +325,7 @@ static int nx842_validate_result(struct device *dev,
  *   -EIO	Internal error
  *   -ENODEV	Hardware unavailable
  */
-static int nx842_pseries_compress(const unsigned char *in, unsigned int inlen,
+int nx842_compress(const unsigned char *in, unsigned int inlen,
 		       unsigned char *out, unsigned int *outlen, void *wmem)
 {
 	struct nx842_header *hdr;
@@ -476,12 +493,13 @@ unlock:
 	rcu_read_unlock();
 	return ret;
 }
+EXPORT_SYMBOL_GPL(nx842_compress);
 
 static int sw842_decompress(const unsigned char *, int, unsigned char *, int *,
 			const void *);
 
 /**
- * nx842_pseries_decompress - Decompress data using the 842 algorithm
+ * nx842_decompress - Decompress data using the 842 algorithm
  *
  * Decompression provide by the NX842 coprocessor on IBM Power systems.
  * The input buffer is decompressed and the result is stored in the
@@ -497,7 +515,7 @@ static int sw842_decompress(const unsigned char *, int, unsigned char *, int *,
  * @out: Pointer to output buffer, must be page aligned
  * @outlen: Length of output buffer, must be PAGE_SIZE
  * @wrkmem: ptr to buffer for working memory, size determined by
- *          NX842_MEM_COMPRESS
+ *          nx842_get_workmem_size()
  *
  * Returns:
  *   0		Success, output of length @outlen stored in the buffer at @out
@@ -507,7 +525,7 @@ static int sw842_decompress(const unsigned char *, int, unsigned char *, int *,
  *   -EINVAL	Bad input data encountered when attempting decompress
  *   -EIO	Internal error
  */
-static int nx842_pseries_decompress(const unsigned char *in, unsigned int inlen,
+int nx842_decompress(const unsigned char *in, unsigned int inlen,
 			 unsigned char *out, unsigned int *outlen, void *wmem)
 {
 	struct nx842_header *hdr;
@@ -676,6 +694,7 @@ unlock:
 	rcu_read_unlock();
 	return ret;
 }
+EXPORT_SYMBOL_GPL(nx842_decompress);
 
 /**
  * nx842_OF_set_defaults -- Set default (disabled) values for devdata
@@ -1111,12 +1130,6 @@ static struct attribute_group nx842_attribute_group = {
 	.attrs = nx842_sysfs_entries,
 };
 
-static struct nx842_driver nx842_pseries_driver = {
-	.owner =	THIS_MODULE,
-	.compress =	nx842_pseries_compress,
-	.decompress =	nx842_pseries_decompress,
-};
-
 static int __init nx842_probe(struct vio_dev *viodev,
 				  const struct vio_device_id *id)
 {
@@ -1179,8 +1192,6 @@ static int __init nx842_probe(struct vio_dev *viodev,
 		goto error;
 	}
 
-	nx842_register_driver(&nx842_pseries_driver);
-
 	return 0;
 
 error_unlock:
@@ -1211,14 +1222,11 @@ static int __exit nx842_remove(struct vio_dev *viodev)
 	if (old_devdata)
 		kfree(old_devdata->counters);
 	kfree(old_devdata);
-
-	nx842_unregister_driver(&nx842_pseries_driver);
-
 	return 0;
 }
 
 static struct vio_device_id nx842_driver_ids[] = {
-	{NX842_PSERIES_COMPAT_NAME "-v1", NX842_PSERIES_COMPAT_NAME},
+	{"ibm,compression-v1", "ibm,compression"},
 	{"", ""},
 };
 
@@ -1234,8 +1242,6 @@ static int __init nx842_init(void)
 {
 	struct nx842_devdata *new_devdata;
 	pr_info("Registering IBM Power 842 compression driver\n");
-
-	BUILD_BUG_ON(sizeof(struct nx842_workmem) > NX842_MEM_COMPRESS);
 
 	RCU_INIT_POINTER(devdata, NULL);
 	new_devdata = kzalloc(sizeof(*new_devdata), GFP_KERNEL);
@@ -1266,7 +1272,6 @@ static void __exit nx842_exit(void)
 	if (old_devdata)
 		dev_set_drvdata(old_devdata->dev, NULL);
 	kfree(old_devdata);
-	nx842_unregister_driver(&nx842_pseries_driver);
 	vio_unregister_driver(&nx842_driver);
 }
 
