@@ -32,8 +32,6 @@
 #include <linux/crypto.h>
 #include <linux/sw842.h>
 
-#define CRYPTO842_NAME	"sw842"
-
 struct crypto842_ctx {
 	char wmem[SW842_MEM_COMPRESS];	/* working memory for compress */
 };
@@ -55,7 +53,9 @@ static int crypto842_decompress(struct crypto_tfm *tfm,
 }
 
 static struct crypto_alg alg = {
-	.cra_name		= CRYPTO842_NAME,
+	.cra_name		= "842",
+	.cra_driver_name	= "842-generic",
+	.cra_priority		= 100,
 	.cra_flags		= CRYPTO_ALG_TYPE_COMPRESS,
 	.cra_ctxsize		= sizeof(struct crypto842_ctx),
 	.cra_module		= THIS_MODULE,
@@ -78,5 +78,6 @@ module_exit(crypto842_mod_exit);
 
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("842 Software Compression Algorithm");
-MODULE_ALIAS_CRYPTO(CRYPTO842_NAME);
+MODULE_ALIAS_CRYPTO("842");
+MODULE_ALIAS_CRYPTO("842-generic");
 MODULE_AUTHOR("Dan Streetman <ddstreet@ieee.org>");

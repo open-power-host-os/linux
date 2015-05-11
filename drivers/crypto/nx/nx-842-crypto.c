@@ -62,16 +62,6 @@
 #include <linux/sw842.h>
 #include <linux/ratelimit.h>
 
-/* Use the name "nx842" to register as a crypto compression alg. */
-#define NX842_CRYPTO_NAME	"nx842"
-/* Also alias as "842" to keep backwards compatibility; before the crypto 842
- * software compression alg (named "sw842") was added, the existing crypto
- * compression alg was named "842" and used this hardware 842 compression.
- * This allows users to continue using "842" to access this hardware 842
- * compression.
- */
-#define NX842_CRYPTO_ALIAS	"842"
-
 /* The first 5 bits of this magic are 0x1f, which is an invalid 842 5-bit
  * template (see lib/842/842.h), so this magic number will never appear at
  * the start of a raw 842 compressed buffer.  That is important, as any buffer
@@ -562,8 +552,10 @@ static int nx842_crypto_decompress(struct crypto_tfm *tfm,
 	return 0;
 }
 
-static struct crypto_alg algs[2] = { {
-	.cra_name		= NX842_CRYPTO_NAME,
+static struct crypto_alg alg = {
+	.cra_name		= "842",
+	.cra_driver_name	= "842-nx",
+	.cra_priority		= 300,
 	.cra_flags		= CRYPTO_ALG_TYPE_COMPRESS,
 	.cra_ctxsize		= sizeof(struct nx842_crypto_ctx),
 	.cra_module		= THIS_MODULE,
@@ -572,32 +564,22 @@ static struct crypto_alg algs[2] = { {
 	.cra_u			= { .compress = {
 	.coa_compress		= nx842_crypto_compress,
 	.coa_decompress		= nx842_crypto_decompress } }
-}, {
-	.cra_name		= NX842_CRYPTO_ALIAS,
-	.cra_flags		= CRYPTO_ALG_TYPE_COMPRESS,
-	.cra_ctxsize		= sizeof(struct nx842_crypto_ctx),
-	.cra_module		= THIS_MODULE,
-	.cra_init		= nx842_crypto_init,
-	.cra_exit		= nx842_crypto_exit,
-	.cra_u			= { .compress = {
-	.coa_compress		= nx842_crypto_compress,
-	.coa_decompress		= nx842_crypto_decompress } }
-} };
+};
 
 static int __init nx842_crypto_mod_init(void)
 {
-	return crypto_register_algs(algs, ARRAY_SIZE(algs));
+	return crypto_register_alg(&alg);
 }
 module_init(nx842_crypto_mod_init);
 
 static void __exit nx842_crypto_mod_exit(void)
 {
-	crypto_unregister_algs(algs, ARRAY_SIZE(algs));
+	crypto_unregister_alg(&alg);
 }
 module_exit(nx842_crypto_mod_exit);
 
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("IBM PowerPC Nest (NX) 842 Hardware Compression Interface");
-MODULE_ALIAS_CRYPTO(NX842_CRYPTO_NAME);
-MODULE_ALIAS_CRYPTO(NX842_CRYPTO_ALIAS);
+MODULE_ALIAS_CRYPTO("842");
+MODULE_ALIAS_CRYPTO("842-nx");
 MODULE_AUTHOR("Dan Streetman <ddstreet@ieee.org>");
