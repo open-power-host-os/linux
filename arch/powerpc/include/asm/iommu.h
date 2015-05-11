@@ -91,13 +91,10 @@ struct iommu_table {
 	unsigned long *it_map;       /* A simple allocation bitmap for now */
 	unsigned long  it_page_shift;/* table iommu page size */
 #ifdef CONFIG_IOMMU_API
-	struct iommu_group *it_group;
+	struct iommu_table_group *it_table_group;
 #endif
 	struct iommu_table_ops *it_ops;
 	void (*set_bypass)(struct iommu_table *tbl, bool enable);
-#ifdef CONFIG_PPC_POWERNV
-	void           *data;
-#endif
 };
 
 /* Pure 2^n version of get_order */
@@ -129,12 +126,20 @@ extern void iommu_free_table(struct iommu_table *tbl, const char *node_name);
 extern struct iommu_table *iommu_init_table(struct iommu_table * tbl,
 					    int nid);
 #ifdef CONFIG_IOMMU_API
-extern void iommu_register_group(struct iommu_table *tbl,
+
+#define IOMMU_TABLE_GROUP_MAX_TABLES	1
+
+struct iommu_table_group {
+	struct iommu_group *group;
+	struct iommu_table *tables[IOMMU_TABLE_GROUP_MAX_TABLES];
+};
+
+extern void iommu_register_group(struct iommu_table_group *table_group,
 				 int pci_domain_number, unsigned long pe_num);
 extern int iommu_add_device(struct device *dev);
 extern void iommu_del_device(struct device *dev);
 #else
-static inline void iommu_register_group(struct iommu_table *tbl,
+static inline void iommu_register_group(struct iommu_table_group *table_group,
 					int pci_domain_number,
 					unsigned long pe_num)
 {
