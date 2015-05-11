@@ -333,6 +333,45 @@ static long tce_iommu_build(struct tce_container *container,
 	return ret;
 }
 
+static long tce_iommu_create_table(struct tce_container *container,
+			struct iommu_table_group *table_group,
+			int num,
+			__u32 page_shift,
+			__u64 window_size,
+			__u32 levels,
+			struct iommu_table **ptbl)
+{
+	long ret, table_size;
+
+	table_size = table_group->ops->get_table_size(page_shift, window_size,
+			levels);
+	if (!table_size)
+		return -EINVAL;
+
+	ret = try_increment_locked_vm(table_size >> PAGE_SHIFT);
+	if (ret)
+		return ret;
+
+	ret = table_group->ops->create_table(table_group, num,
+			page_shift, window_size, levels, ptbl);
+
+	WARN_ON(!ret && !(*ptbl)->it_ops->free);
+	WARN_ON(!ret && ((*ptbl)->it_allocated_size != table_size));
+
+	if (ret)
+		decrement_locked_vm(table_size >> PAGE_SHIFT);
+
+	return ret;
+}
+
+static void tce_iommu_free_table(struct iommu_table *tbl)
+{
+	unsigned long pages = tbl->it_allocated_size >> PAGE_SHIFT;
+
+	tbl->it_ops->free(tbl);
+	decrement_locked_vm(pages);
+}
+
 static long tce_iommu_ioctl(void *iommu_data,
 				 unsigned int cmd, unsigned long arg)
 {
@@ -577,14 +616,32 @@ static int tce_iommu_attach_group(void *iommu_data,
 	if (!table_group->ops || !table_group->ops->take_ownership ||
 			!table_group->ops->release_ownership) {
 		ret = tce_iommu_take_ownership(container, table_group);
+	} else if (!table_group->ops->create_table ||
+			!table_group->ops->set_window) {
+		WARN_ON_ONCE(1);
+		ret = -EFAULT;
 	} else {
+		struct iommu_table *tbl = NULL;
 		/*
 		 * Disable iommu bypass, otherwise the user can DMA to all of
 		 * our physical memory via the bypass window instead of just
 		 * the pages that has been explicitly mapped into the iommu
 		 */
 		table_group->ops->take_ownership(table_group);
-		ret = 0;
+		ret = tce_iommu_create_table(container,
+				table_group,
+				0, /* window number */
+				IOMMU_PAGE_SHIFT_4K,
+				table_group->tce32_size,
+				1, /* default levels */
+				&tbl);
+		if (!ret) {
+			ret = table_group->ops->set_window(table_group, 0, tbl);
+			if (ret)
+				tce_iommu_free_table(tbl);
+			else
+				table_group->tables[0] = tbl;
+		}
 	}
 
 	if (ret)
@@ -603,6 +660,7 @@ static void tce_iommu_detach_group(void *iommu_data,
 {
 	struct tce_container *container = iommu_data;
 	struct iommu_table_group *table_group;
+	long i;
 
 	mutex_lock(&container->lock);
 	if (iommu_group != container->grp) {
@@ -628,8 +686,24 @@ static void tce_iommu_detach_group(void *iommu_data,
 	/* Kernel owns the device now, we can restore bypass */
 	if (!table_group->ops || !table_group->ops->release_ownership)
 		tce_iommu_release_ownership(container, table_group);
-	else
+	else if (!table_group->ops->unset_window)
+		WARN_ON_ONCE(1);
+	else {
+		for (i = 0; i < IOMMU_TABLE_GROUP_MAX_TABLES; ++i) {
+			/* Store table pointer as unset_window resets it */
+			struct iommu_table *tbl = table_group->tables[i];
+
+			if (!tbl)
+				continue;
+
+			table_group->ops->unset_window(table_group, i);
+			tce_iommu_clear(container, tbl,
+					tbl->it_offset, tbl->it_size);
+			tce_iommu_free_table(tbl);
+		}
+
 		table_group->ops->release_ownership(table_group);
+	}
 
 unlock_exit:
 	mutex_unlock(&container->lock);
