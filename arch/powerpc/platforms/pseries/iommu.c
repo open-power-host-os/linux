@@ -36,6 +36,7 @@
 #include <linux/crash_dump.h>
 #include <linux/memory.h>
 #include <linux/of.h>
+#include <linux/iommu.h>
 #include <asm/io.h>
 #include <asm/prom.h>
 #include <asm/rtas.h>
@@ -49,6 +50,16 @@
 #include <asm/mmzone.h>
 #include <asm/plpar_wrappers.h>
 
+
+static void iommu_pseries_free_table(struct iommu_table *tbl,
+		const char *node_name)
+{
+	if (tbl->it_group) {
+		iommu_group_put(tbl->it_group);
+		BUG_ON(tbl->it_group);
+	}
+	iommu_free_table(tbl, node_name);
+}
 
 static void tce_invalidate_pSeries_sw(struct iommu_table *tbl,
 				      __be64 *startp, __be64 *endp)
@@ -1269,7 +1280,8 @@ static int iommu_reconfig_notifier(struct notifier_block *nb, unsigned long acti
 		 */
 		remove_ddw(np, false);
 		if (pci && pci->iommu_table)
-			iommu_free_table(pci->iommu_table, np->full_name);
+			iommu_pseries_free_table(pci->iommu_table,
+					np->full_name);
 
 		spin_lock(&direct_window_list_lock);
 		list_for_each_entry(window, &direct_window_list, list) {
