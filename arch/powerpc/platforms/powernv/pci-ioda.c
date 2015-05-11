@@ -1712,6 +1712,20 @@ static int pnv_ioda1_tce_build(struct iommu_table *tbl, long index,
 	return ret;
 }
 
+#ifdef CONFIG_IOMMU_API
+static int pnv_ioda1_tce_xchg(struct iommu_table *tbl, long index,
+		unsigned long *hpa, enum dma_data_direction *direction)
+{
+	long ret = pnv_tce_xchg(tbl, index, hpa, direction);
+
+	if (!ret && (tbl->it_type &
+			(TCE_PCI_SWINV_CREATE | TCE_PCI_SWINV_FREE)))
+		pnv_pci_ioda1_tce_invalidate(tbl, index, 1, false);
+
+	return ret;
+}
+#endif
+
 static void pnv_ioda1_tce_free(struct iommu_table *tbl, long index,
 		long npages)
 {
@@ -1723,6 +1737,9 @@ static void pnv_ioda1_tce_free(struct iommu_table *tbl, long index,
 
 static struct iommu_table_ops pnv_ioda1_iommu_ops = {
 	.set = pnv_ioda1_tce_build,
+#ifdef CONFIG_IOMMU_API
+	.exchange = pnv_ioda1_tce_xchg,
+#endif
 	.clear = pnv_ioda1_tce_free,
 	.get = pnv_tce_get,
 };
@@ -1797,6 +1814,20 @@ static int pnv_ioda2_tce_build(struct iommu_table *tbl, long index,
 	return ret;
 }
 
+#ifdef CONFIG_IOMMU_API
+static int pnv_ioda2_tce_xchg(struct iommu_table *tbl, long index,
+		unsigned long *hpa, enum dma_data_direction *direction)
+{
+	long ret = pnv_tce_xchg(tbl, index, hpa, direction);
+
+	if (!ret && (tbl->it_type &
+			(TCE_PCI_SWINV_CREATE | TCE_PCI_SWINV_FREE)))
+		pnv_pci_ioda2_tce_invalidate(tbl, index, 1, false);
+
+	return ret;
+}
+#endif
+
 static void pnv_ioda2_tce_free(struct iommu_table *tbl, long index,
 		long npages)
 {
@@ -1808,6 +1839,9 @@ static void pnv_ioda2_tce_free(struct iommu_table *tbl, long index,
 
 static struct iommu_table_ops pnv_ioda2_iommu_ops = {
 	.set = pnv_ioda2_tce_build,
+#ifdef CONFIG_IOMMU_API
+	.exchange = pnv_ioda2_tce_xchg,
+#endif
 	.clear = pnv_ioda2_tce_free,
 	.get = pnv_tce_get,
 };
