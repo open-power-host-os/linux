@@ -152,7 +152,7 @@ extern struct iommu_table *iommu_init_table(struct iommu_table * tbl,
 					    int nid);
 #ifdef CONFIG_IOMMU_API
 
-#define IOMMU_TABLE_GROUP_MAX_TABLES	1
+#define IOMMU_TABLE_GROUP_MAX_TABLES	2
 
 struct iommu_table_group;
 
