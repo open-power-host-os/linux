@@ -1759,6 +1759,9 @@ static void pnv_pci_ioda_setup_dma_pe(struct pnv_phb *phb,
 	if (WARN_ON(pe->tce32_seg >= 0))
 		return;
 
+	tbl = pe->tce32_table;
+	iommu_register_group(tbl, phb->hose->global_number, pe->pe_number);
+
 	/* Grab a 32-bit TCE table */
 	pe->tce32_seg = base;
 	pe_info(pe, " Setting up 32-bit TCE table at %08x..%08x\n",
@@ -1793,7 +1796,6 @@ static void pnv_pci_ioda_setup_dma_pe(struct pnv_phb *phb,
 	}
 
 	/* Setup linux iommu table */
-	tbl = pe->tce32_table;
 	pnv_pci_setup_iommu_table(tbl, addr, TCE32_TABLE_SIZE * segs,
 				  base << 28, IOMMU_PAGE_SHIFT_4K);
 
@@ -1815,8 +1817,6 @@ static void pnv_pci_ioda_setup_dma_pe(struct pnv_phb *phb,
 	iommu_init_table(tbl, phb->hose->node);
 
 	if (pe->flags & PNV_IODA_PE_DEV) {
-		iommu_register_group(tbl, phb->hose->global_number,
-				     pe->pe_number);
 		/*
 		 * Setting table base here only for carrying iommu_group
 		 * further down to let iommu_add_device() do the job.
@@ -1824,14 +1824,8 @@ static void pnv_pci_ioda_setup_dma_pe(struct pnv_phb *phb,
 		 */
 		set_iommu_table_base(&pe->pdev->dev, tbl);
 		iommu_add_device(&pe->pdev->dev);
-	} else if (pe->flags & (PNV_IODA_PE_BUS | PNV_IODA_PE_BUS_ALL)) {
-		iommu_register_group(tbl, phb->hose->global_number,
-				     pe->pe_number);
+	} else if (pe->flags & (PNV_IODA_PE_BUS | PNV_IODA_PE_BUS_ALL))
 		pnv_ioda_setup_bus_dma(pe, pe->pbus);
-	} else if (pe->flags & PNV_IODA_PE_VF) {
-		iommu_register_group(tbl, phb->hose->global_number,
-				     pe->pe_number);
-	}
 
 	return;
  fail:
@@ -1898,6 +1892,9 @@ static void pnv_pci_ioda2_setup_dma_pe(struct pnv_phb *phb,
 	if (WARN_ON(pe->tce32_seg >= 0))
 		return;
 
+	tbl = pe->tce32_table;
+	iommu_register_group(tbl, phb->hose->global_number, pe->pe_number);
+
 	/* The PE will reserve all possible 32-bits space */
 	pe->tce32_seg = 0;
 	end = (1 << ilog2(phb->ioda.m32_pci_base));
@@ -1929,7 +1926,6 @@ static void pnv_pci_ioda2_setup_dma_pe(struct pnv_phb *phb,
 	}
 
 	/* Setup linux iommu table */
-	tbl = pe->tce32_table;
 	pnv_pci_setup_iommu_table(tbl, addr, tce_table_size, 0,
 			IOMMU_PAGE_SHIFT_4K);
 
@@ -1949,8 +1945,6 @@ static void pnv_pci_ioda2_setup_dma_pe(struct pnv_phb *phb,
 	iommu_init_table(tbl, phb->hose->node);
 
 	if (pe->flags & PNV_IODA_PE_DEV) {
-		iommu_register_group(tbl, phb->hose->global_number,
-				     pe->pe_number);
 		/*
 		 * Setting table base here only for carrying iommu_group
 		 * further down to let iommu_add_device() do the job.
@@ -1958,14 +1952,8 @@ static void pnv_pci_ioda2_setup_dma_pe(struct pnv_phb *phb,
 		 */
 		set_iommu_table_base(&pe->pdev->dev, tbl);
 		iommu_add_device(&pe->pdev->dev);
-	} else if (pe->flags & (PNV_IODA_PE_BUS | PNV_IODA_PE_BUS_ALL)) {
-		iommu_register_group(tbl, phb->hose->global_number,
-				     pe->pe_number);
+	} else if (pe->flags & (PNV_IODA_PE_BUS | PNV_IODA_PE_BUS_ALL))
 		pnv_ioda_setup_bus_dma(pe, pe->pbus);
-	} else if (pe->flags & PNV_IODA_PE_VF) {
-		iommu_register_group(tbl, phb->hose->global_number,
-				     pe->pe_number);
-	}
 
 	/* Also create a bypass window */
 	pnv_pci_ioda2_setup_bypass_pe(phb, pe);
