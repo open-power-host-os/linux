@@ -133,13 +133,6 @@ static inline void iommu_del_device(struct device *dev)
 }
 #endif /* !CONFIG_IOMMU_API */
 
-static inline void set_iommu_table_base_and_group(struct device *dev,
-						  void *base)
-{
-	set_iommu_table_base(dev, base);
-	iommu_add_device(dev);
-}
-
 extern int iommu_map_sg(struct device *dev, struct iommu_table *tbl,
 			struct scatterlist *sglist, int nelems,
 			unsigned long mask, enum dma_data_direction direction,
