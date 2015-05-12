@@ -17,8 +17,8 @@ struct nx842_constraints {
 int nx842_constraints(struct nx842_constraints *constraints);
 
 int nx842_compress(const unsigned char *in, unsigned int in_len,
-		unsigned char *out, unsigned int *out_len, void *wrkmem);
+		   unsigned char *out, unsigned int *out_len, void *wrkmem);
 int nx842_decompress(const unsigned char *in, unsigned int in_len,
-		unsigned char *out, unsigned int *out_len, void *wrkmem);
+		     unsigned char *out, unsigned int *out_len, void *wrkmem);
 
 #endif

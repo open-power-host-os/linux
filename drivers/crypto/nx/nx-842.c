@@ -125,8 +125,8 @@ int nx842_constraints(struct nx842_constraints *c)
 EXPORT_SYMBOL_GPL(nx842_constraints);
 
 int nx842_compress(const unsigned char *in, unsigned int in_len,
-			unsigned char *out, unsigned int *out_len,
-			void *wrkmem)
+		   unsigned char *out, unsigned int *out_len,
+		   void *wrkmem)
 {
 	struct nx842_driver *driver = get_driver();
 	int ret;
@@ -143,8 +143,8 @@ int nx842_compress(const unsigned char *in, unsigned int in_len,
 EXPORT_SYMBOL_GPL(nx842_compress);
 
 int nx842_decompress(const unsigned char *in, unsigned int in_len,
-			unsigned char *out, unsigned int *out_len,
-			void *wrkmem)
+		     unsigned char *out, unsigned int *out_len,
+		     void *wrkmem)
 {
 	struct nx842_driver *driver = get_driver();
 	int ret;

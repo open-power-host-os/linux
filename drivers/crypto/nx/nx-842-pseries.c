@@ -85,7 +85,7 @@ struct nx842_workmem {
 	struct nx_csbcpb csbcpb;
 
 	char padding[WORKMEM_ALIGN];
-} __packed __aligned(WORKMEM_ALIGN);
+} __aligned(WORKMEM_ALIGN);
 
 /* Macros for fields within nx_csbcpb */
 /* Check the valid bit within the csbcpb valid field */
@@ -298,7 +298,8 @@ static int nx842_validate_result(struct device *dev,
  *   -ENODEV	Hardware unavailable
  */
 static int nx842_pseries_compress(const unsigned char *in, unsigned int inlen,
-		       unsigned char *out, unsigned int *outlen, void *wmem)
+				  unsigned char *out, unsigned int *outlen,
+				  void *wmem)
 {
 	struct nx842_devdata *local_devdata;
 	struct device *dev = NULL;
@@ -425,7 +426,8 @@ unlock:
  *   -EIO	Internal error
  */
 static int nx842_pseries_decompress(const unsigned char *in, unsigned int inlen,
-			 unsigned char *out, unsigned int *outlen, void *wmem)
+				    unsigned char *out, unsigned int *outlen,
+				    void *wmem)
 {
 	struct nx842_devdata *local_devdata;
 	struct device *dev = NULL;

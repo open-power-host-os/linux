@@ -189,15 +189,6 @@ config CRYPTO_TEST
 	help
 	  Quick & dirty crypto test module.
 
-config CRYPTO_COMP_SELFTEST
-	tristate "Compression Self-Testing module"
-	help
-	  Configurable Compression Self-Testing using debugfs interface.
-	  This allows you to compress and decompress buffers of variable
-	  offsets, lengths, and data, using different compressors.  Also
-	  the average bytes per second rate for compression/decompression
-	  can be calculated.
-
 config CRYPTO_ABLK_HELPER
 	tristate
 	select CRYPTO_CRYPTD
@@ -1423,7 +1414,8 @@ config CRYPTO_LZO
 
 config CRYPTO_842
 	tristate "842 compression algorithm"
-	depends on CRYPTO_DEV_NX_COMPRESS
+	select CRYPTO_ALGAPI
+	select 842_COMPRESS
 	select 842_DECOMPRESS
 	help
 	  This is the 842 algorithm.

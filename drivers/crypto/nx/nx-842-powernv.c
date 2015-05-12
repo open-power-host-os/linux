@@ -61,8 +61,8 @@ static unsigned int nx842_ct;
  * first direct DDE in the list.
  */
 static void setup_indirect_dde(struct data_descriptor_entry *dde,
-			struct data_descriptor_entry *ddl,
-			unsigned int dde_count, unsigned int byte_count)
+			       struct data_descriptor_entry *ddl,
+			       unsigned int dde_count, unsigned int byte_count)
 {
 	dde->flags = 0;
 	dde->count = dde_count;
@@ -80,7 +80,7 @@ static void setup_indirect_dde(struct data_descriptor_entry *dde,
  *   N    Successfully set up DDE with N bytes
  */
 static unsigned int setup_direct_dde(struct data_descriptor_entry *dde,
-			unsigned long pa, unsigned int len)
+				     unsigned long pa, unsigned int len)
 {
 	unsigned int l = min_t(unsigned int, len, LEN_ON_PAGE(pa));
 
@@ -100,9 +100,9 @@ static unsigned int setup_direct_dde(struct data_descriptor_entry *dde,
  *   0		Successfully set up DDL
  */
 static int setup_ddl(struct data_descriptor_entry *dde,
-			struct data_descriptor_entry *ddl,
-			unsigned char *buf, unsigned int len,
-			bool in)
+		     struct data_descriptor_entry *ddl,
+		     unsigned char *buf, unsigned int len,
+		     bool in)
 {
 	unsigned long pa = nx842_get_pa(buf);
 	int i, ret, total_len = len;
@@ -382,8 +382,8 @@ static int wait_for_csb(struct nx842_workmem *wmem,
  *   -EINTR	operation was aborted
  */
 static int nx842_powernv_function(const unsigned char *in, unsigned int inlen,
-			unsigned char *out, unsigned int *outlenp,
-			void *workmem, int fc)
+				  unsigned char *out, unsigned int *outlenp,
+				  void *workmem, int fc)
 {
 	struct coprocessor_request_block *crb;
 	struct coprocessor_status_block *csb;
@@ -483,7 +483,8 @@ static int nx842_powernv_function(const unsigned char *in, unsigned int inlen,
  * Returns: see @nx842_powernv_function()
  */
 static int nx842_powernv_compress(const unsigned char *in, unsigned int inlen,
-		       unsigned char *out, unsigned int *outlenp, void *wmem)
+				  unsigned char *out, unsigned int *outlenp,
+				  void *wmem)
 {
 	return nx842_powernv_function(in, inlen, out, outlenp,
 				      wmem, CCW_FC_842_COMP_NOCRC);
@@ -509,7 +510,8 @@ static int nx842_powernv_compress(const unsigned char *in, unsigned int inlen,
  * Returns: see @nx842_powernv_function()
  */
 static int nx842_powernv_decompress(const unsigned char *in, unsigned int inlen,
-			 unsigned char *out, unsigned int *outlenp, void *wmem)
+				    unsigned char *out, unsigned int *outlenp,
+				    void *wmem)
 {
 	return nx842_powernv_function(in, inlen, out, outlenp,
 				      wmem, CCW_FC_842_DECOMP_NOCRC);

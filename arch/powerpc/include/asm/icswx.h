@@ -98,7 +98,7 @@ struct coprocessor_status_block {
 
 #define DDE_P			(0x8000)
 
-#define DDE_SIZE		(16)
+#define DDE_SIZE		(0x10)
 #define DDE_ALIGN		DDE_SIZE
 
 struct data_descriptor_entry {
@@ -112,8 +112,8 @@ struct data_descriptor_entry {
 
 /* Chapter 6.5.2 Coprocessor-Request Block (CRB) */
 
-#define CRB_SIZE		(128)
-#define CRB_ALIGN		(256) /* Errata: requires 256 alignment */
+#define CRB_SIZE		(0x80)
+#define CRB_ALIGN		(0x100) /* Errata: requires 256 alignment */
 
 /* Coprocessor Status Block field
  *   ADDRESS	address of CSB
