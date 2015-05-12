@@ -38,7 +38,6 @@
 #include <linux/pci.h>
 #include <linux/iommu.h>
 #include <linux/sched.h>
-#include <linux/vmalloc.h>
 #include <asm/io.h>
 #include <asm/prom.h>
 #include <asm/iommu.h>
@@ -711,49 +710,36 @@ struct iommu_table *iommu_init_table(struct iommu_table *tbl, int nid)
 	return tbl;
 }
 
-void iommu_reset_table(struct iommu_table *tbl, const char *node_name)
-{
-	if (!tbl)
-		return;
-
-	if (tbl->it_map) {
-		unsigned long bitmap_sz;
-		unsigned int order;
-
-		/*
-		 * In case we have reserved the first bit, we should not emit
-		 * the warning below.
-		 */
-		if (tbl->it_offset == 0)
-			clear_bit(0, tbl->it_map);
-
-		/* verify that table contains no entries */
-		if (!bitmap_empty(tbl->it_map, tbl->it_size))
-			pr_warn("%s: Unexpected TCEs for %s\n", __func__,
-					node_name);
-
-		/* calculate bitmap size in bytes */
-		bitmap_sz = BITS_TO_LONGS(tbl->it_size) * sizeof(unsigned long);
-
-		/* free bitmap */
-		order = get_order(bitmap_sz);
-		free_pages((unsigned long) tbl->it_map, order);
-	}
-
-	WARN_ON(tbl->it_userspace);
-
-	memset(tbl, 0, sizeof(*tbl));
-}
-
 void iommu_free_table(struct iommu_table *tbl, const char *node_name)
 {
+	unsigned long bitmap_sz;
+	unsigned int order;
+
 	if (!tbl)
 		return;
 
-	iommu_reset_table(tbl, node_name);
+	if (!tbl->it_map) {
+		kfree(tbl);
+		return;
+	}
 
-	/* iommu_free_table() is only used by VIO so no groups expected here */
-	BUG_ON(tbl->it_table_group);
+	/*
+	 * In case we have reserved the first bit, we should not emit
+	 * the warning below.
+	 */
+	if (tbl->it_offset == 0)
+		clear_bit(0, tbl->it_map);
+
+	/* verify that table contains no entries */
+	if (!bitmap_empty(tbl->it_map, tbl->it_size))
+		pr_warn("%s: Unexpected TCEs for %s\n", __func__, node_name);
+
+	/* calculate bitmap size in bytes */
+	bitmap_sz = BITS_TO_LONGS(tbl->it_size) * sizeof(unsigned long);
+
+	/* free bitmap */
+	order = get_order(bitmap_sz);
+	free_pages((unsigned long) tbl->it_map, order);
 
 	/* free table */
 	kfree(tbl);
@@ -978,7 +964,7 @@ EXPORT_SYMBOL_GPL(iommu_tce_clear_param_check);
 int iommu_tce_put_param_check(struct iommu_table *tbl,
 		unsigned long ioba, unsigned long tce)
 {
-	if (tce & ~(IOMMU_PAGE_MASK(tbl) | TCE_PCI_WRITE | TCE_PCI_READ))
+	if (tce & ~IOMMU_PAGE_MASK(tbl))
 		return -EINVAL;
 
 	if (ioba & ~IOMMU_PAGE_MASK(tbl))
@@ -996,15 +982,15 @@ int iommu_tce_put_param_check(struct iommu_table *tbl,
 EXPORT_SYMBOL_GPL(iommu_tce_put_param_check);
 
 long iommu_tce_xchg(struct iommu_table *tbl, unsigned long entry,
-		unsigned long *tce, enum dma_data_direction *direction)
+		unsigned long *hpa, enum dma_data_direction *direction)
 {
 	long ret;
 
-	ret = tbl->it_ops->exchange(tbl, entry, tce, direction);
+	ret = tbl->it_ops->exchange(tbl, entry, hpa, direction);
 
 	if (!ret && ((*direction == DMA_FROM_DEVICE) ||
 			(*direction == DMA_BIDIRECTIONAL)))
-		SetPageDirty(pfn_to_page(*tce >> PAGE_SHIFT));
+		SetPageDirty(pfn_to_page(*hpa >> PAGE_SHIFT));
 
 	/* if (unlikely(ret))
 		pr_err("iommu_tce: %s failed on hwaddr=%lx ioba=%lx kva=%lx ret=%d\n",
@@ -1019,7 +1005,6 @@ int iommu_take_ownership(struct iommu_table *tbl)
 {
 	unsigned long flags, i, sz = (tbl->it_size + 7) >> 3;
 	int ret = 0;
-	unsigned long *uas;
 
 	/*
 	 * VFIO does not control TCE entries allocation and the guest
@@ -1030,10 +1015,6 @@ int iommu_take_ownership(struct iommu_table *tbl)
 	 */
 	if (!tbl->it_ops->exchange)
 		return -EINVAL;
-
-	uas = vzalloc(sizeof(*uas) * tbl->it_size);
-	if (!uas)
-		return -ENOMEM;
 
 	spin_lock_irqsave(&tbl->large_pool.lock, flags);
 	for (i = 0; i < tbl->nr_pools; i++)
@@ -1052,13 +1033,6 @@ int iommu_take_ownership(struct iommu_table *tbl)
 		memset(tbl->it_map, 0xff, sz);
 	}
 
-	if (ret) {
-		vfree(uas);
-	} else {
-		BUG_ON(tbl->it_userspace);
-		tbl->it_userspace = uas;
-	}
-
 	for (i = 0; i < tbl->nr_pools; i++)
 		spin_unlock(&tbl->pools[i].lock);
 	spin_unlock_irqrestore(&tbl->large_pool.lock, flags);
@@ -1070,9 +1044,6 @@ EXPORT_SYMBOL_GPL(iommu_take_ownership);
 void iommu_release_ownership(struct iommu_table *tbl)
 {
 	unsigned long flags, i, sz = (tbl->it_size + 7) >> 3;
-
-	vfree(tbl->it_userspace);
-	tbl->it_userspace = NULL;
 
 	spin_lock_irqsave(&tbl->large_pool.lock, flags);
 	for (i = 0; i < tbl->nr_pools; i++)
@@ -1091,15 +1062,15 @@ void iommu_release_ownership(struct iommu_table *tbl)
 EXPORT_SYMBOL_GPL(iommu_release_ownership);
 
 long iommu_tce_xchg_rm(struct iommu_table *tbl, unsigned long entry,
-		unsigned long *tce, enum dma_data_direction *direction)
+		unsigned long *hpa, enum dma_data_direction *direction)
 {
 	long ret;
 
-	ret = tbl->it_ops->exchange_rm(tbl, entry, tce, direction);
+	ret = tbl->it_ops->exchange_rm(tbl, entry, hpa, direction);
 
 	if (!ret && ((*direction == DMA_FROM_DEVICE) ||
 			(*direction == DMA_BIDIRECTIONAL)))
-		SetPageDirty(realmode_pfn_to_page(*tce >> PAGE_SHIFT));
+		SetPageDirty(realmode_pfn_to_page(*hpa >> PAGE_SHIFT));
 
 	/* if (unlikely(ret))
 		pr_err("iommu_tce: %s failed on hwaddr=%lx ioba=%lx kva=%lx ret=%d\n",
@@ -1113,6 +1084,7 @@ EXPORT_SYMBOL_GPL(iommu_tce_xchg_rm);
 int iommu_add_device(struct device *dev)
 {
 	struct iommu_table *tbl;
+	struct iommu_table_group_link *tgl;
 
 	/*
 	 * The sysfs entries should be populated before
@@ -1130,15 +1102,17 @@ int iommu_add_device(struct device *dev)
 	}
 
 	tbl = get_iommu_table_base(dev);
-	if (!tbl || !tbl->it_table_group || !tbl->it_table_group->group) {
+	if (!tbl || list_empty(&tbl->it_group_list)) {
 		pr_debug("%s: Skipping device %s with no tbl\n",
 			 __func__, dev_name(dev));
 		return 0;
 	}
 
+	tgl = list_first_entry_or_null(&tbl->it_group_list,
+			struct iommu_table_group_link, next);
 	pr_debug("%s: Adding %s to iommu group %d\n",
 		 __func__, dev_name(dev),
-		 iommu_group_id(tbl->it_table_group->group));
+		 iommu_group_id(tgl->table_group->group));
 
 	if (PAGE_SIZE < IOMMU_PAGE_SIZE(tbl)) {
 		pr_err("%s: Invalid IOMMU page size %lx (%lx) on %s\n",
@@ -1147,7 +1121,7 @@ int iommu_add_device(struct device *dev)
 		return -EINVAL;
 	}
 
-	return iommu_group_add_device(tbl->it_table_group->group, dev);
+	return iommu_group_add_device(tgl->table_group->group, dev);
 }
 EXPORT_SYMBOL_GPL(iommu_add_device);
 
@@ -1194,6 +1168,4 @@ int __init tce_iommu_bus_notifier_init(void)
         bus_register_notifier(&pci_bus_type, &tce_iommu_bus_nb);
         return 0;
 }
-
-machine_subsys_initcall_sync(powernv, tce_iommu_bus_notifier_init);
 #endif /* CONFIG_IOMMU_API */

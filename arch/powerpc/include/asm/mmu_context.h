@@ -32,8 +32,8 @@ extern long mm_iommu_ua_to_hpa(struct mm_iommu_table_group_mem_t *mem,
 		unsigned long ua, unsigned long *hpa);
 extern long mm_iommu_rm_ua_to_hpa(struct mm_iommu_table_group_mem_t *mem,
 		unsigned long ua, unsigned long *hpa);
-extern long mm_iommu_mapped_update(struct mm_iommu_table_group_mem_t *mem,
-		bool inc);
+extern long mm_iommu_mapped_inc(struct mm_iommu_table_group_mem_t *mem);
+extern long mm_iommu_mapped_dec(struct mm_iommu_table_group_mem_t *mem);
 #endif
 
 extern void switch_mmu_context(struct mm_struct *prev, struct mm_struct *next);

@@ -143,6 +143,7 @@ struct pnv_phb {
 
 	union {
 		struct {
+			struct iommu_table iommu_table;
 			struct iommu_table_group table_group;
 		} p5ioc2;
 
@@ -237,17 +238,16 @@ int pnv_pci_cfg_read(struct pci_dn *pdn,
 		     int where, int size, u32 *val);
 int pnv_pci_cfg_write(struct pci_dn *pdn,
 		      int where, int size, u32 val);
+extern struct iommu_table *pnv_pci_table_alloc(int nid);
+
+extern long pnv_pci_link_table_and_group(int node, int num,
+		struct iommu_table *tbl,
+		struct iommu_table_group *table_group);
+extern void pnv_pci_unlink_table_and_group(struct iommu_table *tbl,
+		struct iommu_table_group *table_group);
 extern void pnv_pci_setup_iommu_table(struct iommu_table *tbl,
 				      void *tce_mem, u64 tce_size,
 				      u64 dma_offset, unsigned page_shift);
-#define POWERNV_IOMMU_DEFAULT_LEVELS	1
-#define POWERNV_IOMMU_MAX_LEVELS	5
-extern long pnv_pci_create_table(struct iommu_table_group *table_group, int nid,
-		__u64 bus_offset, __u32 page_shift, __u64 window_size,
-		__u32 levels, struct iommu_table *tbl);
-extern void pnv_pci_free_table(struct iommu_table *tbl);
-extern unsigned long pnv_get_table_size(__u32 page_shift,
-		__u64 window_size, __u32 levels);
 extern void pnv_pci_init_p5ioc2_hub(struct device_node *np);
 extern void pnv_pci_init_ioda_hub(struct device_node *np);
 extern void pnv_pci_init_ioda2_phb(struct device_node *np);
