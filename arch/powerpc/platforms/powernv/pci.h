@@ -80,22 +80,6 @@ struct pnv_ioda_pe {
 	struct list_head	list;
 };
 
-/* IOC dependent EEH operations */
-#ifdef CONFIG_EEH
-struct pnv_eeh_ops {
-	int (*post_init)(struct pci_controller *hose);
-	int (*set_option)(struct eeh_pe *pe, int option);
-	int (*get_state)(struct eeh_pe *pe);
-	int (*reset)(struct eeh_pe *pe, int option);
-	int (*get_log)(struct eeh_pe *pe, int severity,
-		       char *drv_log, unsigned long len);
-	int (*configure_bridge)(struct eeh_pe *pe);
-	int (*err_inject)(struct eeh_pe *pe, int type, int func,
-			  unsigned long addr, unsigned long mask);
-	int (*next_error)(struct eeh_pe **pe);
-};
-#endif /* CONFIG_EEH */
-
 #define PNV_PHB_FLAG_EEH	(1 << 0)
 
 struct pnv_phb {
@@ -108,10 +92,6 @@ struct pnv_phb {
 	void __iomem		*regs;
 	int			initialized;
 	spinlock_t		lock;
-
-#ifdef CONFIG_EEH
-	struct pnv_eeh_ops	*eeh_ops;
-#endif
 
 #ifdef CONFIG_DEBUG_FS
 	int			has_dbgfs;
@@ -171,6 +151,7 @@ struct pnv_phb {
 
 			/* PE allocation bitmap */
 			unsigned long		*pe_alloc;
+			/* PE allocation mutex */
 			struct mutex		pe_alloc_mutex;
 
 			/* M32 & IO segment maps */
@@ -221,15 +202,12 @@ struct pnv_phb {
 };
 
 extern struct pci_ops pnv_pci_ops;
-#ifdef CONFIG_EEH
-extern struct pnv_eeh_ops ioda_eeh_ops;
-#endif
 extern int pnv_tce_build(struct iommu_table *tbl, long index, long npages,
 		unsigned long uaddr, enum dma_data_direction direction,
 		struct dma_attrs *attrs);
 extern void pnv_tce_free(struct iommu_table *tbl, long index, long npages);
 extern int pnv_tce_xchg(struct iommu_table *tbl, long index,
-		unsigned long *tce, enum dma_data_direction *direction);
+		unsigned long *hpa, enum dma_data_direction *direction);
 extern unsigned long pnv_tce_get(struct iommu_table *tbl, long index);
 
 void pnv_pci_dump_phb_diag_data(struct pci_controller *hose,
@@ -253,10 +231,7 @@ extern void pnv_pci_init_ioda_hub(struct device_node *np);
 extern void pnv_pci_init_ioda2_phb(struct device_node *np);
 extern void pnv_pci_ioda_tce_invalidate(struct iommu_table *tbl,
 					__be64 *startp, __be64 *endp, bool rm);
-#ifdef CONFIG_PCI_IOV
-resource_size_t pnv_pci_sriov_resource_size(struct pci_dev *pdev, int resno);
-#endif
 extern void pnv_pci_reset_secondary_bus(struct pci_dev *dev);
-extern int ioda_eeh_phb_reset(struct pci_controller *hose, int option);
+extern int pnv_eeh_phb_reset(struct pci_controller *hose, int option);
 
 #endif /* __POWERNV_PCI_H */

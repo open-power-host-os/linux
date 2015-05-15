@@ -245,25 +245,6 @@ struct pci_vpd;
 struct pci_sriov;
 struct pci_ats;
 
-/* Single Root I/O Virtualization */
-struct pci_sriov {
-	int pos;		/* capability position */
-	int nres;		/* number of resources */
-	u32 cap;		/* SR-IOV Capabilities */
-	u16 ctrl;		/* SR-IOV Control */
-	u16 total_VFs;		/* total VFs associated with the PF */
-	u16 initial_VFs;	/* initial VFs associated with the PF */
-	u16 num_VFs;		/* number of VFs available */
-	u16 offset;		/* first VF Routing ID offset */
-	u16 stride;		/* following VF stride */
-	u32 pgsz;		/* page size for BAR alignment */
-	u8 link;		/* Function Dependency Link */
-	u16 driver_max_VFs;	/* max num VFs driver supports */
-	struct pci_dev *dev;	/* lowest numbered PF */
-	struct pci_dev *self;	/* this PF */
-	struct mutex lock;	/* lock for VF bus */
-};
-
 /*
  * The pci_dev structure is used to describe PCI devices.
  */
@@ -1179,9 +1160,7 @@ unsigned char pci_bus_max_busnr(struct pci_bus *bus);
 void pci_setup_bridge(struct pci_bus *bus);
 resource_size_t pcibios_window_alignment(struct pci_bus *bus,
 					 unsigned long type);
-resource_size_t pcibios_sriov_resource_alignment(struct pci_dev *dev,
-						 int resno,
-						 resource_size_t align);
+resource_size_t pcibios_iov_resource_alignment(struct pci_dev *dev, int resno);
 
 #define PCI_VGA_STATE_CHANGE_BRIDGE (1 << 0)
 #define PCI_VGA_STATE_CHANGE_DECODES (1 << 1)
@@ -1677,20 +1656,8 @@ int pci_ext_cfg_avail(void);
 void __iomem *pci_ioremap_bar(struct pci_dev *pdev, int bar);
 
 #ifdef CONFIG_PCI_IOV
-static inline int pci_iov_virtfn_bus(struct pci_dev *dev, int id)
-{
-	if (!dev->is_physfn)
-		return -EINVAL;
-	return dev->bus->number + ((dev->devfn + dev->sriov->offset +
-				    dev->sriov->stride * id) >> 8);
-}
-static inline int pci_iov_virtfn_devfn(struct pci_dev *dev, int id)
-{
-	if (!dev->is_physfn)
-		return -EINVAL;
-	return (dev->devfn + dev->sriov->offset +
-		dev->sriov->stride * id) & 0xff;
-}
+int pci_iov_virtfn_bus(struct pci_dev *dev, int id);
+int pci_iov_virtfn_devfn(struct pci_dev *dev, int id);
 
 int pci_enable_sriov(struct pci_dev *dev, int nr_virtfn);
 void pci_disable_sriov(struct pci_dev *dev);
@@ -1698,14 +1665,15 @@ int pci_num_vf(struct pci_dev *dev);
 int pci_vfs_assigned(struct pci_dev *dev);
 int pci_sriov_set_totalvfs(struct pci_dev *dev, u16 numvfs);
 int pci_sriov_get_totalvfs(struct pci_dev *dev);
+resource_size_t pci_iov_resource_size(struct pci_dev *dev, int resno);
 #else
 static inline int pci_iov_virtfn_bus(struct pci_dev *dev, int id)
 {
-	return -ENXIO;
+	return -ENOSYS;
 }
 static inline int pci_iov_virtfn_devfn(struct pci_dev *dev, int id)
 {
-	return -ENXIO;
+	return -ENOSYS;
 }
 static inline int pci_enable_sriov(struct pci_dev *dev, int nr_virtfn)
 { return -ENODEV; }
@@ -1716,6 +1684,8 @@ static inline int pci_vfs_assigned(struct pci_dev *dev)
 static inline int pci_sriov_set_totalvfs(struct pci_dev *dev, u16 numvfs)
 { return 0; }
 static inline int pci_sriov_get_totalvfs(struct pci_dev *dev)
+{ return 0; }
+static inline resource_size_t pci_iov_resource_size(struct pci_dev *dev, int resno)
 { return 0; }
 #endif
 

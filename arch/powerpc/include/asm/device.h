@@ -8,6 +8,9 @@
 
 struct dma_map_ops;
 struct device_node;
+#ifdef CONFIG_PPC64
+struct pci_dn;
+#endif
 
 /*
  * Arch extensions to struct device.
@@ -35,7 +38,7 @@ struct dev_archdata {
 	dma_addr_t		max_direct_dma_addr;
 #endif
 #ifdef CONFIG_PPC64
-	void			*firmware_data;
+	struct pci_dn		*pci_data;
 #endif
 #ifdef CONFIG_EEH
 	struct eeh_dev		*edev;

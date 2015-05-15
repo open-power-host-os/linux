@@ -148,7 +148,6 @@ static inline void *get_iommu_table_base(struct device *dev)
 }
 
 /* Frees table for an individual device node */
-extern void iommu_reset_table(struct iommu_table *tbl, const char *node_name);
 extern void iommu_free_table(struct iommu_table *tbl, const char *node_name);
 
 /* Initializes an iommu_table based in values set in the passed-in
@@ -207,7 +206,6 @@ extern void iommu_register_group(struct iommu_table_group *table_group,
 				 int pci_domain_number, unsigned long pe_num);
 extern int iommu_add_device(struct device *dev);
 extern void iommu_del_device(struct device *dev);
-extern int __init tce_iommu_bus_notifier_init(void);
 extern long iommu_tce_xchg(struct iommu_table *tbl, unsigned long entry,
 		unsigned long *hpa, enum dma_data_direction *direction);
 extern long iommu_tce_xchg_rm(struct iommu_table *tbl, unsigned long entry,
@@ -227,7 +225,6 @@ static inline int iommu_add_device(struct device *dev)
 static inline void iommu_del_device(struct device *dev)
 {
 }
-
 #endif /* !CONFIG_IOMMU_API */
 
 extern int iommu_map_sg(struct device *dev, struct iommu_table *tbl,

@@ -20,9 +20,7 @@
 #include <linux/io.h>
 #include <linux/msi.h>
 #include <linux/iommu.h>
-#include <linux/memblock.h>
 
-#include <asm/mmzone.h>
 #include <asm/sections.h>
 #include <asm/io.h>
 #include <asm/prom.h>
@@ -557,7 +555,7 @@ static int pnv_pci_write_config(struct pci_bus *bus,
 	pdn = pci_get_pdn_by_devfn(bus, devfn);
 	if (!pdn)
 		return PCIBIOS_DEVICE_NOT_FOUND;
- 
+
 	if (!pnv_pci_cfg_check(pdn))
 		return PCIBIOS_DEVICE_NOT_FOUND;
 
@@ -874,21 +872,30 @@ void __init pnv_pci_init(void)
 #endif
 }
 
-#ifdef CONFIG_PCI_IOV
-static void pnv_sriov_final_fixup(struct pci_dev *dev)
+static int tce_iommu_bus_notifier(struct notifier_block *nb,
+		unsigned long action, void *data)
 {
-	struct resource *res;
-	int i;
+	struct device *dev = data;
 
-	if (!dev->is_physfn)
-		return;
-
-	for (i = 0; i < PCI_SRIOV_NUM_BARS; i++) {
-		res = dev->resource + PCI_IOV_RESOURCES + i;
-		if (!res->flags)
-			continue;
-		res->flags |= IORESOURCE_ARCH;
+	switch (action) {
+	case BUS_NOTIFY_ADD_DEVICE:
+		return iommu_add_device(dev);
+	case BUS_NOTIFY_DEL_DEVICE:
+		if (dev->iommu_group)
+			iommu_del_device(dev);
+		return 0;
+	default:
+		return 0;
 	}
 }
-DECLARE_PCI_FIXUP_FINAL(PCI_ANY_ID, PCI_ANY_ID, pnv_sriov_final_fixup);
-#endif /* CONFIG_PCI_IOV */
+
+static struct notifier_block tce_iommu_bus_nb = {
+	.notifier_call = tce_iommu_bus_notifier,
+};
+
+static int __init tce_iommu_bus_notifier_init(void)
+{
+	bus_register_notifier(&pci_bus_type, &tce_iommu_bus_nb);
+	return 0;
+}
+machine_subsys_initcall_sync(powernv, tce_iommu_bus_notifier_init);

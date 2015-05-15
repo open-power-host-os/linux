@@ -131,16 +131,12 @@ void pcibios_reset_secondary_bus(struct pci_dev *dev)
 }
 
 #ifdef CONFIG_PCI_IOV
-resource_size_t pcibios_sriov_resource_alignment(struct pci_dev *pdev,
-						 int resno,
-						 resource_size_t align)
+resource_size_t pcibios_iov_resource_alignment(struct pci_dev *pdev, int resno)
 {
-	if (ppc_md.pcibios_sriov_resource_alignment)
-		return ppc_md.pcibios_sriov_resource_alignment(pdev,
-							       resno,
-							       align);
+	if (ppc_md.pcibios_iov_resource_alignment)
+		return ppc_md.pcibios_iov_resource_alignment(pdev, resno);
 
-	return 0;
+	return pci_iov_resource_size(pdev, resno);
 }
 #endif /* CONFIG_PCI_IOV */
 
@@ -1004,6 +1000,12 @@ int pcibios_add_device(struct pci_dev *dev)
 	 */
 	if (dev->bus->is_added)
 		pcibios_setup_device(dev);
+
+#ifdef CONFIG_PCI_IOV
+	if (ppc_md.pcibios_fixup_sriov)
+		ppc_md.pcibios_fixup_sriov(dev);
+#endif /* CONFIG_PCI_IOV */
+
 	return 0;
 }
 
@@ -1465,14 +1467,6 @@ int pcibios_enable_device(struct pci_dev *dev, int mask)
 	return pci_enable_resources(dev, mask);
 }
 
-void pcibios_disable_device(struct pci_dev *dev)
-{
-	if (ppc_md.pcibios_disable_device_hook)
-		ppc_md.pcibios_disable_device_hook(dev);
-
-	return;
-}
-
 resource_size_t pcibios_io_space_offset(struct pci_controller *hose)
 {
 	return (unsigned long) hose->io_base_virt - _IO_BASE;
@@ -1657,11 +1651,6 @@ void pcibios_scan_phb(struct pci_controller *hose)
 	 */
 	if (ppc_md.pcibios_fixup_phb)
 		ppc_md.pcibios_fixup_phb(hose);
-
-#ifdef CONFIG_PCI_IOV
-	if (ppc_md.pcibios_fixup_sriov)
-		ppc_md.pcibios_fixup_sriov(bus);
-#endif /* CONFIG_PCI_IOV */
 
 	/* Configure PCI Express settings */
 	if (bus && !pci_has_flag(PCI_PROBE_ONLY)) {

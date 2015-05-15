@@ -30,9 +30,6 @@
 void pcibios_release_device(struct pci_dev *dev)
 {
 	eeh_remove_device(dev);
-
-	/* Release firmware data */
-	remove_dev_pci_info(dev);
 }
 
 /**
@@ -78,7 +75,7 @@ void pcibios_add_pci_devices(struct pci_bus * bus)
 	struct pci_dev *dev;
 	struct device_node *dn = pci_bus_to_OF_node(bus);
 
-	eeh_add_device_tree_early(dn);
+	eeh_add_device_tree_early(PCI_DN(dn));
 
 	mode = PCI_PROBE_NORMAL;
 	if (ppc_md.pci_probe_mode)

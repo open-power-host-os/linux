@@ -25,7 +25,6 @@
 #include <linux/export.h>
 #include <linux/init.h>
 #include <linux/gfp.h>
-#include <linux/hardirq.h>
 
 #include <asm/io.h>
 #include <asm/prom.h>
@@ -78,8 +77,8 @@ struct pci_dn *pci_get_pdn_by_devfn(struct pci_bus *bus,
 	/* Fast path: fetch from PCI device */
 	list_for_each_entry(pdev, &bus->devices, bus_list) {
 		if (pdev->devfn == devfn) {
-			if (pdev->dev.archdata.firmware_data)
-				return pdev->dev.archdata.firmware_data;
+			if (pdev->dev.archdata.pci_data)
+				return pdev->dev.archdata.pci_data;
 
 			dn = pci_device_to_OF_node(pdev);
 			break;
@@ -111,8 +110,8 @@ struct pci_dn *pci_get_pdn(struct pci_dev *pdev)
 	struct pci_dn *parent, *pdn;
 
 	/* Search device directly */
-	if (pdev->dev.archdata.firmware_data)
-		return pdev->dev.archdata.firmware_data;
+	if (pdev->dev.archdata.pci_data)
+		return pdev->dev.archdata.pci_data;
 
 	/* Check device node */
 	dn = pci_device_to_OF_node(pdev);
@@ -138,19 +137,19 @@ struct pci_dn *pci_get_pdn(struct pci_dev *pdev)
 }
 
 #ifdef CONFIG_PCI_IOV
-static struct pci_dn *add_one_dev_pci_info(struct pci_dn *parent,
+static struct pci_dn *add_one_dev_pci_data(struct pci_dn *parent,
 					   struct pci_dev *pdev,
 					   int busno, int devfn)
 {
 	struct pci_dn *pdn;
 
-	/* Except PHB, we always have parent firmware data */
+	/* Except PHB, we always have the parent */
 	if (!parent)
 		return NULL;
 
 	pdn = kzalloc(sizeof(*pdn), GFP_KERNEL);
 	if (!pdn) {
-		pr_warn("%s: Out of memory !\n", __func__);
+		dev_warn(&pdev->dev, "%s: Out of memory!\n", __func__);
 		return NULL;
 	}
 
@@ -170,13 +169,13 @@ static struct pci_dn *add_one_dev_pci_info(struct pci_dn *parent,
 	 * bind them.
 	 */
 	if (pdev)
-		pdev->dev.archdata.firmware_data = pdn;
+		pdev->dev.archdata.pci_data = pdn;
 
 	return pdn;
 }
-#endif /* CONFIG_PCI_IOV */
+#endif
 
-struct pci_dn *add_dev_pci_info(struct pci_dev *pdev)
+struct pci_dn *add_dev_pci_data(struct pci_dev *pdev)
 {
 #ifdef CONFIG_PCI_IOV
 	struct pci_dn *parent, *pdn;
@@ -196,36 +195,38 @@ struct pci_dn *add_dev_pci_info(struct pci_dev *pdev)
 	if (!parent)
 		return NULL;
 
-	for (i = 0; i < pdev->sriov->total_VFs; i++) {
-		pdn = add_one_dev_pci_info(parent, NULL,
+	for (i = 0; i < pci_sriov_get_totalvfs(pdev); i++) {
+		pdn = add_one_dev_pci_data(parent, NULL,
 					   pci_iov_virtfn_bus(pdev, i),
 					   pci_iov_virtfn_devfn(pdev, i));
 		if (!pdn) {
-			pr_warn("%s: Cannot create firmware data "
-				"for VF#%d of %s\n",
-				__func__, i, pci_name(pdev));
+			dev_warn(&pdev->dev, "%s: Cannot create firmware data for VF#%d\n",
+				 __func__, i);
 			return NULL;
 		}
 	}
-#endif
+#endif /* CONFIG_PCI_IOV */
 
 	return pci_get_pdn(pdev);
 }
 
-void remove_dev_pci_info(struct pci_dev *pdev)
+void remove_dev_pci_data(struct pci_dev *pdev)
 {
 #ifdef CONFIG_PCI_IOV
 	struct pci_dn *parent;
 	struct pci_dn *pdn, *tmp;
 	int i;
 
-	/* VF and VF PE is create/released dynamicly, which we need to
-	 * bind/unbind them. Otherwise when re-enable SRIOV, the VF and VF PE
-	 * would be mismatched.
+	/*
+	 * VF and VF PE are created/released dynamically, so we need to
+	 * bind/unbind them.  Otherwise the VF and VF PE would be mismatched
+	 * when re-enabling SR-IOV.
 	 */
 	if (pdev->is_virtfn) {
 		pdn = pci_get_pdn(pdev);
+#ifdef CONFIG_PPC_POWERNV
 		pdn->pe_number = IODA_INVALID_PE;
+#endif
 		return;
 	}
 
@@ -248,7 +249,7 @@ void remove_dev_pci_info(struct pci_dev *pdev)
 	 * so that we can release VF's firmware data in
 	 * a batch mode.
 	 */
-	for (i = 0; i < pdev->sriov->total_VFs; i++) {
+	for (i = 0; i < pci_sriov_get_totalvfs(pdev); i++) {
 		list_for_each_entry_safe(pdn, tmp,
 			&parent->child_list, list) {
 			if (pdn->busno != pci_iov_virtfn_bus(pdev, i) ||
@@ -257,10 +258,11 @@ void remove_dev_pci_info(struct pci_dev *pdev)
 
 			if (!list_empty(&pdn->list))
 				list_del(&pdn->list);
+
 			kfree(pdn);
 		}
 	}
-#endif
+#endif /* CONFIG_PCI_IOV */
 }
 
 /*
@@ -293,6 +295,15 @@ void *update_dn_pci_info(struct device_node *dn, void *data)
 		pdn->devfn = (addr >> 8) & 0xff;
 	}
 
+	/* vendor/device IDs and class code */
+	regs = of_get_property(dn, "vendor-id", NULL);
+	pdn->vendor_id = regs ? of_read_number(regs, 1) : 0;
+	regs = of_get_property(dn, "device-id", NULL);
+	pdn->device_id = regs ? of_read_number(regs, 1) : 0;
+	regs = of_get_property(dn, "class-code", NULL);
+	pdn->class_code = regs ? of_read_number(regs, 1) : 0;
+
+	/* Extended config space */
 	pdn->pci_ext_config_space = (type && of_read_number(type, 1) == 1);
 
 	/* Attach to parent node */
@@ -364,6 +375,46 @@ void *traverse_pci_devices(struct device_node *start, traverse_func pre,
 	return NULL;
 }
 
+static struct pci_dn *pci_dn_next_one(struct pci_dn *root,
+				      struct pci_dn *pdn)
+{
+	struct list_head *next = pdn->child_list.next;
+
+	if (next != &pdn->child_list)
+		return list_entry(next, struct pci_dn, list);
+
+	while (1) {
+		if (pdn == root)
+			return NULL;
+
+		next = pdn->list.next;
+		if (next != &pdn->parent->child_list)
+			break;
+
+		pdn = pdn->parent;
+	}
+
+	return list_entry(next, struct pci_dn, list);
+}
+
+void *traverse_pci_dn(struct pci_dn *root,
+		      void *(*fn)(struct pci_dn *, void *),
+		      void *data)
+{
+	struct pci_dn *pdn = root;
+	void *ret;
+
+	/* Only scan the child nodes */
+	for (pdn = pci_dn_next_one(root, pdn); pdn;
+	     pdn = pci_dn_next_one(root, pdn)) {
+		ret = fn(pdn, data);
+		if (ret)
+			return ret;
+	}
+
+	return NULL;
+}
+
 /** 
  * pci_devs_phb_init_dynamic - setup pci devices under this PHB
  * phb: pci-to-host bridge (top-level bridge connecting to cpu)
@@ -382,8 +433,9 @@ void pci_devs_phb_init_dynamic(struct pci_controller *phb)
 	pdn = dn->data;
 	if (pdn) {
 		pdn->devfn = pdn->busno = -1;
+		pdn->vendor_id = pdn->device_id = pdn->class_code = 0;
 		pdn->phb = phb;
-		phb->firmware_data = pdn;
+		phb->pci_data = pdn;
 	}
 
 	/* Update dn->phb ptrs for new phb and children devices */
@@ -408,21 +460,15 @@ void __init pci_devs_phb_init(void)
 		pci_devs_phb_init_dynamic(phb);
 }
 
-static void pci_dev_pdn_create(struct pci_dev *pdev)
-{
-	add_dev_pci_info(pdev);
-}
-DECLARE_PCI_FIXUP_FINAL(PCI_ANY_ID, PCI_ANY_ID, pci_dev_pdn_create);
-
 static void pci_dev_pdn_setup(struct pci_dev *pdev)
 {
 	struct pci_dn *pdn;
 
-	if (pdev->dev.archdata.firmware_data)
+	if (pdev->dev.archdata.pci_data)
 		return;
 
 	/* Setup the fast path */
 	pdn = pci_get_pdn(pdev);
-	pdev->dev.archdata.firmware_data = pdn;
+	pdev->dev.archdata.pci_data = pdn;
 }
 DECLARE_PCI_FIXUP_EARLY(PCI_ANY_ID, PCI_ANY_ID, pci_dev_pdn_setup);
