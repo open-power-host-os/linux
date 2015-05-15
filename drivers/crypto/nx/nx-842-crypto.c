@@ -580,6 +580,6 @@ module_exit(nx842_crypto_mod_exit);
 
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("IBM PowerPC Nest (NX) 842 Hardware Compression Interface");
-MODULE_ALIAS_CRYPTO("842");
-MODULE_ALIAS_CRYPTO("842-nx");
+MODULE_ALIAS("842");
+MODULE_ALIAS("842-nx");
 MODULE_AUTHOR("Dan Streetman <ddstreet@ieee.org>");
