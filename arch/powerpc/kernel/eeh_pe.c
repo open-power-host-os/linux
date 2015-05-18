@@ -916,7 +916,8 @@ struct pci_bus *eeh_pe_bus_get(struct eeh_pe *pe)
 	if (pe->type & EEH_PE_PHB) {
 		bus = pe->phb->bus;
 	} else if (pe->type & EEH_PE_BUS ||
-		   pe->type & EEH_PE_DEVICE) {
+		   pe->type & EEH_PE_DEVICE ||
+		   pe->type & EEH_PE_VF) {
 		if (pe->bus) {
 			bus = pe->bus;
 			goto out;
