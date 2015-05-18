@@ -1270,7 +1270,6 @@ static void pnv_pci_ioda2_release_dma_pe(struct pci_dev *dev, struct pnv_ioda_pe
 		pe_warn(pe, "OPAL error %ld release DMA window\n", rc);
 
 	pnv_pci_ioda2_set_bypass(pe, false);
-	pnv_pci_unlink_table_and_group(tbl, &pe->table_group);
 	if (pe->table_group.group) {
 		iommu_group_put(pe->table_group.group);
 		BUG_ON(pe->table_group.group);
