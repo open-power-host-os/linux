@@ -196,7 +196,7 @@ static void __eeh_addr_cache_insert_dev(struct pci_dev *dev)
 	}
 
 	/* Walk resources on this device, poke them into the tree */
-	for (i = 0; i < DEVICE_COUNT_RESOURCE; i++) {
+	for (i = 0; i <= PCI_ROM_RESOURCE; i++) {
 		unsigned long start = pci_resource_start(dev,i);
 		unsigned long end = pci_resource_end(dev,i);
 		unsigned int flags = pci_resource_flags(dev,i);
