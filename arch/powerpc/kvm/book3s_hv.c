@@ -2328,6 +2328,43 @@ static void post_guest_process(struct kvmppc_vcore *vc, bool is_master)
 }
 
 /*
+ * Clear core from the list of active host cores as we are about to
+ * enter the guest.
+ */
+static inline void kvmppc_clear_host_core(int cpu)
+{
+	int core;
+
+	if (!kvmppc_host_rm_ops_hv || cpu_thread_in_core(cpu))
+		return;
+	/*
+	 * Memory barrier can be omitted here as we will do a smp_wmb()
+	 * later in kvmppc_start_thread and we need ensure that state is
+	 * visible to other CPUs only after we enter guest.
+	 */
+	core = cpu >> threads_shift;
+	kvmppc_host_rm_ops_hv->rm_core[core].rm_state.in_host = 0;
+}
+
+/*
+ * Advertise this core as an active host core since we exited the guest
+ */
+static inline void kvmppc_set_host_core(int cpu)
+{
+	int core;
+
+	if (!kvmppc_host_rm_ops_hv || cpu_thread_in_core(cpu))
+		return;
+
+	/*
+	 * Memory barrier can be omitted here because we do a spin_unlock
+	 * immediately after this which provides the memory barrier.
+	 */
+	core = cpu >> threads_shift;
+	kvmppc_host_rm_ops_hv->rm_core[core].rm_state.in_host = 1;
+}
+
+/*
  * Run a set of guest threads on a physical core.
  * Called with vc->lock held.
  */
@@ -2440,6 +2477,8 @@ static noinline void kvmppc_run_core(struct kvmppc_vcore *vc)
 		split_info.do_nap = 1;	/* ask secondaries to nap when done */
 	}
 
+	kvmppc_clear_host_core(pcpu);
+
 	/* Start all the threads */
 	active = 0;
 	for (sub = 0; sub < core_info.n_subcores; ++sub) {
@@ -2532,6 +2571,8 @@ static noinline void kvmppc_run_core(struct kvmppc_vcore *vc)
 		if (sip && sip->napped[i])
 			kvmppc_ipi_thread(pcpu + i);
 	}
+
+	kvmppc_set_host_core(pcpu);
 
 	spin_unlock(&vc->lock);
 
@@ -3023,6 +3064,62 @@ static int kvmppc_hv_setup_htab_rma(struct kvm_vcpu *vcpu)
 	goto out_srcu;
 }
 
+/*
+ * Allocate a per-core structure for managing state about which cores are
+ * running in the host versus the guest and for exchanging data between
+ * real mode KVM and CPU running in the host.
+ * This is only done for the first VM.
+ * The allocated structure stays even if all VMs have stopped.
+ * It's OK for this routine to fail, we just don't support host
+ * core operations like redirecting H_IPI wakeups.
+ */
+static void kvmppc_alloc_host_rm_ops(void)
+{
+	struct kvmppc_host_rm_ops *ops;
+	unsigned long l_ops;
+	int cpu, core;
+	int size;
+
+	/* Not the first time here ? */
+	if (kvmppc_host_rm_ops_hv != NULL)
+		return;
+
+	ops = kzalloc(sizeof(struct kvmppc_host_rm_ops), GFP_KERNEL);
+	if (!ops)
+		return;
+
+	size = cpu_nr_cores() * sizeof(struct kvmppc_host_rm_core);
+	ops->rm_core = kzalloc(size, GFP_KERNEL);
+
+	if (!ops->rm_core) {
+		kfree(ops);
+		return;
+	}
+
+	for (cpu = 0; cpu < nr_cpu_ids; cpu += threads_per_core) {
+		if (!cpu_online(cpu))
+			continue;
+
+		core = cpu >> threads_shift;
+		ops->rm_core[core].rm_state.in_host = 1;
+	}
+
+	/*
+	 * Make the contents of the kvmppc_host_rm_ops structure visible
+	 * to other CPUs before we assign it to the global variable.
+	 * Do an atomic assignment (no locks used here), but if someone
+	 * beats us to it, just free our copy and return.
+	 */
+	smp_wmb();
+	l_ops = (unsigned long) ops;
+
+	if (cmpxchg64((unsigned long *)&kvmppc_host_rm_ops_hv, 0, l_ops)) {
+		kfree(ops->rm_core);
+		kfree(ops);
+		return;
+	}
+}
+
 static int kvmppc_core_init_vm_hv(struct kvm *kvm)
 {
 	unsigned long lpcr, lpid;
@@ -3034,6 +3131,8 @@ static int kvmppc_core_init_vm_hv(struct kvm *kvm)
 	if ((long)lpid < 0)
 		return -ENOMEM;
 	kvm->arch.lpid = lpid;
+
+	kvmppc_alloc_host_rm_ops();
 
 	/*
 	 * Since we don't flush the TLB when tearing down a VM,
