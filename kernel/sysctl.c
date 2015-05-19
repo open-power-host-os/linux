@@ -92,10 +92,6 @@
 #include <linux/nmi.h>
 #endif
 
-#ifdef CONFIG_KVM_XICS
-#include <asm/kvm_book3s.h>
-#endif
-
 #if defined(CONFIG_SYSCTL)
 
 /* External variables not in a header file. */
@@ -115,6 +111,7 @@ extern int sysctl_nr_open_min, sysctl_nr_open_max;
 #ifndef CONFIG_MMU
 extern int sysctl_nr_trim_pages;
 #endif
+extern int h_ipi_redirect;
 
 /* Constants used for minimum and  maximum */
 #ifdef CONFIG_LOCKUP_DETECTOR
