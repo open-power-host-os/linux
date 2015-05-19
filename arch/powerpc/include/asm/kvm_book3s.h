@@ -195,6 +195,7 @@ extern void kvmppc_copy_to_svcpu(struct kvmppc_book3s_shadow_vcpu *svcpu,
 				 struct kvm_vcpu *vcpu);
 extern void kvmppc_copy_from_svcpu(struct kvm_vcpu *vcpu,
 				   struct kvmppc_book3s_shadow_vcpu *svcpu);
+extern int h_ipi_redirect;
 
 static inline struct kvmppc_vcpu_book3s *to_book3s(struct kvm_vcpu *vcpu)
 {
@@ -292,6 +293,9 @@ static inline bool kvmppc_supports_magic_page(struct kvm_vcpu *vcpu)
 	/* Only PR KVM supports the magic page */
 	return !is_kvmppc_hv_enabled(vcpu->kvm);
 }
+
+extern int kvmppc_h_logical_ci_load(struct kvm_vcpu *vcpu);
+extern int kvmppc_h_logical_ci_store(struct kvm_vcpu *vcpu);
 
 /* Magic register values loaded into r3 and r4 before the 'sc' assembly
  * instruction for the OSI hypercalls */

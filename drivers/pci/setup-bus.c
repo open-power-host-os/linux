@@ -99,46 +99,44 @@ static void remove_from_list(struct list_head *head,
 	}
 }
 
+static struct pci_dev_resource *res_to_dev_res(struct list_head *head,
+					       struct resource *res)
+{
+	struct pci_dev_resource *dev_res;
+
+	list_for_each_entry(dev_res, head, list) {
+		if (dev_res->res == res) {
+			int idx = res - &dev_res->dev->resource[0];
+
+			dev_printk(KERN_DEBUG, &dev_res->dev->dev,
+				 "res[%d]=%pR res_to_dev_res add_size %llx min_align %llx\n",
+				 idx, dev_res->res,
+				 (unsigned long long)dev_res->add_size,
+				 (unsigned long long)dev_res->min_align);
+
+			return dev_res;
+		}
+	}
+
+	return NULL;
+}
+
 static resource_size_t get_res_add_size(struct list_head *head,
 					struct resource *res)
 {
 	struct pci_dev_resource *dev_res;
 
-	list_for_each_entry(dev_res, head, list) {
-		if (dev_res->res == res) {
-			int idx = res - &dev_res->dev->resource[0];
-
-			dev_printk(KERN_DEBUG, &dev_res->dev->dev,
-				 "res[%d]=%pR get_res_add_size add_size %llx\n",
-				 idx, dev_res->res,
-				 (unsigned long long)dev_res->add_size);
-
-			return dev_res->add_size;
-		}
-	}
-
-	return 0;
+	dev_res = res_to_dev_res(head, res);
+	return dev_res ? dev_res->add_size : 0;
 }
 
 static resource_size_t get_res_add_align(struct list_head *head,
-		struct resource *res)
+					 struct resource *res)
 {
 	struct pci_dev_resource *dev_res;
 
-	list_for_each_entry(dev_res, head, list) {
-		if (dev_res->res == res) {
-			int idx = res - &dev_res->dev->resource[0];
-
-			dev_printk(KERN_DEBUG, &dev_res->dev->dev,
-				   "res[%d]=%pR get_res_add_align min_align %llx\n",
-				   idx, dev_res->res,
-				   (unsigned long long)dev_res->min_align);
-
-			return dev_res->min_align;
-		}
-	}
-
-	return 0;
+	dev_res = res_to_dev_res(head, res);
+	return dev_res ? dev_res->min_align : 0;
 }
 
 
@@ -237,7 +235,7 @@ static void reassign_resources_sorted(struct list_head *realloc_head,
 	struct resource *res;
 	struct pci_dev_resource *add_res, *tmp;
 	struct pci_dev_resource *dev_res;
-	resource_size_t add_size;
+	resource_size_t add_size, align;
 	int idx;
 
 	list_for_each_entry_safe(add_res, tmp, realloc_head, list) {
@@ -260,13 +258,13 @@ static void reassign_resources_sorted(struct list_head *realloc_head,
 
 		idx = res - &add_res->dev->resource[0];
 		add_size = add_res->add_size;
+		align = add_res->min_align;
 		if (!resource_size(res)) {
-			res->start = add_res->start;
+			res->start = align;
 			res->end = res->start + add_size - 1;
 			if (pci_assign_resource(add_res->dev, idx))
 				reset_resource(res);
 		} else {
-			resource_size_t align = add_res->min_align;
 			res->flags |= add_res->flags &
 				 (IORESOURCE_STARTALIGN|IORESOURCE_SIZEALIGN);
 			if (pci_reassign_resource(add_res->dev, idx,
@@ -411,11 +409,24 @@ static void __assign_resources_sorted(struct list_head *head,
 		dev_res->res->end += get_res_add_size(realloc_head,
 							dev_res->res);
 
+		/*
+		 * There are two kinds of additional resources in the list:
+		 * 1. bridge resource  -- IORESOURCE_STARTALIGN
+		 * 2. SR-IOV resource   -- IORESOURCE_SIZEALIGN
+		 * Here just fix the additional alignment for bridge
+		 */
 		if (!(dev_res->res->flags & IORESOURCE_STARTALIGN))
 			continue;
 
 		add_align = get_res_add_align(realloc_head, dev_res->res);
 
+		/*
+		 * The "head" list is sorted by the alignment to make sure
+		 * resources with bigger alignment will be assigned first.
+		 * After we change the alignment of a dev_res in "head" list,
+		 * we need to reorder the list by alignment to make it
+		 * consistent.
+		 */
 		if (add_align > dev_res->res->start) {
 			dev_res->res->start = add_align;
 			dev_res->res->end = add_align +
@@ -1074,11 +1085,12 @@ static int pbus_size_mem(struct pci_bus *bus, unsigned long mask,
 	min_align = calculate_mem_align(aligns, max_order);
 	min_align = max(min_align, window_alignment(bus, b_res->flags));
 	size0 = calculate_memsize(size, min_size, 0, resource_size(b_res), min_align);
+	add_align = max(min_align, add_align);
 	if (children_add_size > add_size)
 		add_size = children_add_size;
 	size1 = (!realloc_head || (realloc_head && !add_size)) ? size0 :
 		calculate_memsize(size, min_size, add_size,
-				resource_size(b_res), max(min_align, add_align));
+				resource_size(b_res), add_align);
 	if (!size0 && !size1) {
 		if (b_res->start || b_res->end)
 			dev_info(&bus->self->dev, "disabling bridge window %pR to %pR (unused)\n",
@@ -1090,12 +1102,11 @@ static int pbus_size_mem(struct pci_bus *bus, unsigned long mask,
 	b_res->end = size0 + min_align - 1;
 	b_res->flags |= IORESOURCE_STARTALIGN;
 	if (size1 > size0 && realloc_head) {
-		add_to_list(realloc_head, bus->self, b_res, size1-size0,
-				max(min_align, add_align));
+		add_to_list(realloc_head, bus->self, b_res, size1-size0, add_align);
 		dev_printk(KERN_DEBUG, &bus->self->dev, "bridge window %pR to %pR add_size %llx add_align %llx\n",
 			   b_res, &bus->busn_res,
-			   (unsigned long long)size1-size0,
-			   max(min_align, add_align));
+			   (unsigned long long) (size1 - size0),
+			   (unsigned long long) add_align);
 	}
 	return 0;
 }

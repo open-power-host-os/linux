@@ -465,6 +465,33 @@ extern u64 kvmppc_xics_get_icp(struct kvm_vcpu *vcpu);
 extern int kvmppc_xics_set_icp(struct kvm_vcpu *vcpu, u64 icpval);
 extern int kvmppc_xics_connect_vcpu(struct kvm_device *dev,
 			struct kvm_vcpu *vcpu, u32 cpu);
+extern void kvmppc_xics_ipi_action(void);
+
+/*
+ * Host-side operations we want to set up while running in real
+ * mode in the guest operating on the xics.
+ */
+
+union kvmppc_rm_state {
+	unsigned long raw;
+	struct {
+		u32 in_host;
+		u32 rm_action;
+	};
+};
+
+struct kvmppc_host_rm_core {
+	union kvmppc_rm_state rm_state;
+	void *rm_data;
+	char pad[112];
+};
+
+struct kvmppc_host_rm_ops {
+	struct kvmppc_host_rm_core	*rm_core;
+	void		(*vcpu_kick)(struct kvm_vcpu *vcpu);
+};
+
+extern struct kvmppc_host_rm_ops *kvmppc_host_rm_ops_hv;
 #else
 static inline int kvmppc_xics_enabled(struct kvm_vcpu *vcpu)
 	{ return 0; }

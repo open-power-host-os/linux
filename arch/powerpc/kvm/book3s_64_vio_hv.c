@@ -44,7 +44,8 @@
 
 #define TCES_PER_PAGE	(PAGE_SIZE / sizeof(u64))
 
-/* Finds a TCE table descriptor by LIOBN.
+/*
+ * Finds a TCE table descriptor by LIOBN.
  *
  * WARNING: This will be called in real or virtual mode on HV KVM and virtual
  *          mode on PR KVM
@@ -198,7 +199,7 @@ static long kvmppc_rm_tce_iommu_mapped_dec(struct iommu_table *tbl,
 	if (!mem)
 		return H_HARDWARE;
 
-	if (mm_iommu_mapped_update(mem, false) < 0)
+	if (mm_iommu_mapped_dec(mem) < 0)
 		return H_HARDWARE;
 
 	*pua = 0;
@@ -222,15 +223,15 @@ static long kvmppc_rm_tce_iommu_unmap(struct iommu_table *tbl,
 }
 
 long kvmppc_rm_tce_iommu_map(struct kvm *kvm, struct iommu_table *tbl,
-		unsigned long entry, unsigned long tce)
+		unsigned long entry, unsigned long gpa,
+		enum dma_data_direction dir)
 {
 	unsigned long hpa, ua;
-	enum dma_data_direction dir = DMA_NONE;
 	struct mm_iommu_table_group_mem_t *mem;
 	unsigned long *pua = IOMMU_TABLE_USERSPACE_ENTRY(tbl, entry);
 	long ret;
 
-	if (kvmppc_gpa_to_ua(kvm, tce, &ua, NULL))
+	if (kvmppc_gpa_to_ua(kvm, gpa, &ua, NULL))
 		return H_HARDWARE;
 
 	mem = mm_iommu_lookup(ua, 1ULL << tbl->it_page_shift);
@@ -240,21 +241,25 @@ long kvmppc_rm_tce_iommu_map(struct kvm *kvm, struct iommu_table *tbl,
 	if (mm_iommu_rm_ua_to_hpa(mem, ua, &hpa))
 		return H_HARDWARE;
 
-	dir = iommu_tce_direction(tce);
-	ret = iommu_tce_xchg_rm(tbl, entry, &hpa, &dir);
-	if (ret)
-		return H_TOO_HARD;
-
-	if (dir != DMA_NONE)
-		kvmppc_rm_tce_iommu_mapped_dec(tbl, entry);
-
 	pua = real_vmalloc_addr(pua);
 	if (!pua)
 		return H_HARDWARE;
 
+	if (mm_iommu_mapped_inc(mem))
+		return H_HARDWARE;
+
+	ret = iommu_tce_xchg_rm(tbl, entry, &hpa, &dir);
+	if (ret) {
+		mm_iommu_mapped_dec(mem);
+		return H_TOO_HARD;
+	}
+
+	if (dir != DMA_NONE)
+		kvmppc_rm_tce_iommu_mapped_dec(tbl, entry);
+
 	*pua = ua;
 
-	return mm_iommu_mapped_update(mem, true);
+	return 0;
 }
 EXPORT_SYMBOL_GPL(kvmppc_rm_tce_iommu_map);
 
@@ -263,9 +268,11 @@ static long kvmppc_rm_h_put_tce_iommu(struct kvm_vcpu *vcpu,
 		unsigned long ioba, unsigned long tce)
 {
 	const unsigned long entry = ioba >> tbl->it_page_shift;
+	const unsigned long gpa = tce & ~(TCE_PCI_READ | TCE_PCI_WRITE);
+	const enum dma_data_direction dir = iommu_tce_direction(tce);
 
 	/* Clear TCE */
-	if (!(tce & (TCE_PCI_READ | TCE_PCI_WRITE))) {
+	if (dir == DMA_NONE) {
 		if (iommu_tce_clear_param_check(tbl, ioba, 0, 1))
 			return H_PARAMETER;
 
@@ -273,10 +280,10 @@ static long kvmppc_rm_h_put_tce_iommu(struct kvm_vcpu *vcpu,
 	}
 
 	/* Put TCE */
-	if (iommu_tce_put_param_check(tbl, ioba, tce))
+	if (iommu_tce_put_param_check(tbl, ioba, gpa))
 		return H_PARAMETER;
 
-	return kvmppc_rm_tce_iommu_map(vcpu->kvm, tbl, entry, tce);
+	return kvmppc_rm_tce_iommu_map(vcpu->kvm, tbl, entry, gpa, dir);
 }
 
 static long kvmppc_rm_h_put_tce_indirect_iommu(struct kvm_vcpu *vcpu,
@@ -285,17 +292,22 @@ static long kvmppc_rm_h_put_tce_indirect_iommu(struct kvm_vcpu *vcpu,
 {
 	int i, ret;
 	const unsigned long entry = ioba >> tbl->it_page_shift;
+	unsigned long tce, gpa;
 
 	for (i = 0; i < npages; ++i) {
+		gpa = be64_to_cpu(tces[i]) & ~(TCE_PCI_READ | TCE_PCI_WRITE);
+
 		if (iommu_tce_put_param_check(tbl, ioba +
-				(i << tbl->it_page_shift),
-				be64_to_cpu(tces[i])))
+				(i << tbl->it_page_shift), gpa))
 			return H_PARAMETER;
 	}
 
 	for (i = 0; i < npages; ++i) {
-		ret = kvmppc_rm_tce_iommu_map(vcpu->kvm, tbl, entry + i,
-				be64_to_cpu(tces[i]));
+		tce = be64_to_cpu(tces[i]);
+		gpa = tce & ~(TCE_PCI_READ | TCE_PCI_WRITE);
+
+		ret = kvmppc_rm_tce_iommu_map(vcpu->kvm, tbl, entry + i, gpa,
+				iommu_tce_direction(tce));
 		if (ret)
 			return ret;
 	}
@@ -439,7 +451,7 @@ long kvmppc_rm_h_put_tce_indirect(struct kvm_vcpu *vcpu,
 		/*
 		 * This is emulated devices case.
 		 * We do not require memory to be preregistered in this case
-		 * so lock rmap and do find_linux_pte_or_hugepte().
+		 * so lock rmap and do __find_linux_pte_or_hugepte().
 		 */
 		if (kvmppc_gpa_to_ua(vcpu->kvm, tce_list, &ua, &rmap))
 			return H_TOO_HARD;

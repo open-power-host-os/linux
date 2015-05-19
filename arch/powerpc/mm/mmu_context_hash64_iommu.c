@@ -79,7 +79,7 @@ long mm_iommu_alloc(unsigned long ua, unsigned long entries,
 	}
 
 	kref_init(&mem->kref);
-	atomic_set(&mem->mapped, 0);
+	atomic_set(&mem->mapped, 1);
 	mem->ua = ua;
 	mem->entries = entries;
 	*pmem = mem;
@@ -146,8 +146,11 @@ EXPORT_SYMBOL_GPL(mm_iommu_get);
 
 long mm_iommu_put(struct mm_iommu_table_group_mem_t *mem)
 {
-	if (atomic_read(&mem->mapped))
+	if (1 != atomic_dec_if_positive(&mem->mapped)) {
+		/* There are mappings, exit */
+		atomic_inc(&mem->mapped);
 		return -EBUSY;
+	}
 
 	kref_put(&mem->kref, mm_iommu_release);
 
@@ -210,18 +213,21 @@ long mm_iommu_rm_ua_to_hpa(struct mm_iommu_table_group_mem_t *mem,
 }
 EXPORT_SYMBOL_GPL(mm_iommu_rm_ua_to_hpa);
 
-long mm_iommu_mapped_update(struct mm_iommu_table_group_mem_t *mem, bool inc)
+long mm_iommu_mapped_inc(struct mm_iommu_table_group_mem_t *mem)
 {
-	long ret = 0;
+	if (atomic_inc_not_zero(&mem->mapped))
+		return 0;
 
-	if (inc)
-		atomic_inc(&mem->mapped);
-	else
-		ret = atomic_dec_if_positive(&mem->mapped);
-
-	return ret;
+	/* Last mm_iommu_put() has been called, no more mappings allowed() */
+	return -ENXIO;
 }
-EXPORT_SYMBOL_GPL(mm_iommu_mapped_update);
+EXPORT_SYMBOL_GPL(mm_iommu_mapped_inc);
+
+long mm_iommu_mapped_dec(struct mm_iommu_table_group_mem_t *mem)
+{
+	return atomic_dec_if_positive(&mem->mapped);
+}
+EXPORT_SYMBOL_GPL(mm_iommu_mapped_dec);
 
 void mm_iommu_cleanup(mm_context_t *ctx)
 {

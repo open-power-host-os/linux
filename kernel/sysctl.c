@@ -92,6 +92,9 @@
 #include <linux/nmi.h>
 #endif
 
+#ifdef CONFIG_KVM_XICS
+#include <asm/kvm_book3s.h>
+#endif
 
 #if defined(CONFIG_SYSCTL)
 
@@ -1054,6 +1057,15 @@ static struct ctl_table kern_table[] = {
 		.procname	= "keys",
 		.mode		= 0555,
 		.child		= key_sysctls,
+	},
+#endif
+#if defined(CONFIG_KVM_XICS) && defined(CONFIG_KVM_BOOK3S_HV_POSSIBLE)
+	{
+		.procname	= "h_ipi_redirect",
+		.data		= &h_ipi_redirect,
+		.maxlen		= sizeof(unsigned int),
+		.mode		= 0644,
+		.proc_handler	= proc_dointvec,
 	},
 #endif
 #ifdef CONFIG_PERF_EVENTS

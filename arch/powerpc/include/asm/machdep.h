@@ -214,10 +214,7 @@ struct machdep_calls {
 
 	/* Called when pci_enable_device() is called. Returns 0 to
 	 * allow assignment/enabling of the device. */
-	int (*pcibios_enable_device_hook)(struct pci_dev *);
-
-	/* Called when pci_disable_device() is called. */
-	void (*pcibios_disable_device_hook)(struct pci_dev *);
+	int  (*pcibios_enable_device_hook)(struct pci_dev *);
 
 	/* Called after scan and before resource survey */
 	void (*pcibios_fixup_phb)(struct pci_controller *hose);
@@ -229,10 +226,8 @@ struct machdep_calls {
 	void  (*pcibios_reset_secondary_bus)(struct pci_dev *dev);
 
 #ifdef CONFIG_PCI_IOV
-	void (*pcibios_fixup_sriov)(struct pci_bus *bus);
-	resource_size_t (*pcibios_sriov_resource_alignment)(struct pci_dev *,
-			                                    int resno,
-							    resource_size_t align);
+	void (*pcibios_fixup_sriov)(struct pci_dev *pdev);
+	resource_size_t (*pcibios_iov_resource_alignment)(struct pci_dev *, int resno);
 #endif /* CONFIG_PCI_IOV */
 
 	/* Called to shutdown machine specific hardware not already controlled

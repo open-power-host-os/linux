@@ -53,6 +53,9 @@
 #include <asm/vdso.h>
 #include <asm/debug.h>
 #include <asm/kexec.h>
+#ifdef CONFIG_KVM_XICS
+#include <asm/xics.h>
+#endif
 
 #ifdef DEBUG
 #include <asm/udbg.h>
@@ -206,7 +209,7 @@ int smp_request_message_ipi(int virq, int msg)
 
 #ifdef CONFIG_PPC_SMP_MUXED_IPI
 struct cpu_messages {
-	int messages;			/* current messages */
+	long messages;			/* current messages */
 	unsigned long data;		/* data for cause ipi */
 };
 static DEFINE_PER_CPU_SHARED_ALIGNED(struct cpu_messages, ipi_message);
@@ -235,21 +238,59 @@ void smp_muxed_ipi_message_pass(int cpu, int msg)
 	smp_ops->cause_ipi(cpu, info->data);
 }
 
+#if defined(CONFIG_KVM_XICS) && defined(CONFIG_KVM_BOOK3S_HV_POSSIBLE)
+/*
+ * Message passing code for real mode callers. It does not use the
+ * smp_ops->cause_ipi function to cause an IPI, because those functions
+ * access the MFFR through an ioremapped address.
+ */
+void smp_muxed_ipi_rm_message_pass(int cpu, int msg)
+{
+	struct cpu_messages *info = &per_cpu(ipi_message, cpu);
+	char *message = (char *)&info->messages;
+	unsigned long xics_phys;
+
+	/*
+	 * Order previous accesses before accesses in the IPI handler.
+	 */
+	smp_mb();
+	message[msg] = 1;
+
+	/*
+	 * cause_ipi functions are required to include a full barrier
+	 * before doing whatever causes the IPI.
+	 */
+	xics_phys = paca[cpu].kvm_hstate.xics_phys;
+	out_rm8((u8 *)(xics_phys + XICS_MFRR), IPI_PRIORITY);
+}
+#endif
+
 #ifdef __BIG_ENDIAN__
-#define IPI_MESSAGE(A) (1 << (24 - 8 * (A)))
+#define IPI_MESSAGE(A) (1uL << ((BITS_PER_LONG - 8) - 8 * (A)))
 #else
-#define IPI_MESSAGE(A) (1 << (8 * (A)))
+#define IPI_MESSAGE(A) (1uL << (8 * (A)))
 #endif
 
 irqreturn_t smp_ipi_demux(void)
 {
 	struct cpu_messages *info = this_cpu_ptr(&ipi_message);
-	unsigned int all;
+	unsigned long all;
 
 	mb();	/* order any irq clear */
 
 	do {
 		all = xchg(&info->messages, 0);
+#if defined(CONFIG_KVM_XICS) && defined(CONFIG_KVM_BOOK3S_HV_POSSIBLE)
+		/*
+		 * Must check for PPC_MSG_RM_HOST_ACTION messages
+		 * before PPC_MSG_CALL_FUNCTION messages because when
+		 * a VM is destroyed, we call kick_all_cpus_sync()
+		 * to ensure that any pending PPC_MSG_RM_HOST_ACTION
+		 * messages have completed before we free any VCPUs.
+		 */
+		if (all & IPI_MESSAGE(PPC_MSG_RM_HOST_ACTION))
+			kvmppc_xics_ipi_action();
+#endif
 		if (all & IPI_MESSAGE(PPC_MSG_CALL_FUNCTION))
 			generic_smp_call_function_interrupt();
 		if (all & IPI_MESSAGE(PPC_MSG_RESCHEDULE))
