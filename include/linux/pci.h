@@ -1680,6 +1680,12 @@ static inline int pci_iov_virtfn_devfn(struct pci_dev *dev, int id)
 static inline int pci_enable_sriov(struct pci_dev *dev, int nr_virtfn)
 { return -ENODEV; }
 static inline void pci_disable_sriov(struct pci_dev *dev) { }
+static inline int pci_iov_virtfn_add(struct pci_dev *dev, int id, int reset)
+{
+	return -ENOSYS;
+}
+static inline void pci_iov_virtfn_remove(struct pci_dev *dev, int id, int reset)
+{ }
 static inline int pci_num_vf(struct pci_dev *dev) { return 0; }
 static inline int pci_vfs_assigned(struct pci_dev *dev)
 { return 0; }
