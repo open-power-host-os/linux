@@ -289,3 +289,10 @@ void kvmhv_commence_exit(int trap)
 
 struct kvmppc_host_rm_ops *kvmppc_host_rm_ops_hv;
 EXPORT_SYMBOL_GPL(kvmppc_host_rm_ops_hv);
+
+/**
+ * Host Operations poked by RM
+ */
+void kvmppc_xics_ipi_action(void)
+{
+}
