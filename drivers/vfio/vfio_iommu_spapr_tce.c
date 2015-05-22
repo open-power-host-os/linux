@@ -1095,14 +1095,86 @@ static int tce_iommu_take_ownership(struct tce_container *container,
 	return 0;
 }
 
+static void tce_iommu_release_ownership_ddw(struct tce_container *container,
+		struct iommu_table_group *table_group)
+{
+	long i;
+
+	if (!table_group->ops->unset_window) {
+		WARN_ON_ONCE(1);
+		return;
+	}
+
+	for (i = 0; i < IOMMU_TABLE_GROUP_MAX_TABLES; ++i)
+		table_group->ops->unset_window(table_group, i);
+
+	table_group->ops->release_ownership(table_group);
+}
+
+static long tce_iommu_take_ownership_ddw(struct tce_container *container,
+		struct iommu_table_group *table_group)
+{
+	long i, ret = 0;
+	struct iommu_table *tbl = NULL;
+
+	if (!table_group->ops->create_table || !table_group->ops->set_window ||
+			!table_group->ops->release_ownership) {
+		WARN_ON_ONCE(1);
+		return -EFAULT;
+	}
+
+	table_group->ops->take_ownership(table_group);
+
+	/*
+	 * If it the first group attached, check if there is
+	 * a default DMA window and create one if none as
+	 * the userspace expects it to exist.
+	 */
+	if (!tce_groups_attached(container) && !container->tables[0]) {
+		ret = tce_iommu_create_table(container,
+				table_group,
+				0, /* window number */
+				IOMMU_PAGE_SHIFT_4K,
+				table_group->tce32_size,
+				1, /* default levels */
+				&tbl);
+		if (ret)
+			goto release_exit;
+		else
+			container->tables[0] = tbl;
+	}
+
+	/* Set all windows to the new group */
+	for (i = 0; i < IOMMU_TABLE_GROUP_MAX_TABLES; ++i) {
+		tbl = container->tables[i];
+
+		if (!tbl)
+			continue;
+
+		/* Set the default window to a new group */
+		ret = table_group->ops->set_window(table_group, i, tbl);
+		if (ret)
+			goto release_exit;
+	}
+
+	return 0;
+
+release_exit:
+	for (i = 0; i < IOMMU_TABLE_GROUP_MAX_TABLES; ++i)
+		table_group->ops->unset_window(table_group, i);
+
+	table_group->ops->release_ownership(table_group);
+
+	return ret;
+}
+
 static int tce_iommu_attach_group(void *iommu_data,
 		struct iommu_group *iommu_group)
 {
-	int ret, i;
+	int ret;
 	struct tce_container *container = iommu_data;
 	struct iommu_table_group *table_group;
 	struct tce_iommu_group *tcegrp = NULL;
-	bool first_group = !tce_groups_attached(container);
 
 	mutex_lock(&container->lock);
 
@@ -1110,7 +1182,7 @@ static int tce_iommu_attach_group(void *iommu_data,
 			iommu_group_id(iommu_group), iommu_group); */
 	table_group = iommu_group_get_iommudata(iommu_group);
 
-	if (!first_group && (!table_group->ops ||
+	if (tce_groups_attached(container) && (!table_group->ops ||
 			!table_group->ops->take_ownership ||
 			!table_group->ops->release_ownership)) {
 		ret = -EBUSY;
@@ -1144,59 +1216,15 @@ static int tce_iommu_attach_group(void *iommu_data,
 	}
 
 	if (!table_group->ops || !table_group->ops->take_ownership ||
-			!table_group->ops->release_ownership) {
+			!table_group->ops->release_ownership)
 		ret = tce_iommu_take_ownership(container, table_group);
-	} else if (!table_group->ops->create_table ||
-			!table_group->ops->set_window) {
-		WARN_ON_ONCE(1);
-		ret = -EFAULT;
-	} else {
-		struct iommu_table *tbl = NULL;
-		/*
-		 * Disable iommu bypass, otherwise the user can DMA to all of
-		 * our physical memory via the bypass window instead of just
-		 * the pages that has been explicitly mapped into the iommu
-		 */
-		table_group->ops->take_ownership(table_group);
+	else
+		ret = tce_iommu_take_ownership_ddw(container, table_group);
 
-		/*
-		 * If it the first group attached, check if there is
-		 * a default DMA window and create one if none as
-		 * the userspace expects it to exist.
-		 */
-		if (first_group && !container->tables[0]) {
-			ret = tce_iommu_create_table(container,
-					table_group,
-					0, /* window number */
-					IOMMU_PAGE_SHIFT_4K,
-					table_group->tce32_size,
-					1, /* default levels */
-					&tbl);
-			if (ret)
-				goto unlock_exit;
-			else
-				container->tables[0] = tbl;
-		}
-
-		/* Set all windows to the new group */
-		for (i = 0; i < IOMMU_TABLE_GROUP_MAX_TABLES; ++i) {
-			tbl = container->tables[i];
-
-			if (!tbl)
-				continue;
-
-			/* Set the default window to a new group */
-			ret = table_group->ops->set_window(table_group, i, tbl);
-			if (ret)
-				break;
-		}
+	if (!ret) {
+		tcegrp->grp = iommu_group;
+		list_add(&tcegrp->next, &container->group_list);
 	}
-
-	if (ret)
-		goto unlock_exit;
-
-	tcegrp->grp = iommu_group;
-	list_add(&tcegrp->next, &container->group_list);
 
 unlock_exit:
 	if (ret && tcegrp)
@@ -1212,9 +1240,8 @@ static void tce_iommu_detach_group(void *iommu_data,
 {
 	struct tce_container *container = iommu_data;
 	struct iommu_table_group *table_group;
-	struct tce_iommu_group *tcegrp;
-	long i;
 	bool found = false;
+	struct tce_iommu_group *tcegrp;
 
 	mutex_lock(&container->lock);
 
@@ -1240,14 +1267,8 @@ static void tce_iommu_detach_group(void *iommu_data,
 	/* Kernel owns the device now, we can restore bypass */
 	if (!table_group->ops || !table_group->ops->release_ownership)
 		tce_iommu_release_ownership(container, table_group);
-	else if (!table_group->ops->unset_window)
-		WARN_ON_ONCE(1);
-	else {
-		for (i = 0; i < IOMMU_TABLE_GROUP_MAX_TABLES; ++i)
-			table_group->ops->unset_window(table_group, i);
-
-		table_group->ops->release_ownership(table_group);
-	}
+	else
+		tce_iommu_release_ownership_ddw(container, table_group);
 
 unlock_exit:
 	mutex_unlock(&container->lock);
