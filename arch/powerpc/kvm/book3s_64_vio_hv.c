@@ -290,7 +290,7 @@ static long kvmppc_rm_h_put_tce_indirect_iommu(struct kvm_vcpu *vcpu,
 		struct iommu_table *tbl, unsigned long ioba,
 		u64 *tces, unsigned long npages)
 {
-	int i, ret;
+	unsigned long i, ret;
 	const unsigned long entry = ioba >> tbl->it_page_shift;
 	unsigned long tce, gpa;
 
