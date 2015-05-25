@@ -2318,8 +2318,9 @@ static long pnv_pci_ioda2_table_alloc_pages(int nid, __u64 bus_offset,
 		return -ENOMEM;
 
 	if (tce_table_size > tce_table_allocated) {
-		pnv_pci_ioda2_table_do_free_pages((unsigned long) addr,
-				tbl->it_level_size, tbl->it_indirect_levels);
+		if (tce_table_allocated)
+			pnv_pci_ioda2_table_do_free_pages((unsigned long) addr,
+					1ULL << (level_shift - 3), levels - 1);
 		return -ENOMEM;
 	}
 
