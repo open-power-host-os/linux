@@ -464,13 +464,12 @@ static void opal_event_handle_basic(struct opal_platform_evt *evt,
 		evt->opal_event.size = sizeof(struct epow_event);
 		evt->opal_event.epow.timeout = timeout;
 		if (actionable_epow(evt->opal_event.epow.epow))
-			opal_event_start_timer(OPAL_PLAT_EVENT_TYPE_EPOW,
-							OPAL_EPOW_TIMEOUT);
+			opal_event_start_timer(OPAL_PLAT_EVENT_TYPE_EPOW, 0);
 		break;
 	case  OPAL_PLAT_EVENT_TYPE_DPO:
 		evt->opal_event.size = sizeof(struct dpo_event);
 		evt->opal_event.dpo.orig_timeout = timeout;
-		opal_event_start_timer(OPAL_PLAT_EVENT_TYPE_DPO, timeout);
+		opal_event_start_timer(OPAL_PLAT_EVENT_TYPE_DPO, 0);
 		break;
 	default:
 		pr_err("Unknown event type\n");
