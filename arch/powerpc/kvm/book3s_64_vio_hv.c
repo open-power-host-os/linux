@@ -199,8 +199,7 @@ static long kvmppc_rm_tce_iommu_mapped_dec(struct iommu_table *tbl,
 	if (!mem)
 		return H_HARDWARE;
 
-	if (mm_iommu_mapped_dec(mem) < 0)
-		return H_HARDWARE;
+	mm_iommu_mapped_dec(mem);
 
 	*pua = 0;
 

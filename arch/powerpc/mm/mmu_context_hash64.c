@@ -90,7 +90,7 @@ int init_new_context(struct task_struct *tsk, struct mm_struct *mm)
 	mm->context.pte_frag = NULL;
 #endif
 #ifdef CONFIG_SPAPR_TCE_IOMMU
-	INIT_LIST_HEAD_RCU(&mm->context.iommu_group_mem_list);
+	mm_iommu_init(&mm->context);
 #endif
 	return 0;
 }

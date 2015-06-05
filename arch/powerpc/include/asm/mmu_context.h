@@ -20,20 +20,21 @@ extern void destroy_context(struct mm_struct *mm);
 struct mm_iommu_table_group_mem_t;
 
 extern bool mm_iommu_preregistered(void);
-extern long mm_iommu_alloc(unsigned long ua, unsigned long entries,
+extern long mm_iommu_get(unsigned long ua, unsigned long entries,
 		struct mm_iommu_table_group_mem_t **pmem);
-extern struct mm_iommu_table_group_mem_t *mm_iommu_get(unsigned long ua,
-		unsigned long entries);
 extern long mm_iommu_put(struct mm_iommu_table_group_mem_t *mem);
+extern void mm_iommu_init(mm_context_t *ctx);
 extern void mm_iommu_cleanup(mm_context_t *ctx);
 extern struct mm_iommu_table_group_mem_t *mm_iommu_lookup(unsigned long ua,
 		unsigned long size);
+extern struct mm_iommu_table_group_mem_t *mm_iommu_find(unsigned long ua,
+		unsigned long entries);
 extern long mm_iommu_ua_to_hpa(struct mm_iommu_table_group_mem_t *mem,
 		unsigned long ua, unsigned long *hpa);
 extern long mm_iommu_rm_ua_to_hpa(struct mm_iommu_table_group_mem_t *mem,
 		unsigned long ua, unsigned long *hpa);
 extern long mm_iommu_mapped_inc(struct mm_iommu_table_group_mem_t *mem);
-extern long mm_iommu_mapped_dec(struct mm_iommu_table_group_mem_t *mem);
+extern void mm_iommu_mapped_dec(struct mm_iommu_table_group_mem_t *mem);
 #endif
 
 extern void switch_mmu_context(struct mm_struct *prev, struct mm_struct *next);

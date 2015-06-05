@@ -66,7 +66,7 @@ static void decrement_locked_vm(long npages)
 		return; /* process exited */
 
 	down_write(&current->mm->mmap_sem);
-	if (npages > current->mm->locked_vm)
+	if (WARN_ON_ONCE(npages > current->mm->locked_vm))
 		npages = current->mm->locked_vm;
 	current->mm->locked_vm -= npages;
 	pr_debug("[%d] RLIMIT_MEMLOCK -%ld %ld/%ld\n", current->pid,
@@ -96,8 +96,8 @@ struct tce_iommu_group {
 struct tce_container {
 	struct mutex lock;
 	bool enabled;
-	unsigned long locked_pages;
 	bool v2;
+	unsigned long locked_pages;
 	struct iommu_table *tables[IOMMU_TABLE_GROUP_MAX_TABLES];
 	struct list_head group_list;
 };
@@ -105,46 +105,32 @@ struct tce_container {
 static long tce_iommu_unregister_pages(struct tce_container *container,
 		__u64 vaddr, __u64 size)
 {
-	long ret;
 	struct mm_iommu_table_group_mem_t *mem;
 
 	if ((vaddr & ~PAGE_MASK) || (size & ~PAGE_MASK))
 		return -EINVAL;
 
-	mem = mm_iommu_get(vaddr, size >> PAGE_SHIFT);
+	mem = mm_iommu_find(vaddr, size >> PAGE_SHIFT);
 	if (!mem)
-		return -EINVAL;
+		return -ENOENT;
 
-	ret = mm_iommu_put(mem); /* undo kref_get() from mm_iommu_get() */
-	if (!ret)
-		ret = mm_iommu_put(mem);
-
-	return ret;
+	return mm_iommu_put(mem);
 }
 
 static long tce_iommu_register_pages(struct tce_container *container,
 		__u64 vaddr, __u64 size)
 {
 	long ret = 0;
-	struct mm_iommu_table_group_mem_t *mem;
+	struct mm_iommu_table_group_mem_t *mem = NULL;
 	unsigned long entries = size >> PAGE_SHIFT;
 
 	if ((vaddr & ~PAGE_MASK) || (size & ~PAGE_MASK) ||
 			((vaddr + size) < vaddr))
 		return -EINVAL;
 
-	mem = mm_iommu_get(vaddr, entries);
-	if (!mem) {
-		ret = try_increment_locked_vm(entries);
-		if (ret)
-			return ret;
-
-		ret = mm_iommu_alloc(vaddr, entries, &mem);
-		if (ret) {
-			decrement_locked_vm(entries);
-			return ret;
-		}
-	}
+	ret = mm_iommu_get(vaddr, entries, &mem);
+	if (ret)
+		return ret;
 
 	container->enabled = true;
 
@@ -822,16 +808,17 @@ static long tce_iommu_ioctl(void *iommu_data,
 			return -EINVAL;
 
 		/* iova is checked by the IOMMU API */
-		if (param.flags & VFIO_DMA_MAP_FLAG_READ)
+		if (param.flags & VFIO_DMA_MAP_FLAG_READ) {
 			if (param.flags & VFIO_DMA_MAP_FLAG_WRITE)
 				direction = DMA_BIDIRECTIONAL;
 			else
 				direction = DMA_TO_DEVICE;
-		else
+		} else {
 			if (param.flags & VFIO_DMA_MAP_FLAG_WRITE)
 				direction = DMA_FROM_DEVICE;
 			else
 				return -EINVAL;
+		}
 
 		ret = iommu_tce_put_param_check(tbl, param.iova, param.vaddr);
 		if (ret)
@@ -940,10 +927,11 @@ static long tce_iommu_ioctl(void *iommu_data,
 			return -EINVAL;
 
 		mutex_lock(&container->lock);
-		tce_iommu_unregister_pages(container, param.vaddr, param.size);
+		ret = tce_iommu_unregister_pages(container, param.vaddr,
+				param.size);
 		mutex_unlock(&container->lock);
 
-		return 0;
+		return ret;
 	}
 	case VFIO_IOMMU_ENABLE:
 		if (container->v2)
@@ -1264,7 +1252,6 @@ static void tce_iommu_detach_group(void *iommu_data,
 	table_group = iommu_group_get_iommudata(iommu_group);
 	BUG_ON(!table_group);
 
-	/* Kernel owns the device now, we can restore bypass */
 	if (!table_group->ops || !table_group->ops->release_ownership)
 		tce_iommu_release_ownership(container, table_group);
 	else
