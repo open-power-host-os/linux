@@ -991,7 +991,7 @@ static int pnv_eeh_reset_vf(struct pci_dn *pdn, int option)
 	int ret;
 
 	ret = pnv_eeh_do_flr(pdn, option);
-	if (ret)
+	if (ret != -ENOTTY)
 		return ret;
 
 	return pnv_eeh_do_af_flr(pdn, option);
