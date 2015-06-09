@@ -14,18 +14,54 @@
 #include <linux/slab.h>
 #include <linux/rculist.h>
 #include <linux/vmalloc.h>
-#include <linux/kref.h>
+#include <linux/mutex.h>
 #include <asm/mmu_context.h>
+
+static DEFINE_MUTEX(mem_list_mutex);
 
 struct mm_iommu_table_group_mem_t {
 	struct list_head next;
 	struct rcu_head rcu;
-	struct kref kref;	/* one reference per VFIO container */
-	atomic_t mapped;	/* number of currently mapped pages */
+	unsigned long used;
+	atomic64_t mapped;
 	u64 ua;			/* userspace address */
 	u64 entries;		/* number of entries in hpas[] */
 	u64 *hpas;		/* vmalloc'ed */
 };
+
+static long mm_iommu_adjust_locked_vm(struct mm_struct *mm,
+		unsigned long npages, bool incr)
+{
+	long ret = 0, locked, lock_limit;
+
+	if (!npages)
+		return 0;
+
+	down_write(&mm->mmap_sem);
+
+	if (incr) {
+		locked = mm->locked_vm + npages;
+		lock_limit = rlimit(RLIMIT_MEMLOCK) >> PAGE_SHIFT;
+		if (locked > lock_limit && !capable(CAP_IPC_LOCK))
+			ret = -ENOMEM;
+		else
+			mm->locked_vm += npages;
+	} else {
+		if (WARN_ON_ONCE(npages > mm->locked_vm))
+			npages = mm->locked_vm;
+		mm->locked_vm -= npages;
+	}
+
+	pr_debug("[%d] RLIMIT_MEMLOCK HASH64 %c%ld %ld/%ld\n",
+			current->pid,
+			incr ? '+' : '-',
+			npages << PAGE_SHIFT,
+			mm->locked_vm << PAGE_SHIFT,
+			rlimit(RLIMIT_MEMLOCK));
+	up_write(&mm->mmap_sem);
+
+	return ret;
+}
 
 bool mm_iommu_preregistered(void)
 {
@@ -36,32 +72,53 @@ bool mm_iommu_preregistered(void)
 }
 EXPORT_SYMBOL_GPL(mm_iommu_preregistered);
 
-long mm_iommu_alloc(unsigned long ua, unsigned long entries,
+long mm_iommu_get(unsigned long ua, unsigned long entries,
 		struct mm_iommu_table_group_mem_t **pmem)
 {
 	struct mm_iommu_table_group_mem_t *mem;
-	long i, j;
+	long i, j, ret = 0, locked_entries = 0;
 	struct page *page = NULL;
+
+	if (!current || !current->mm)
+		return -ESRCH; /* process exited */
+
+	mutex_lock(&mem_list_mutex);
 
 	list_for_each_entry_rcu(mem, &current->mm->context.iommu_group_mem_list,
 			next) {
-		if ((mem->ua == ua) && (mem->entries == entries))
-			return -EBUSY;
+		if ((mem->ua == ua) && (mem->entries == entries)) {
+			++mem->used;
+			*pmem = mem;
+			goto unlock_exit;
+		}
 
 		/* Overlap? */
 		if ((mem->ua < (ua + (entries << PAGE_SHIFT))) &&
-				(ua < (mem->ua + (mem->entries << PAGE_SHIFT))))
-			return -EINVAL;
+				(ua < (mem->ua +
+				       (mem->entries << PAGE_SHIFT)))) {
+			ret = -EINVAL;
+			goto unlock_exit;
+		}
+
 	}
 
+	ret = mm_iommu_adjust_locked_vm(current->mm, entries, true);
+	if (ret)
+		goto unlock_exit;
+
+	locked_entries = entries;
+
 	mem = kzalloc(sizeof(*mem), GFP_KERNEL);
-	if (!mem)
-		return -ENOMEM;
+	if (!mem) {
+		ret = -ENOMEM;
+		goto unlock_exit;
+	}
 
 	mem->hpas = vzalloc(entries * sizeof(mem->hpas[0]));
 	if (!mem->hpas) {
 		kfree(mem);
-		return -ENOMEM;
+		ret = -ENOMEM;
+		goto unlock_exit;
 	}
 
 	for (i = 0; i < entries; ++i) {
@@ -72,23 +129,30 @@ long mm_iommu_alloc(unsigned long ua, unsigned long entries,
 						mem->hpas[j] >> PAGE_SHIFT));
 			vfree(mem->hpas);
 			kfree(mem);
-			return -EFAULT;
+			ret = -EFAULT;
+			goto unlock_exit;
 		}
 
 		mem->hpas[i] = page_to_pfn(page) << PAGE_SHIFT;
 	}
 
-	kref_init(&mem->kref);
-	atomic_set(&mem->mapped, 1);
+	atomic64_set(&mem->mapped, 1);
+	mem->used = 1;
 	mem->ua = ua;
 	mem->entries = entries;
 	*pmem = mem;
 
 	list_add_rcu(&mem->next, &current->mm->context.iommu_group_mem_list);
 
-	return 0;
+unlock_exit:
+	if (locked_entries && ret)
+		mm_iommu_adjust_locked_vm(current->mm, locked_entries, false);
+
+	mutex_unlock(&mem_list_mutex);
+
+	return ret;
 }
-EXPORT_SYMBOL_GPL(mm_iommu_alloc);
+EXPORT_SYMBOL_GPL(mm_iommu_get);
 
 static void mm_iommu_unpin(struct mm_iommu_table_group_mem_t *mem)
 {
@@ -108,53 +172,62 @@ static void mm_iommu_unpin(struct mm_iommu_table_group_mem_t *mem)
 	}
 }
 
-static void mm_iommu_free(struct rcu_head *head)
+static void mm_iommu_do_free(struct mm_iommu_table_group_mem_t *mem)
 {
-	struct mm_iommu_table_group_mem_t *mem = container_of(head,
-			struct mm_iommu_table_group_mem_t, rcu);
 
 	mm_iommu_unpin(mem);
 	vfree(mem->hpas);
 	kfree(mem);
 }
 
-static void mm_iommu_release(struct kref *kref)
+static void mm_iommu_free(struct rcu_head *head)
 {
-	struct mm_iommu_table_group_mem_t *mem = container_of(kref,
-			struct mm_iommu_table_group_mem_t, kref);
+	struct mm_iommu_table_group_mem_t *mem = container_of(head,
+			struct mm_iommu_table_group_mem_t, rcu);
 
+	mm_iommu_do_free(mem);
+}
+
+static void mm_iommu_release(struct mm_iommu_table_group_mem_t *mem)
+{
 	list_del_rcu(&mem->next);
+	mm_iommu_adjust_locked_vm(current->mm, mem->entries, false);
 	call_rcu(&mem->rcu, mm_iommu_free);
 }
 
-struct mm_iommu_table_group_mem_t *mm_iommu_get(unsigned long ua,
-		unsigned long entries)
-{
-	struct mm_iommu_table_group_mem_t *mem;
-
-	list_for_each_entry_rcu(mem, &current->mm->context.iommu_group_mem_list,
-			next) {
-		if ((mem->ua == ua) && (mem->entries == entries)) {
-			kref_get(&mem->kref);
-			return mem;
-		}
-	}
-
-	return NULL;
-}
-EXPORT_SYMBOL_GPL(mm_iommu_get);
-
 long mm_iommu_put(struct mm_iommu_table_group_mem_t *mem)
 {
-	if (1 != atomic_dec_if_positive(&mem->mapped)) {
-		/* There are mappings, exit */
-		atomic_inc(&mem->mapped);
-		return -EBUSY;
+	long ret = 0;
+
+	if (!current || !current->mm)
+		return -ESRCH; /* process exited */
+
+	mutex_lock(&mem_list_mutex);
+
+	if (mem->used == 0) {
+		ret = -ENOENT;
+		goto unlock_exit;
 	}
 
-	kref_put(&mem->kref, mm_iommu_release);
+	--mem->used;
+	/* There are still users, exit */
+	if (mem->used)
+		goto unlock_exit;
 
-	return 0;
+	/* Are there still mappings? */
+	if (atomic_cmpxchg(&mem->mapped, 1, 0) != 1) {
+		++mem->used;
+		ret = -EBUSY;
+		goto unlock_exit;
+	}
+
+	/* @mapped became 0 so now mappings are disabled, release the region */
+	mm_iommu_release(mem);
+
+unlock_exit:
+	mutex_unlock(&mem_list_mutex);
+
+	return ret;
 }
 EXPORT_SYMBOL_GPL(mm_iommu_put);
 
@@ -177,6 +250,24 @@ struct mm_iommu_table_group_mem_t *mm_iommu_lookup(unsigned long ua,
 	return ret;
 }
 EXPORT_SYMBOL_GPL(mm_iommu_lookup);
+
+struct mm_iommu_table_group_mem_t *mm_iommu_find(unsigned long ua,
+		unsigned long entries)
+{
+	struct mm_iommu_table_group_mem_t *mem, *ret = NULL;
+
+	list_for_each_entry_rcu(mem,
+			&current->mm->context.iommu_group_mem_list,
+			next) {
+		if ((mem->ua == ua) && (mem->entries == entries)) {
+			ret = mem;
+			break;
+		}
+	}
+
+	return ret;
+}
+EXPORT_SYMBOL_GPL(mm_iommu_find);
 
 long mm_iommu_ua_to_hpa(struct mm_iommu_table_group_mem_t *mem,
 		unsigned long ua, unsigned long *hpa)
@@ -215,7 +306,7 @@ EXPORT_SYMBOL_GPL(mm_iommu_rm_ua_to_hpa);
 
 long mm_iommu_mapped_inc(struct mm_iommu_table_group_mem_t *mem)
 {
-	if (atomic_inc_not_zero(&mem->mapped))
+	if (atomic64_inc_not_zero(&mem->mapped))
 		return 0;
 
 	/* Last mm_iommu_put() has been called, no more mappings allowed() */
@@ -223,19 +314,23 @@ long mm_iommu_mapped_inc(struct mm_iommu_table_group_mem_t *mem)
 }
 EXPORT_SYMBOL_GPL(mm_iommu_mapped_inc);
 
-long mm_iommu_mapped_dec(struct mm_iommu_table_group_mem_t *mem)
+void mm_iommu_mapped_dec(struct mm_iommu_table_group_mem_t *mem)
 {
-	return atomic_dec_if_positive(&mem->mapped);
+	atomic64_add_unless(&mem->mapped, -1, 1);
 }
 EXPORT_SYMBOL_GPL(mm_iommu_mapped_dec);
 
+void mm_iommu_init(mm_context_t *ctx)
+{
+	INIT_LIST_HEAD_RCU(&ctx->iommu_group_mem_list);
+}
+
 void mm_iommu_cleanup(mm_context_t *ctx)
 {
-	while (!list_empty(&ctx->iommu_group_mem_list)) {
-		struct mm_iommu_table_group_mem_t *mem;
+	struct mm_iommu_table_group_mem_t *mem, *tmp;
 
-		mem = list_first_entry(&ctx->iommu_group_mem_list,
-				struct mm_iommu_table_group_mem_t, next);
-		mm_iommu_release(&mem->kref);
+	list_for_each_entry_safe(mem, tmp, &ctx->iommu_group_mem_list, next) {
+		list_del_rcu(&mem->next);
+		mm_iommu_do_free(mem);
 	}
 }

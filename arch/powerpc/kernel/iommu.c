@@ -715,7 +715,10 @@ void iommu_free_table(struct iommu_table *tbl, const char *node_name)
 	unsigned long bitmap_sz;
 	unsigned int order;
 
-	if (!tbl || !tbl->it_map) {
+	if (!tbl)
+		return;
+
+	if (!tbl->it_map) {
 		kfree(tbl);
 		return;
 	}

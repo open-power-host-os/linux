@@ -92,33 +92,28 @@ static void iommu_pseries_free_group(struct iommu_table_group *table_group,
 		const char *node_name)
 {
 	struct iommu_table *tbl;
-	long i;
+	struct iommu_table_group_link *tgl;
 
 	if (!table_group)
 		return;
 
-	for (i = 0; i < IOMMU_TABLE_GROUP_MAX_TABLES; ++i) {
-		tbl = table_group->tables[i];
-
-		if (tbl) {
+	tbl = table_group->tables[0];
 #ifdef CONFIG_IOMMU_API
-			struct iommu_table_group_link *tgl, *tmp;
+	tgl = list_first_entry_or_null(&tbl->it_group_list,
+			struct iommu_table_group_link, next);
 
-			list_for_each_entry_safe(tgl, tmp, &tbl->it_group_list,
-					next) {
-				list_del_rcu(&tgl->next);
-				kfree(tgl);
-			}
-#endif
-			iommu_free_table(tbl, node_name);
-		}
+	WARN_ON_ONCE(!tgl);
+	if (tgl) {
+		list_del_rcu(&tgl->next);
+		kfree(tgl);
 	}
-#ifdef CONFIG_IOMMU_API
 	if (table_group->group) {
 		iommu_group_put(table_group->group);
 		BUG_ON(table_group->group);
 	}
 #endif
+	iommu_free_table(tbl, node_name);
+
 	kfree(table_group);
 }
 
@@ -705,8 +700,38 @@ static void pci_dma_bus_setup_pSeries(struct pci_bus *bus)
 	pr_debug("ISA/IDE, window size is 0x%llx\n", pci->phb->dma_window_size);
 }
 
+#ifdef CONFIG_IOMMU_API
+static int tce_exchange_pSeries(struct iommu_table *tbl, long index,
+		unsigned long *tce, enum dma_data_direction *direction)
+{
+	long rc;
+	unsigned long ioba = (unsigned long) index << tbl->it_page_shift;
+	unsigned long flags, oldtce = 0;
+	u64 proto_tce = iommu_direction_to_tce_perm(*direction);
+	unsigned long newtce = *tce | proto_tce;
+
+	spin_lock_irqsave(&tbl->large_pool.lock, flags);
+
+	rc = plpar_tce_get((u64)tbl->it_index, ioba, &oldtce);
+	if (!rc)
+		rc = plpar_tce_put((u64)tbl->it_index, ioba, newtce);
+
+	if (!rc) {
+		*direction = iommu_tce_direction(oldtce);
+		*tce = oldtce & ~(TCE_PCI_READ | TCE_PCI_WRITE);
+	}
+
+	spin_unlock_irqrestore(&tbl->large_pool.lock, flags);
+
+	return rc;
+}
+#endif
+
 struct iommu_table_ops iommu_table_lpar_multi_ops = {
 	.set = tce_buildmulti_pSeriesLP,
+#ifdef CONFIG_IOMMU_API
+	.exchange = tce_exchange_pSeries,
+#endif
 	.clear = tce_freemulti_pSeriesLP,
 	.get = tce_get_pSeriesLP
 };
