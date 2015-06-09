@@ -193,6 +193,9 @@ extern long kvm_spapr_tce_attach_iommu_group(struct kvm *kvm,
 	for (i = 0; i < IOMMU_TABLE_GROUP_MAX_TABLES; ++i) {
 		struct iommu_table *tbl = table_group->tables[i];
 
+		if (!tbl)
+			continue;
+
 		if ((tbl->it_page_shift == stt->page_shift) &&
 				(tbl->it_offset == stt->offset)) {
 			tbltmp = tbl;
