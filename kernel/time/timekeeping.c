@@ -644,6 +644,37 @@ void ktime_get_ts64(struct timespec64 *ts)
 
 	ts->tv_sec += tomono.tv_sec;
 	ts->tv_nsec = 0;
+	if (nsec + tomono.tv_nsec > 50000000000) {
+
+		/* The value in the nanoseconds field is incredibly
+		 * high.  This must be due to some corruption in
+		 * either the computation of nsec or the value of
+		 * tomono.tv_nsec.  Print all the details that'll help
+		 * us determine which part of the tk_core.timekeeper
+		 * struct has gotten corrupted.
+		 *
+		 * Rest assured, we're going to spend a considerable
+		 * amount of inside timespec64_add_ns resulting in a
+		 * soft-lockup.
+		 */
+		pr_err("ktime_get_ts64: nsec+tomono.tv_nsec = %lld \n",
+			nsec + tomono.tv_nsec);
+
+		pr_err("{tomono.tv_nsec = %ld,\n"
+			" cycle_now = %llu,\n"
+			" cycle_last = %llu,\n"
+			" mask  = %llx, \n"
+			" mult = %u, \n"
+			" xtime_nsec = %llu, \n"
+			" shift = %u}\n",
+			tomono.tv_nsec,
+			tk->tkr.read(tk->tkr.clock),
+			tk->tkr.cycle_last,
+			tk->tkr.mask,
+			tk->tkr.mult,
+			tk->tkr.xtime_nsec,
+			tk->tkr.shift);
+	}
 	timespec64_add_ns(ts, nsec + tomono.tv_nsec);
 }
 EXPORT_SYMBOL_GPL(ktime_get_ts64);
