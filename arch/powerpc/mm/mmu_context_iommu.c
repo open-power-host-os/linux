@@ -63,12 +63,9 @@ static long mm_iommu_adjust_locked_vm(struct mm_struct *mm,
 	return ret;
 }
 
-bool mm_iommu_preregistered(void)
+bool mm_iommu_preregistered(mm_context_t *mm)
 {
-	if (!current || !current->mm)
-		return false;
-
-	return !list_empty(&current->mm->context.iommu_group_mem_list);
+	return !list_empty(&mm->iommu_group_mem_list);
 }
 EXPORT_SYMBOL_GPL(mm_iommu_preregistered);
 
@@ -231,12 +228,30 @@ unlock_exit:
 }
 EXPORT_SYMBOL_GPL(mm_iommu_put);
 
+struct mm_iommu_table_group_mem_t *mm_iommu_lookup_rm(mm_context_t *mm,
+		unsigned long ua, unsigned long size)
+{
+	struct mm_iommu_table_group_mem_t *mem, *ret = NULL;
+
+	list_for_each_entry_rcu_notrace(mem, &mm->iommu_group_mem_list, next) {
+		if ((mem->ua <= ua) &&
+				(ua + size <= mem->ua +
+				 (mem->entries << PAGE_SHIFT))) {
+			ret = mem;
+			break;
+		}
+	}
+
+	return ret;
+}
+EXPORT_SYMBOL_GPL(mm_iommu_lookup_rm);
+
 struct mm_iommu_table_group_mem_t *mm_iommu_lookup(unsigned long ua,
 		unsigned long size)
 {
 	struct mm_iommu_table_group_mem_t *mem, *ret = NULL;
 
-	list_for_each_entry_rcu_notrace(mem,
+	list_for_each_entry_rcu(mem,
 			&current->mm->context.iommu_group_mem_list,
 			next) {
 		if ((mem->ua <= ua) &&
