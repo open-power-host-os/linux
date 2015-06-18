@@ -44,6 +44,35 @@
 
 #define TCES_PER_PAGE	(PAGE_SIZE / sizeof(u64))
 
+static mm_context_t *kvmppc_mm_context(struct kvm_vcpu *vcpu)
+{
+	if (unlikely(!vcpu->arch.run_task || !vcpu->arch.run_task->mm))
+		return NULL;
+
+	return &vcpu->arch.run_task->mm->context;
+}
+
+static inline bool kvmppc_preregistered(struct kvm_vcpu *vcpu)
+{
+	mm_context_t *mm = kvmppc_mm_context(vcpu);
+
+	if (unlikely(!mm))
+		return false;
+
+	return mm_iommu_preregistered(mm);
+}
+
+static struct mm_iommu_table_group_mem_t *kvmppc_rm_iommu_lookup(
+		struct kvm_vcpu *vcpu, unsigned long ua, unsigned long size)
+{
+	mm_context_t *mm = kvmppc_mm_context(vcpu);
+
+	if (unlikely(!mm))
+		return NULL;
+
+	return mm_iommu_lookup_rm(mm, ua, size);
+}
+
 /*
  * Finds a TCE table descriptor by LIOBN.
  *
@@ -181,8 +210,8 @@ long kvmppc_gpa_to_ua(struct kvm *kvm, unsigned long gpa,
 EXPORT_SYMBOL_GPL(kvmppc_gpa_to_ua);
 
 #ifdef CONFIG_KVM_BOOK3S_HV_POSSIBLE
-static long kvmppc_rm_tce_iommu_mapped_dec(struct iommu_table *tbl,
-		unsigned long entry)
+static long kvmppc_rm_tce_iommu_mapped_dec(struct kvm_vcpu *vcpu,
+		struct iommu_table *tbl, unsigned long entry)
 {
 	struct mm_iommu_table_group_mem_t *mem = NULL;
 	const unsigned long pgsize = 1ULL << tbl->it_page_shift;
@@ -195,7 +224,7 @@ static long kvmppc_rm_tce_iommu_mapped_dec(struct iommu_table *tbl,
 	if (!pua)
 		return H_SUCCESS;
 
-	mem = mm_iommu_lookup(*pua, pgsize);
+	mem = kvmppc_rm_iommu_lookup(vcpu, *pua, pgsize);
 	if (!mem)
 		return H_HARDWARE;
 
@@ -206,8 +235,8 @@ static long kvmppc_rm_tce_iommu_mapped_dec(struct iommu_table *tbl,
 	return H_SUCCESS;
 }
 
-static long kvmppc_rm_tce_iommu_unmap(struct iommu_table *tbl,
-		unsigned long entry)
+static long kvmppc_rm_tce_iommu_unmap(struct kvm_vcpu *vcpu,
+		struct iommu_table *tbl, unsigned long entry)
 {
 	enum dma_data_direction dir = DMA_NONE;
 	unsigned long hpa = 0;
@@ -218,22 +247,22 @@ static long kvmppc_rm_tce_iommu_unmap(struct iommu_table *tbl,
 	if (dir == DMA_NONE)
 		return H_SUCCESS;
 
-	return kvmppc_rm_tce_iommu_mapped_dec(tbl, entry);
+	return kvmppc_rm_tce_iommu_mapped_dec(vcpu, tbl, entry);
 }
 
-long kvmppc_rm_tce_iommu_map(struct kvm *kvm, struct iommu_table *tbl,
+long kvmppc_rm_tce_iommu_map(struct kvm_vcpu *vcpu, struct iommu_table *tbl,
 		unsigned long entry, unsigned long gpa,
 		enum dma_data_direction dir)
 {
-	unsigned long hpa, ua;
+	unsigned long hpa = 0, ua;
 	struct mm_iommu_table_group_mem_t *mem;
 	unsigned long *pua = IOMMU_TABLE_USERSPACE_ENTRY(tbl, entry);
 	long ret;
 
-	if (kvmppc_gpa_to_ua(kvm, gpa, &ua, NULL))
+	if (kvmppc_gpa_to_ua(vcpu->kvm, gpa, &ua, NULL))
 		return H_HARDWARE;
 
-	mem = mm_iommu_lookup(ua, 1ULL << tbl->it_page_shift);
+	mem = kvmppc_rm_iommu_lookup(vcpu, ua, 1ULL << tbl->it_page_shift);
 	if (!mem)
 		return H_HARDWARE;
 
@@ -254,7 +283,7 @@ long kvmppc_rm_tce_iommu_map(struct kvm *kvm, struct iommu_table *tbl,
 	}
 
 	if (dir != DMA_NONE)
-		kvmppc_rm_tce_iommu_mapped_dec(tbl, entry);
+		kvmppc_rm_tce_iommu_mapped_dec(vcpu, tbl, entry);
 
 	*pua = ua;
 
@@ -275,14 +304,14 @@ static long kvmppc_rm_h_put_tce_iommu(struct kvm_vcpu *vcpu,
 		if (iommu_tce_clear_param_check(tbl, ioba, 0, 1))
 			return H_PARAMETER;
 
-		return kvmppc_rm_tce_iommu_unmap(tbl, entry);
+		return kvmppc_rm_tce_iommu_unmap(vcpu, tbl, entry);
 	}
 
 	/* Put TCE */
 	if (iommu_tce_put_param_check(tbl, ioba, gpa))
 		return H_PARAMETER;
 
-	return kvmppc_rm_tce_iommu_map(vcpu->kvm, tbl, entry, gpa, dir);
+	return kvmppc_rm_tce_iommu_map(vcpu, tbl, entry, gpa, dir);
 }
 
 static long kvmppc_rm_h_put_tce_indirect_iommu(struct kvm_vcpu *vcpu,
@@ -305,7 +334,7 @@ static long kvmppc_rm_h_put_tce_indirect_iommu(struct kvm_vcpu *vcpu,
 		tce = be64_to_cpu(tces[i]);
 		gpa = tce & ~(TCE_PCI_READ | TCE_PCI_WRITE);
 
-		ret = kvmppc_rm_tce_iommu_map(vcpu->kvm, tbl, entry + i, gpa,
+		ret = kvmppc_rm_tce_iommu_map(vcpu, tbl, entry + i, gpa,
 				iommu_tce_direction(tce));
 		if (ret)
 			return ret;
@@ -326,7 +355,7 @@ static long kvmppc_rm_h_stuff_tce_iommu(struct kvm_vcpu *vcpu,
 		return H_PARAMETER;
 
 	for (i = 0; i < npages; ++i)
-		kvmppc_rm_tce_iommu_unmap(tbl, entry + i);
+		kvmppc_rm_tce_iommu_unmap(vcpu, tbl, entry + i);
 
 	return H_SUCCESS;
 }
@@ -421,7 +450,7 @@ long kvmppc_rm_h_put_tce_indirect(struct kvm_vcpu *vcpu,
 	if (ret)
 		return ret;
 
-	if (mm_iommu_preregistered()) {
+	if (kvmppc_preregistered(vcpu)) {
 		/*
 		 * We get here if guest memory was pre-registered which
 		 * is normally VFIO case and gpa->hpa translation does not
@@ -433,7 +462,7 @@ long kvmppc_rm_h_put_tce_indirect(struct kvm_vcpu *vcpu,
 		if (kvmppc_gpa_to_ua(vcpu->kvm, tce_list, &ua, NULL))
 			return H_TOO_HARD;
 
-		mem = mm_iommu_lookup(ua, IOMMU_PAGE_SIZE_4K);
+		mem = kvmppc_rm_iommu_lookup(vcpu, ua, IOMMU_PAGE_SIZE_4K);
 		if (!mem || mm_iommu_rm_ua_to_hpa(mem, ua, &tces))
 			return H_TOO_HARD;
 
@@ -503,8 +532,8 @@ long kvmppc_rm_h_stuff_tce(struct kvm_vcpu *vcpu,
 	list_for_each_entry_rcu_notrace(kg, &stt->groups, next) {
 		if (!kg->tbl)
 			continue;
-		ret = kvmppc_rm_h_stuff_tce_iommu(vcpu, kg->tbl, liobn, ioba,
-				tce_value, npages);
+		ret = kvmppc_rm_h_stuff_tce_iommu(vcpu, kg->tbl,
+				liobn, ioba, tce_value, npages);
 		if (ret)
 			return ret;
 	}
