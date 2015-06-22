@@ -207,8 +207,8 @@ static inline void gov_cancel_work(struct dbs_data *dbs_data,
 }
 
 /* Will return if we need to evaluate cpu load again or not */
-bool need_load_eval(struct cpu_common_dbs_info *ccdbs,
-		    unsigned int sampling_rate)
+static bool need_load_eval(struct cpu_common_dbs_info *ccdbs,
+			   unsigned int sampling_rate)
 {
 	if (policy_is_shared(ccdbs->policy)) {
 		ktime_t time_now = ktime_get();
@@ -223,7 +223,37 @@ bool need_load_eval(struct cpu_common_dbs_info *ccdbs,
 
 	return true;
 }
-EXPORT_SYMBOL_GPL(need_load_eval);
+
+static void dbs_timer(struct work_struct *work)
+{
+	struct cpu_dbs_info *cdbs = container_of(work, struct cpu_dbs_info,
+						 dwork.work);
+	struct cpu_common_dbs_info *ccdbs = cdbs->ccdbs;
+	struct cpufreq_policy *policy = ccdbs->policy;
+	struct dbs_data *dbs_data = policy->governor_data;
+	unsigned int sampling_rate, delay;
+	bool modify_all = true;
+
+	mutex_lock(&ccdbs->timer_mutex);
+
+	if (dbs_data->cdata->governor == GOV_CONSERVATIVE) {
+		struct cs_dbs_tuners *cs_tuners = dbs_data->tuners;
+
+		sampling_rate = cs_tuners->sampling_rate;
+	} else {
+		struct od_dbs_tuners *od_tuners = dbs_data->tuners;
+
+		sampling_rate = od_tuners->sampling_rate;
+	}
+
+	if (!need_load_eval(cdbs->ccdbs, sampling_rate))
+		modify_all = false;
+
+	delay = dbs_data->cdata->gov_dbs_timer(cdbs, dbs_data, modify_all);
+	gov_queue_work(dbs_data, policy, delay, modify_all);
+
+	mutex_unlock(&ccdbs->timer_mutex);
+}
 
 static void set_sampling_rate(struct dbs_data *dbs_data,
 		unsigned int sampling_rate)
@@ -411,7 +441,7 @@ static int cpufreq_governor_start(struct cpufreq_policy *policy,
 		if (ignore_nice)
 			j_cdbs->prev_cpu_nice = kcpustat_cpu(j).cpustat[CPUTIME_NICE];
 
-		INIT_DEFERRABLE_WORK(&j_cdbs->dwork, cdata->gov_dbs_timer);
+		INIT_DEFERRABLE_WORK(&j_cdbs->dwork, dbs_timer);
 	}
 
 	if (cdata->governor == GOV_CONSERVATIVE) {
