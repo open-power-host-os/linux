@@ -8,6 +8,7 @@
 
 #include "debug.h"
 #include "symbol.h"
+#include "probe-event.h"
 
 #ifdef HAVE_LIBELF_SUPPORT
 bool elf__needs_adjust_symbols(GElf_Ehdr ehdr)
@@ -23,4 +24,11 @@ void arch__elf_sym_adjust(GElf_Sym *sym)
 	sym->st_value += PPC64_LOCAL_ENTRY_OFFSET(sym->st_other);
 }
 #endif
+#endif
+
+#if defined(_CALL_ELF) && _CALL_ELF == 2
+bool arch__prefers_symtab(void)
+{
+	return true;
+}
 #endif
