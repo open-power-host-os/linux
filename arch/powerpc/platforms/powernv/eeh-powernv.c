@@ -1528,11 +1528,12 @@ static int pnv_eeh_next_error(struct eeh_pe **pe)
 				be64_to_cpu(frozen_pe_no), pe)) {
 				/* Try best to clear it */
 				pr_info("EEH: Clear non-existing PHB#%x-PE#%llx\n",
-					hose->global_number, frozen_pe_no);
+					hose->global_number,
+					be64_to_cpu(frozen_pe_no));
 				pr_info("EEH: PHB location: %s\n",
 					eeh_pe_loc_get(phb_pe));
 				opal_pci_eeh_freeze_clear(phb->opal_id,
-					frozen_pe_no,
+					be64_to_cpu(frozen_pe_no),
 					OPAL_EEH_ACTION_CLEAR_FREEZE_ALL);
 				ret = EEH_NEXT_ERR_NONE;
 			} else if ((*pe)->state & EEH_PE_ISOLATED ||
