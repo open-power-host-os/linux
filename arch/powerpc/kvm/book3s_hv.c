@@ -81,9 +81,9 @@ static DECLARE_BITMAP(default_enabled_hcalls, MAX_HCALL_OPCODE/4 + 1);
 #define MPP_BUFFER_ORDER	3
 #endif
 
-static int dynamic_split_modes = 6;
-module_param(dynamic_split_modes, int, S_IRUGO | S_IWUSR);
-MODULE_PARM_DESC(dynamic_split_modes, "Set of allowed dynamic split-core modes");
+static int dynamic_mt_modes = 6;
+module_param(dynamic_mt_modes, int, S_IRUGO | S_IWUSR);
+MODULE_PARM_DESC(dynamic_mt_modes, "Set of allowed dynamic micro-threading modes");
 static int target_smt_mode;
 module_param(target_smt_mode, int, S_IRUGO | S_IWUSR);
 MODULE_PARM_DESC(target_smt_mode, "Target threads per core (0 = max)");
@@ -2042,9 +2042,9 @@ static bool subcore_config_ok(int n_subcores, int n_threads)
 	if (n_subcores > MAX_SUBCORES)
 		return false;
 	if (n_subcores > 1) {
-		if (!(dynamic_split_modes & 2))
+		if (!(dynamic_mt_modes & 2))
 			n_subcores = 4;
-		if (n_subcores > 2 && !(dynamic_split_modes & 4))
+		if (n_subcores > 2 && !(dynamic_mt_modes & 4))
 			return false;
 	}
 
@@ -2427,14 +2427,14 @@ static noinline void kvmppc_run_core(struct kvmppc_vcore *vc)
 	if (vc->num_threads < target_threads)
 		collect_piggybacks(&core_info, target_threads);
 
-	/* Decide on split-core mode */
+	/* Decide on micro-threading (split-core) mode */
 	subcore_size = threads_per_subcore;
 	cmd_bit = stat_bit = 0;
 	split = core_info.n_subcores;
 	sip = NULL;
 	if (split > 1) {
 		/* threads_per_subcore must be MAX_THREADS (8) here */
-		if (split == 2 && (dynamic_split_modes & 2)) {
+		if (split == 2 && (dynamic_mt_modes & 2)) {
 			cmd_bit = HID0_POWER8_1TO2LPAR;
 			stat_bit = HID0_POWER8_2LPARMODE;
 		} else {
@@ -2460,7 +2460,7 @@ static noinline void kvmppc_run_core(struct kvmppc_vcore *vc)
 	for (thr = 0; thr < threads_per_subcore; ++thr)
 		paca[pcpu + thr].kvm_hstate.kvm_split_mode = sip;
 
-	/* Initiate split-core if required */
+	/* Initiate micro-threading (split-core) if required */
 	if (cmd_bit) {
 		unsigned long hid0 = mfspr(SPRN_HID0);
 
@@ -2506,7 +2506,7 @@ static noinline void kvmppc_run_core(struct kvmppc_vcore *vc)
 		}
 	}
 	/*
-	 * When doing split-core, poke the inactive threads as well.
+	 * When doing micro-threading, poke the inactive threads as well.
 	 * This gets them to the nap instruction after kvm_do_nap,
 	 * which reduces the time taken to unsplit later.
 	 */
