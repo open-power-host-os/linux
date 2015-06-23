@@ -267,7 +267,7 @@ void kvmhv_commence_exit(int trap)
 		kvmhv_interrupt_vcore(vc, ee & ~(1 << ptid));
 
 	/*
-	 * If we are doing dynamic split-core, interrupt the other
+	 * If we are doing dynamic micro-threading, interrupt the other
 	 * subcores to pull them out of their guests too.
 	 */
 	if (!sip)

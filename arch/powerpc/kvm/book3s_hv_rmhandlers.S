@@ -337,7 +337,7 @@ kvm_secondary_got_guest:
 	lis	r6, 0x7fff
 	ori	r6, r6, 0xffff
 	mtspr	SPRN_HDEC, r6
-	/* and set per-LPAR registers, if doing dynamic split-core */
+	/* and set per-LPAR registers, if doing dynamic micro-threading */
 	ld	r6, HSTATE_SPLIT_MODE(r13)
 	cmpdi	r6, 0
 	beq	63f
@@ -430,7 +430,7 @@ END_FTR_SECTION_IFSET(CPU_FTR_ARCH_207S)
 	ld	r3, HSTATE_SPLIT_MODE(r13)
 	li	r0, 1
 	lhz	r4, PACAPACAINDEX(r13)
-	clrldi	r4, r4, 61		/* split mode => P8 => 8 threads/core */
+	clrldi	r4, r4, 61	/* micro-threading => P8 => 8 threads/core */
 	addi	r4, r4, KVM_SPLIT_NAPPED
 	stbx	r0, r3, r4
 	/* Check the do_nap flag again after setting napped[] */
