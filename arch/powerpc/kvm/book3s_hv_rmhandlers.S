@@ -1629,6 +1629,11 @@ kvmhv_switch_to_host:
 	bne	15b
 	isync
 
+	/* Did we actually switch to the guest at all? */
+	lbz	r6, VCORE_IN_GUEST(r5)
+	cmpwi	r6, 0
+	beq	19f
+
 	/* Primary thread switches back to host partition */
 	ld	r6,KVM_HOST_SDR1(r4)
 	lwz	r7,KVM_HOST_LPID(r4)
@@ -1672,7 +1677,7 @@ END_FTR_SECTION_IFSET(CPU_FTR_ARCH_207S)
 18:
 	/* Signal secondary CPUs to continue */
 	stb	r0,VCORE_IN_GUEST(r5)
-	lis	r8,0x7fff		/* MAX_INT@h */
+19:	lis	r8,0x7fff		/* MAX_INT@h */
 	mtspr	SPRN_HDEC,r8
 
 16:	ld	r8,KVM_HOST_LPCR(r4)
