@@ -413,9 +413,9 @@ static bool epow_exclude(int epow_event)
 	switch (epow_event) {
 	case EPOW_SYSPOWER_CHNG:
 		return true;
-	case EPOW_SYSPOWER_INCL:
+	case EPOW_SYSPOWER_FAIL:
 		return true;
-	case EPOW_SYSPOWER_UPS:
+	case EPOW_SYSPOWER_INCL:
 		return true;
 	case EPOW_SYSTEMP_HMD:
 		return true;
