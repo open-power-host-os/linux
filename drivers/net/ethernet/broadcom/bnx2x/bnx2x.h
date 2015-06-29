@@ -1815,7 +1815,7 @@ struct bnx2x {
 	int			stats_state;
 
 	/* used for synchronization of concurrent threads statistics handling */
-	spinlock_t		stats_lock;
+	struct mutex		stats_lock;
 
 	/* used by dmae command loader */
 	struct dmae_command	stats_dmae;
@@ -1939,8 +1939,6 @@ struct bnx2x {
 
 	int fp_array_size;
 	u32 dump_preset_idx;
-	bool					stats_started;
-	struct semaphore			stats_sema;
 
 	u8					phys_port_id[ETH_ALEN];
 
