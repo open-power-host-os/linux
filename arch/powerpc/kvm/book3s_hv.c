@@ -1859,7 +1859,7 @@ static void kvmppc_start_thread(struct kvm_vcpu *vcpu, struct kvmppc_vcore *vc)
 		kvmppc_ipi_thread(cpu);
 }
 
-static void kvmppc_wait_for_nap(void)
+static long kvmppc_wait_for_nap(void)
 {
 	int cpu = smp_processor_id();
 	int i, loops;
@@ -1876,7 +1876,7 @@ static void kvmppc_wait_for_nap(void)
 				break;
 		if (i == threads_per_subcore) {
 			HMT_medium();
-			return;
+			return 0;
 		}
 		HMT_low();
 	}
@@ -1884,6 +1884,7 @@ static void kvmppc_wait_for_nap(void)
 	for (i = 1; i < threads_per_subcore; ++i)
 		if (paca[cpu + i].kvm_hstate.kvm_vcore)
 			pr_err("KVM: CPU %d seems to be stuck\n", cpu + i);
+	return -1;
 }
 
 /*
@@ -2269,7 +2270,8 @@ static void collect_piggybacks(struct core_info *cip, int target_threads)
 	spin_unlock(&lp->lock);
 }
 
-static void post_guest_process(struct kvmppc_vcore *vc, bool is_master)
+static void post_guest_process(struct kvmppc_vcore *vc, bool is_master,
+			       long nap_timeout)
 {
 	int still_running = 0;
 	u64 now;
@@ -2286,6 +2288,10 @@ static void post_guest_process(struct kvmppc_vcore *vc, bool is_master)
 			kvmppc_core_dequeue_dec(vcpu);
 
 		trace_kvm_guest_exit(vcpu);
+
+		if (nap_timeout)
+			pr_err("Guest exit vcore %p vcpu %p trap=%x\n",
+			       vc, vcpu, vcpu->arch.trap);
 
 		ret = RESUME_GUEST;
 		if (vcpu->arch.trap)
@@ -2364,6 +2370,35 @@ static inline void kvmppc_set_host_core(int cpu)
 	kvmppc_host_rm_ops_hv->rm_core[core].rm_state.in_host = 1;
 }
 
+static void dump_vcores(struct core_info *cip)
+{
+	int i, j;
+	struct kvmppc_vcore *vc;
+	struct paca_struct *pp;
+
+	pp = local_paca;
+	for (i = 0; i < 8; ++i) {
+		pr_err("thread %d: ptid=%d c=%p v=%p\n", i,
+		       pp->kvm_hstate.ptid, pp->kvm_hstate.kvm_vcore,
+		       pp->kvm_hstate.kvm_vcpu);
+		++pp;
+	}
+	pr_err("core_info: %d subcores, %d threads, mst=%d, st=%d %d %d %d\n",
+	       cip->n_subcores, cip->total_threads, cip->max_subcore_threads,
+	       cip->subcore_threads[0], cip->subcore_threads[1],
+	       cip->subcore_threads[2], cip->subcore_threads[3]);
+	for (i = 0; i < cip->n_subcores; ++i) {
+		j = 0;
+		list_for_each_entry(vc, &cip->vcs[i], preempt_list) {
+			pr_err("[%d,%d] vc=%p %d/%d fv=%d pcpu=%d tbo=%lld\n",
+			       i, j, vc, vc->n_runnable, vc->num_threads,
+			       vc->first_vcpuid, vc->pcpu, vc->tb_offset);
+			++j;
+		}
+	}
+	pr_err("--------\n");
+}
+
 /*
  * Run a set of guest threads on a physical core.
  * Called with vc->lock held.
@@ -2382,6 +2417,8 @@ static noinline void kvmppc_run_core(struct kvmppc_vcore *vc)
 	unsigned long cmd_bit, stat_bit;
 	int pcpu, thr;
 	int target_threads;
+	u64 tb_before, tb_after;
+	long nap_timeout;
 
 	/*
 	 * Remove from the list any threads that have a signal pending
@@ -2519,6 +2556,7 @@ static noinline void kvmppc_run_core(struct kvmppc_vcore *vc)
 	preempt_disable();
 
 	trace_kvmppc_run_core(vc, 0);
+	tb_before = mftb();
 
 	for (sub = 0; sub < core_info.n_subcores; ++sub)
 		list_for_each_entry(pvc, &core_info.vcs[sub], preempt_list)
@@ -2541,15 +2579,24 @@ static noinline void kvmppc_run_core(struct kvmppc_vcore *vc)
 	spin_lock(&vc->lock);
 	/* prevent other vcpu threads from doing kvmppc_start_thread() now */
 	vc->vcore_state = VCORE_EXITING;
+	tb_after = mftb();
+	if (tb_after < tb_before || tb_after > tb_before + 2000000000) {
+		pr_err("TB ERROR on guest exit, before=%lld after=%lld\n",
+		       tb_before, tb_after);
+		dump_vcores(&core_info);
+	}
 
 	/* wait for secondary threads to finish writing their state to memory */
-	kvmppc_wait_for_nap();
+	nap_timeout = kvmppc_wait_for_nap();
+	if (nap_timeout)
+		dump_vcores(&core_info);
 
 	/* Return to whole-core mode if we split the core earlier */
 	if (split > 1) {
 		unsigned long hid0 = mfspr(SPRN_HID0);
 		unsigned long loops = 0;
 
+		tb_before = mftb();
 		hid0 &= ~HID0_POWER8_DYNLPARDIS;
 		stat_bit = HID0_POWER8_2LPARMODE | HID0_POWER8_4LPARMODE;
 		mb();
@@ -2563,6 +2610,12 @@ static noinline void kvmppc_run_core(struct kvmppc_vcore *vc)
 			++loops;
 		}
 		split_info.do_nap = 0;
+		if (nap_timeout) {
+			tb_after = mftb();
+			tb_after -= tb_before;
+			if (tb_after > 50*512)
+				pr_err("Slow unsplit: %lld us\n", tb_after/512);
+		}
 	}
 
 	/* Let secondaries go back to the offline loop */
@@ -2583,7 +2636,7 @@ static noinline void kvmppc_run_core(struct kvmppc_vcore *vc)
 	for (sub = 0; sub < core_info.n_subcores; ++sub)
 		list_for_each_entry_safe(pvc, vcnext, &core_info.vcs[sub],
 					 preempt_list)
-			post_guest_process(pvc, pvc == vc);
+			post_guest_process(pvc, pvc == vc, nap_timeout);
 
 	spin_lock(&vc->lock);
 	preempt_enable();
