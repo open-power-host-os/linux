@@ -3100,6 +3100,7 @@ static struct notifier_block kvmppc_cpu_notifier = {
  * real mode KVM and CPU running in the host.
  * This is only done for the first VM.
  * The allocated structure stays even if all VMs have stopped.
+ * It is only freed when the kvm-hv module is unloaded.
  * It's OK for this routine to fail, we just don't support host
  * core operations like redirecting H_IPI wakeups.
  */
@@ -3413,6 +3414,12 @@ static int kvmppc_book3s_init_hv(void)
 
 static void kvmppc_book3s_exit_hv(void)
 {
+	if (kvmppc_host_rm_ops_hv) {
+		unregister_cpu_notifier(&kvmppc_cpu_notifier);
+		kfree(kvmppc_host_rm_ops_hv->rm_core);
+		kfree(kvmppc_host_rm_ops_hv);
+		kvmppc_host_rm_ops_hv = NULL;
+	}
 	kvmppc_hv_ops = NULL;
 }
 
