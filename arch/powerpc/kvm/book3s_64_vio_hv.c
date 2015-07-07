@@ -44,35 +44,6 @@
 
 #define TCES_PER_PAGE	(PAGE_SIZE / sizeof(u64))
 
-static mm_context_t *kvmppc_mm_context(struct kvm_vcpu *vcpu)
-{
-	if (unlikely(!vcpu->arch.run_task || !vcpu->arch.run_task->mm))
-		return NULL;
-
-	return &vcpu->arch.run_task->mm->context;
-}
-
-static inline bool kvmppc_preregistered(struct kvm_vcpu *vcpu)
-{
-	mm_context_t *mm = kvmppc_mm_context(vcpu);
-
-	if (unlikely(!mm))
-		return false;
-
-	return mm_iommu_preregistered(mm);
-}
-
-static struct mm_iommu_table_group_mem_t *kvmppc_rm_iommu_lookup(
-		struct kvm_vcpu *vcpu, unsigned long ua, unsigned long size)
-{
-	mm_context_t *mm = kvmppc_mm_context(vcpu);
-
-	if (unlikely(!mm))
-		return NULL;
-
-	return mm_iommu_lookup_rm(mm, ua, size);
-}
-
 /*
  * Finds a TCE table descriptor by LIOBN.
  *
@@ -210,6 +181,38 @@ long kvmppc_gpa_to_ua(struct kvm *kvm, unsigned long gpa,
 EXPORT_SYMBOL_GPL(kvmppc_gpa_to_ua);
 
 #ifdef CONFIG_KVM_BOOK3S_HV_POSSIBLE
+static mm_context_t *kvmppc_mm_context(struct kvm_vcpu *vcpu)
+{
+	struct task_struct *task;
+
+	task = vcpu->arch.run_task;
+	if (unlikely(!task || !task->mm))
+		return NULL;
+
+	return &task->mm->context;
+}
+
+static inline bool kvmppc_preregistered(struct kvm_vcpu *vcpu)
+{
+	mm_context_t *mm = kvmppc_mm_context(vcpu);
+
+	if (unlikely(!mm))
+		return false;
+
+	return mm_iommu_preregistered(mm);
+}
+
+static struct mm_iommu_table_group_mem_t *kvmppc_rm_iommu_lookup(
+		struct kvm_vcpu *vcpu, unsigned long ua, unsigned long size)
+{
+	mm_context_t *mm = kvmppc_mm_context(vcpu);
+
+	if (unlikely(!mm))
+		return NULL;
+
+	return mm_iommu_lookup_rm(mm, ua, size);
+}
+
 static long kvmppc_rm_tce_iommu_mapped_dec(struct kvm_vcpu *vcpu,
 		struct iommu_table *tbl, unsigned long entry)
 {
