@@ -2759,9 +2759,19 @@ lpfc_sli4_node_prep(struct lpfc_hba *phba)
 			list_for_each_entry_safe(ndlp, next_ndlp,
 						 &vports[i]->fc_nodes,
 						 nlp_listp) {
-				if (NLP_CHK_NODE_ACT(ndlp))
+				if (NLP_CHK_NODE_ACT(ndlp)) {
 					ndlp->nlp_rpi =
 						lpfc_sli4_alloc_rpi(phba);
+					lpfc_printf_vlog(ndlp->vport, KERN_INFO,
+							 LOG_NODE,
+							 "0009 rpi:%x DID:%x "
+							 "flg:%x map:%x %p\n",
+							 ndlp->nlp_rpi,
+							 ndlp->nlp_DID,
+							 ndlp->nlp_flag,
+							 ndlp->nlp_usg_map,
+							 ndlp);
+				}
 			}
 		}
 	}
@@ -2925,8 +2935,18 @@ lpfc_offline_prep(struct lpfc_hba *phba, int mbx_action)
 				 * RPI. Get a new RPI when the adapter port
 				 * comes back online.
 				 */
-				if (phba->sli_rev == LPFC_SLI_REV4)
+				if (phba->sli_rev == LPFC_SLI_REV4) {
+					lpfc_printf_vlog(ndlp->vport,
+							 KERN_INFO, LOG_NODE,
+							 "0011 lpfc_offline: "
+							 "ndlp:x%p did %x "
+							 "usgmap:x%x rpi:%x\n",
+							 ndlp, ndlp->nlp_DID,
+							 ndlp->nlp_usg_map,
+							 ndlp->nlp_rpi);
+
 					lpfc_sli4_free_rpi(phba, ndlp->nlp_rpi);
+				}
 				lpfc_unreg_rpi(vports[i], ndlp);
 			}
 		}
@@ -3241,12 +3261,17 @@ lpfc_create_port(struct lpfc_hba *phba, int instance, struct device *dev)
 	struct Scsi_Host  *shost;
 	int error = 0;
 
-	if (dev != &phba->pcidev->dev)
+	if (dev != &phba->pcidev->dev) {
 		shost = scsi_host_alloc(&lpfc_vport_template,
 					sizeof(struct lpfc_vport));
-	else
-		shost = scsi_host_alloc(&lpfc_template,
+	} else {
+		if (phba->sli_rev == LPFC_SLI_REV4)
+			shost = scsi_host_alloc(&lpfc_template,
 					sizeof(struct lpfc_vport));
+		else
+			shost = scsi_host_alloc(&lpfc_template_s3,
+					sizeof(struct lpfc_vport));
+	}
 	if (!shost)
 		goto out;
 
@@ -7647,6 +7672,14 @@ lpfc_sli4_queue_setup(struct lpfc_hba *phba)
 			goto out_destroy_els_rq;
 		}
 	}
+
+	/*
+	 * Configure EQ delay multipier for interrupt coalescing using
+	 * MODIFY_EQ_DELAY for all EQs created, LPFC_MAX_EQ_DELAY at a time.
+	 */
+	for (fcp_eqidx = 0; fcp_eqidx < phba->cfg_fcp_io_channel;
+			fcp_eqidx += LPFC_MAX_EQ_DELAY)
+		lpfc_modify_fcp_eq_delay(phba, fcp_eqidx);
 	return 0;
 
 out_destroy_els_rq:
@@ -7953,7 +7986,7 @@ wait:
 		 * up to 30 seconds. If the port doesn't respond, treat
 		 * it as an error.
 		 */
-		for (rdy_chk = 0; rdy_chk < 3000; rdy_chk++) {
+		for (rdy_chk = 0; rdy_chk < 1500; rdy_chk++) {
 			if (lpfc_readl(phba->sli4_hba.u.if_type2.
 				STATUSregaddr, &reg_data.word0)) {
 				rc = -ENODEV;

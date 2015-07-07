@@ -14,11 +14,13 @@
 #include <asm/kvm_book3s.h>
 #include <asm/kvm_ppc.h>
 #include <asm/hvcall.h>
+#include <asm/io.h>
 #include <asm/xics.h>
 #include <asm/debug.h>
 #include <asm/synch.h>
 #include <asm/cputhreads.h>
 #include <asm/ppc-opcode.h>
+#include <asm/pnv-pci.h>
 
 #include "book3s_xics.h"
 
@@ -699,4 +701,172 @@ int kvmppc_rm_h_eoi(struct kvm_vcpu *vcpu, unsigned long xirr)
 	}
  bail:
 	return check_too_hard(xics, icp);
+}
+
+unsigned long eoi_rc;
+
+static noinline void icp_eoi(u32 xirr, struct irq_data *d)
+{
+	unsigned long xics_phys;
+	int64_t rc;
+
+	rc = pnv_opal_pci_msi_eoi(d);
+
+	if (rc)
+		eoi_rc = rc;
+
+	iosync();
+
+	/* EOI it */
+	xics_phys = local_paca->kvm_hstate.xics_phys;
+	_stwcix(xics_phys + XICS_XIRR, xirr);
+}
+
+static noinline long deliver_irq_passthru(struct kvm_vcpu *vcpu,
+				 u32 xirr,
+				 struct kvmppc_irq_map *irq_map)
+{
+	struct kvmppc_xics *xics;
+	struct kvmppc_icp *icp;
+	u32 irq;
+
+	irq = irq_map->v_hwirq;
+	xics = vcpu->kvm->arch.xics;
+	icp = vcpu->arch.icp;
+
+	icp_rm_deliver_irq(xics, icp, irq);
+
+	/* EOI the interrupt */
+	icp_eoi(xirr, irq_map->irq_data);
+
+	if (check_too_hard(xics, icp) == H_TOO_HARD)
+		return 2;
+	else
+		return -2;
+}
+
+static inline struct kvmppc_irq_map *get_irqmap(
+				struct kvmppc_passthru_map *pmap, u32 xisr)
+{
+	int i;
+
+	for (i = 0; i < pmap->n_hwirq; i++)  {
+		if (xisr == pmap->irq_map[i].r_hwirq)
+			return &pmap->irq_map[i];
+	}
+	return NULL;
+}
+
+/*
+ * Determine what sort of external interrupt is pending (if any).
+ * Returns:
+ *	0 if no interrupt is pending
+ *	1 if an interrupt is pending that needs to be handled by the host
+ *	2 Passthrough that needs completion in the host
+ *	-1 if there was a guest wakeup IPI (which has now been cleared)
+ *	-2 if there is PCI passthrough external interrupt that was handled
+ */
+
+long kvmppc_read_intr(struct kvm_vcpu *vcpu, int path)
+{
+	unsigned long xics_phys;
+	u32 h_xirr, xirr;
+	u32 xisr;
+	struct kvmppc_passthru_map *pmap;
+	struct kvmppc_irq_map *irq_map;
+	int r;
+	u8 host_ipi;
+
+	/* see if a host IPI is pending */
+	host_ipi = local_paca->kvm_hstate.host_ipi;
+	if (host_ipi)
+		return 1;
+
+	/* Now read the interrupt from the ICP */
+	xics_phys = local_paca->kvm_hstate.xics_phys;
+	if (unlikely(!xics_phys))
+		return 1;
+
+	/*
+	 * Save XIRR for later. Since we get control in reverse endian
+	 * on LE systems, save it byte reversed and fetch it back in
+	 * host endian. Note that xirr is the value read from the
+	 * XIRR register, while h_xirr is the host endian version.
+	 */
+	xirr = _lwzcix(xics_phys + XICS_XIRR);
+#ifdef __LITTLE_ENDIAN__
+	st_le32(&local_paca->kvm_hstate.saved_xirr, xirr);
+	h_xirr = local_paca->kvm_hstate.saved_xirr;
+#else
+	h_xirr = xirr;
+#endif
+	xisr = h_xirr & 0xffffff;
+	/*
+	 * Ensure that the store/load complete to guarantee all side
+	 * effects of loading from XIRR has completed
+	 */
+	smp_mb();
+
+	/* if nothing pending in the ICP */
+	if (!xisr)
+		return 0;
+
+	/* We found something in the ICP...
+	 *
+	 * If it is an IPI, clear the MFRR and EOI it.
+	 */
+	if (xisr == XICS_IPI) {
+		_stbcix(xics_phys + XICS_MFRR, 0xff);
+		_stwcix(xics_phys + XICS_XIRR, xirr);
+		/*
+		 * Need to ensure side effects of above stores
+		 * complete before proceeding.
+		 */
+		smp_mb();
+
+		/*
+		 * We need to re-check host IPI now in case it got set in the
+		 * meantime. If it's clear, we bounce the interrupt to the
+		 * guest
+		 */
+		host_ipi = local_paca->kvm_hstate.host_ipi;
+		if (unlikely(host_ipi != 0)) {
+			/* We raced with the host,
+			 * we need to resend that IPI, bummer
+			 */
+			_stbcix(xics_phys + XICS_MFRR, IPI_PRIORITY);
+			/* Let side effects complete */
+			smp_mb();
+			return 1;
+		}
+
+		/* OK, it's an IPI for us */
+		return -1;
+	}
+
+	/*
+	 * If it's not an IPI, check if we have a passthrough adapter and
+	 * if so, check if this external interrupt is for the adapter.
+	 * We will attempt to deliver the IRQ directly to the target VCPU's
+	 * ICP, the virtual ICP (based on affinity - the xive value in ICS).
+	 *
+	 * If the delivery fails or if this is not for a passthrough adapter,
+	 * return to the host to handle this interrupt. We earlier
+	 * saved a copy of the XIRR in the PACA, it will be picked up by
+	 * the host ICP driver
+	 */
+	if (vcpu) {
+		pmap = vcpu->kvm->arch.pmap;
+		if (pmap && likely(__arch_spin_trylock(&pmap->lock) == 0)) {
+			irq_map = get_irqmap(pmap, xisr);
+			if (irq_map) {
+				r = deliver_irq_passthru(vcpu, xirr, irq_map);
+				arch_spin_unlock(&pmap->lock);
+				return r;
+			}
+			arch_spin_unlock(&pmap->lock);
+		}
+	}
+
+	return 1;
 }

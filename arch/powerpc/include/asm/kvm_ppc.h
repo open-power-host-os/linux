@@ -231,6 +231,7 @@ extern int kvmppc_xics_get_xive(struct kvm *kvm, u32 irq, u32 *server,
 				u32 *priority);
 extern int kvmppc_xics_int_on(struct kvm *kvm, u32 irq);
 extern int kvmppc_xics_int_off(struct kvm *kvm, u32 irq);
+extern int kvmppc_xics_rm_complete(struct kvm_vcpu *vcpu, u32 hcall);
 
 void kvmppc_core_dequeue_debug(struct kvm_vcpu *vcpu);
 void kvmppc_core_queue_debug(struct kvm_vcpu *vcpu);

@@ -812,7 +812,7 @@ static noinline int kvmppc_h_eoi(struct kvm_vcpu *vcpu, unsigned long xirr)
 	return H_SUCCESS;
 }
 
-static noinline int kvmppc_xics_rm_complete(struct kvm_vcpu *vcpu, u32 hcall)
+int kvmppc_xics_rm_complete(struct kvm_vcpu *vcpu, u32 hcall)
 {
 	struct kvmppc_xics *xics = vcpu->kvm->arch.xics;
 	struct kvmppc_icp *icp = vcpu->arch.icp;
@@ -841,6 +841,7 @@ static noinline int kvmppc_xics_rm_complete(struct kvm_vcpu *vcpu, u32 hcall)
 
 	return H_SUCCESS;
 }
+EXPORT_SYMBOL_GPL(kvmppc_xics_rm_complete);
 
 int kvmppc_xics_hcall(struct kvm_vcpu *vcpu, u32 req)
 {
@@ -892,6 +893,21 @@ EXPORT_SYMBOL_GPL(kvmppc_xics_hcall);
 
 /* -- Initialisation code etc. -- */
 
+static void xics_debugfs_irqmap(struct seq_file *m,
+				struct kvmppc_passthru_map *pmap)
+{
+	int i;
+
+	if (!pmap)
+		return;
+	seq_printf(m, "========\nPMAP state: %d maps\n===========\n",
+				pmap->n_hwirq);
+	for (i = 0; i < pmap->n_hwirq; i++)  {
+		seq_printf(m, "r_hwirq=%lx, v_hwirq=%lx\n",
+			pmap->irq_map[i].r_hwirq, pmap->irq_map[i].v_hwirq);
+	}
+}
+
 static int xics_debug_show(struct seq_file *m, void *private)
 {
 	struct kvmppc_xics *xics = m->private;
@@ -912,6 +928,8 @@ static int xics_debug_show(struct seq_file *m, void *private)
 	t_rm_reject = 0;
 	t_check_resend = 0;
 	t_reject = 0;
+
+	xics_debugfs_irqmap(m, kvm->arch.pmap);
 
 	seq_printf(m, "=========\nICP state\n=========\n");
 

@@ -144,12 +144,26 @@ power7_enter_nap_mode:
 	bge	cr3,2f
 	IDLE_STATE_ENTER_SEQ(PPC_NAP)
 	/* No return */
+
+core_idle_lock_held_entry:
+       HMT_LOW
+core_idle_lock_loop_entry:
+       lwz     r15,0(r14)
+       andi.   r9,r15,PNV_CORE_IDLE_LOCK_BIT
+       bne     core_idle_lock_loop_entry
+       HMT_MEDIUM
+       b       lwarx_loop1
+
 2:
 	/* Sleep or winkle */
 	lbz	r7,PACA_THREAD_MASK(r13)
 	ld	r14,PACA_CORE_IDLE_STATE_PTR(r13)
 lwarx_loop1:
 	lwarx	r15,0,r14
+
+	andi.   r9,r15,PNV_CORE_IDLE_LOCK_BIT
+	bne     core_idle_lock_held_entry
+
 	andc	r15,r15,r7			/* Clear thread bit */
 
 	andi.	r15,r15,PNV_CORE_IDLE_THREAD_BITS
