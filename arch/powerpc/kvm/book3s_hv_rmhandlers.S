@@ -1244,13 +1244,28 @@ END_FTR_SECTION_IFSET(CPU_FTR_HAS_PPR)
 	bl	kvmppc_read_intr
 
 	/*
-	 * Restore volatile registers after returning from C function
+	 * Restore the active volatile registers after returning from
+	 * C function.
+	 *
+	 * We only need to restore CTR and XER if we are returning to
+	 * the guest to deliver this interrupt (for example if this is
+	 * an IPI or a passthrough) since deliver_guest_interrupt
+	 * will not restore them.
+	 *
+	 * Also, if this is a PCI passthrough interrupt that is being
+	 * delivered directly to the guest, we also need to restore
+	 * SRR0 and SRR1 since we make an OPAL call to EOI the interrupt
+	 * which scratches them.
 	 */
 	ld	r9, HSTATE_KVM_VCPU(r13)
 	ld	r10, VCPU_PC(r9)
 	ld	r11, VCPU_MSR(r9)
 	li	r12, BOOK3S_INTERRUPT_EXTERNAL
 
+	/*
+	 * Return to guest for r3 <= 0
+	 * Exit to host for r3 > 0
+	 */
 	cmpdi	r3, 0
 	bgt	guest_exit_cont
 
@@ -1259,7 +1274,20 @@ END_FTR_SECTION_IFSET(CPU_FTR_HAS_PPR)
 	lwz	r0, VCORE_ENTRY_EXIT(r5)
 	cmpwi	r0, 0x100
 	mr	r4, r9
-	blt	deliver_guest_interrupt
+	bge	guest_exit_cont
+
+	cmpdi	r3, -2
+	ld	r6, VCPU_CTR(r4)
+	ld	r7, VCPU_XER(r4)
+	mtctr	r6
+	mtxer	r7
+	bne	deliver_guest_interrupt
+
+	ld	r6, VCPU_SRR0(r4)
+	ld	r7, VCPU_SRR1(r4)
+	mtsrr0	r6
+	mtsrr1	r7
+	b	deliver_guest_interrupt
 
 guest_exit_cont:		/* r9 = vcpu, r12 = trap, r13 = paca */
 	/* Save more register state  */
@@ -2340,11 +2368,16 @@ kvm_end_cede:
 	bl	kvmppc_check_wake_reason
 
 	/*
-	 * Restore volatile registers since we could have called a C routine
-	 * in kvmppc_check_wake_reason
+	 * Restore volatile registers since we could have called a
+	 * C routine in kvmppc_check_wake_reason
 	 *	r4 = VCPU
 	 * Wake reason (trap) is returned through r31
+	 * r3 tells us whether we need to return to host or not
+	 * WARNING: it gets checked much further down:
+	 * should not modify r3 until this check is done.
 	 */
+
+	/* Trap reason is expected in r12 by guest exit code. */
 	ld	r4, HSTATE_KVM_VCPU(r13)
 	mr	r12, r31
 
@@ -2446,6 +2479,8 @@ machine_check_realmode:
  *	0 if nothing needs to be done
  *	1 if something happened that needs to be handled by the host
  *	-1 if there was a guest wakeup (IPI or msgsnd)
+ *	-2 if we handled a PCI passthrough interrupt (returned by
+ *		kvmppc_read_intr only)
  *
  * Also sets r31 to the interrupt vector for any interrupt that needs
  * to be handled now by the host (0x500 for external interrupt), or zero.

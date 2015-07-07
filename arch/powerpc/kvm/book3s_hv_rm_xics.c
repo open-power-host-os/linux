@@ -20,6 +20,7 @@
 #include <asm/synch.h>
 #include <asm/cputhreads.h>
 #include <asm/ppc-opcode.h>
+#include <asm/pnv-pci.h>
 
 #include "book3s_xics.h"
 
@@ -702,19 +703,77 @@ int kvmppc_rm_h_eoi(struct kvm_vcpu *vcpu, unsigned long xirr)
 	return check_too_hard(xics, icp);
 }
 
+unsigned long eoi_rc;
+
+static noinline void icp_eoi(u32 xirr, struct irq_data *d)
+{
+	unsigned long xics_phys;
+	int64_t rc;
+
+	rc = pnv_opal_pci_msi_eoi(d);
+
+	if (rc)
+		eoi_rc = rc;
+
+	iosync();
+
+	/* EOI it */
+	xics_phys = local_paca->kvm_hstate.xics_phys;
+	_stwcix(xics_phys + XICS_XIRR, xirr);
+}
+
+static noinline long deliver_irq_passthru(struct kvm_vcpu *vcpu,
+				 u32 xirr,
+				 struct kvmppc_irq_map *irq_map)
+{
+	struct kvmppc_xics *xics;
+	struct kvmppc_icp *icp;
+	u32 irq;
+
+	irq = irq_map->v_hwirq;
+	xics = vcpu->kvm->arch.xics;
+	icp = vcpu->arch.icp;
+
+	icp_rm_deliver_irq(xics, icp, irq);
+
+	/* EOI the interrupt */
+	icp_eoi(xirr, irq_map->irq_data);
+
+	if (check_too_hard(xics, icp) == H_TOO_HARD)
+		return 1;
+	else
+		return -2;
+}
+
+static inline struct kvmppc_irq_map *get_irqmap(
+				struct kvmppc_passthru_map *pmap, u32 xisr)
+{
+	int i;
+
+	for (i = 0; i < pmap->n_hwirq; i++)  {
+		if (xisr == pmap->irq_map[i].r_hwirq)
+			return &pmap->irq_map[i];
+	}
+	return NULL;
+}
+
 /*
  * Determine what sort of external interrupt is pending (if any).
  * Returns:
  *	0 if no interrupt is pending
  *	1 if an interrupt is pending that needs to be handled by the host
  *	-1 if there was a guest wakeup IPI (which has now been cleared)
+ *	-2 if there is PCI passthrough external interrupt that was handled
  */
 
-long kvmppc_read_intr(struct kvm_vcpu *vcpu)
+long kvmppc_read_intr(struct kvm_vcpu *vcpu, int path)
 {
 	unsigned long xics_phys;
 	u32 h_xirr, xirr;
 	u32 xisr;
+	struct kvmppc_passthru_map *pmap;
+	struct kvmppc_irq_map *irq_map;
+	int r;
 	u8 host_ipi;
 
 	/* see if a host IPI is pending */
@@ -782,6 +841,30 @@ long kvmppc_read_intr(struct kvm_vcpu *vcpu)
 
 		/* OK, it's an IPI for us */
 		return -1;
+	}
+
+	/*
+	 * If it's not an IPI, check if we have a passthrough adapter and
+	 * if so, check if this external interrupt is for the adapter.
+	 * We will attempt to deliver the IRQ directly to the target VCPU's
+	 * ICP, the virtual ICP (based on affinity - the xive value in ICS).
+	 *
+	 * If the delivery fails or if this is not for a passthrough adapter,
+	 * return to the host to handle this interrupt. We earlier
+	 * saved a copy of the XIRR in the PACA, it will be picked up by
+	 * the host ICP driver
+	 */
+	if (vcpu) {
+		pmap = vcpu->kvm->arch.pmap;
+		if (pmap && likely(__arch_spin_trylock(&pmap->lock) == 0)) {
+			irq_map = get_irqmap(pmap, xisr);
+			if (irq_map) {
+				r = deliver_irq_passthru(vcpu, xirr, irq_map);
+				arch_spin_unlock(&pmap->lock);
+				return r;
+			}
+			arch_spin_unlock(&pmap->lock);
+		}
 	}
 
 	return 1;

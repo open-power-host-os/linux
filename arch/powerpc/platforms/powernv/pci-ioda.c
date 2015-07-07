@@ -2456,7 +2456,7 @@ static void pnv_ioda_setup_dma(struct pnv_phb *phb)
 }
 
 #ifdef CONFIG_PCI_MSI
-static void pnv_ioda2_msi_eoi(struct irq_data *d)
+int64_t pnv_opal_pci_msi_eoi(struct irq_data *d)
 {
 	unsigned int hw_irq = (unsigned int)irqd_to_hwirq(d);
 	struct irq_chip *chip = irq_data_get_irq_chip(d);
@@ -2465,6 +2465,14 @@ static void pnv_ioda2_msi_eoi(struct irq_data *d)
 	int64_t rc;
 
 	rc = opal_pci_msi_eoi(phb->opal_id, hw_irq);
+	return rc;
+}
+
+static void pnv_ioda2_msi_eoi(struct irq_data *d)
+{
+	int64_t rc;
+
+	rc = pnv_opal_pci_msi_eoi(d);
 	WARN_ON_ONCE(rc);
 
 	icp_native_eoi(d);
