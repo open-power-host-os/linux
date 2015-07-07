@@ -1266,6 +1266,18 @@ END_FTR_SECTION_IFSET(CPU_FTR_HAS_PPR)
 	 * Return to guest for r3 <= 0
 	 * Exit to host for r3 > 0
 	 */
+	cmpdi	r3, 1
+	ble	1f
+	/*
+	 * Return code of 2 means PCI passthrough interrupt, but we
+	 * need to return back to host to complete handling the
+	 * interrupt.
+	 */
+	li	r12, BOOK3S_INTERRUPT_HV_RM_HARD
+	stw	r12, VCPU_TRAP(r9)
+	b	guest_exit_cont
+
+1:
 	cmpdi	r3, 0
 	bgt	guest_exit_cont
 
@@ -2373,12 +2385,21 @@ kvm_end_cede:
 	 *	r4 = VCPU
 	 * Wake reason (trap) is returned through r31
 	 * r3 tells us whether we need to return to host or not
-	 * WARNING: it gets checked much further down:
+	 * WARNING: it gets checked much further down a second time:
 	 * should not modify r3 until this check is done.
 	 */
-
-	/* Trap reason is expected in r12 by guest exit code. */
 	ld	r4, HSTATE_KVM_VCPU(r13)
+	cmpdi	r3, 1
+	ble	1f
+
+	/*
+	 * Return code of 2 means PCI passthrough interrupt, but
+	 * we need to return back to host to complete handling the
+	 * interrupt. Trap reason is expected in r12 by guest
+	 * exit code.
+	 */
+	li	r31, BOOK3S_INTERRUPT_HV_RM_HARD
+1:
 	mr	r12, r31
 
 	/* Load NV GPRS */

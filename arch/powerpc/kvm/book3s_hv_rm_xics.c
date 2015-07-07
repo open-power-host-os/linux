@@ -740,7 +740,7 @@ static noinline long deliver_irq_passthru(struct kvm_vcpu *vcpu,
 	icp_eoi(xirr, irq_map->irq_data);
 
 	if (check_too_hard(xics, icp) == H_TOO_HARD)
-		return 1;
+		return 2;
 	else
 		return -2;
 }
@@ -762,6 +762,7 @@ static inline struct kvmppc_irq_map *get_irqmap(
  * Returns:
  *	0 if no interrupt is pending
  *	1 if an interrupt is pending that needs to be handled by the host
+ *	2 Passthrough that needs completion in the host
  *	-1 if there was a guest wakeup IPI (which has now been cleared)
  *	-2 if there is PCI passthrough external interrupt that was handled
  */
