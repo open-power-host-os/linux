@@ -14,6 +14,7 @@
 #include <asm/kvm_book3s.h>
 #include <asm/kvm_ppc.h>
 #include <asm/hvcall.h>
+#include <asm/io.h>
 #include <asm/xics.h>
 #include <asm/debug.h>
 #include <asm/synch.h>
@@ -699,4 +700,89 @@ int kvmppc_rm_h_eoi(struct kvm_vcpu *vcpu, unsigned long xirr)
 	}
  bail:
 	return check_too_hard(xics, icp);
+}
+
+/*
+ * Determine what sort of external interrupt is pending (if any).
+ * Returns:
+ *	0 if no interrupt is pending
+ *	1 if an interrupt is pending that needs to be handled by the host
+ *	-1 if there was a guest wakeup IPI (which has now been cleared)
+ */
+
+long kvmppc_read_intr(struct kvm_vcpu *vcpu)
+{
+	unsigned long xics_phys;
+	u32 h_xirr, xirr;
+	u32 xisr;
+	u8 host_ipi;
+
+	/* see if a host IPI is pending */
+	host_ipi = local_paca->kvm_hstate.host_ipi;
+	if (host_ipi)
+		return 1;
+
+	/* Now read the interrupt from the ICP */
+	xics_phys = local_paca->kvm_hstate.xics_phys;
+	if (unlikely(!xics_phys))
+		return 1;
+
+	/*
+	 * Save XIRR for later. Since we get control in reverse endian
+	 * on LE systems, save it byte reversed and fetch it back in
+	 * host endian. Note that xirr is the value read from the
+	 * XIRR register, while h_xirr is the host endian version.
+	 */
+	xirr = _lwzcix(xics_phys + XICS_XIRR);
+#ifdef __LITTLE_ENDIAN__
+	st_le32(&local_paca->kvm_hstate.saved_xirr, xirr);
+	h_xirr = local_paca->kvm_hstate.saved_xirr;
+#else
+	h_xirr = xirr;
+#endif
+	xisr = h_xirr & 0xffffff;
+	/*
+	 * Ensure that the store/load complete to guarantee all side
+	 * effects of loading from XIRR has completed
+	 */
+	smp_mb();
+
+	/* if nothing pending in the ICP */
+	if (!xisr)
+		return 0;
+
+	/* We found something in the ICP...
+	 *
+	 * If it is an IPI, clear the MFRR and EOI it.
+	 */
+	if (xisr == XICS_IPI) {
+		_stbcix(xics_phys + XICS_MFRR, 0xff);
+		_stwcix(xics_phys + XICS_XIRR, xirr);
+		/*
+		 * Need to ensure side effects of above stores
+		 * complete before proceeding.
+		 */
+		smp_mb();
+
+		/*
+		 * We need to re-check host IPI now in case it got set in the
+		 * meantime. If it's clear, we bounce the interrupt to the
+		 * guest
+		 */
+		host_ipi = local_paca->kvm_hstate.host_ipi;
+		if (unlikely(host_ipi != 0)) {
+			/* We raced with the host,
+			 * we need to resend that IPI, bummer
+			 */
+			_stbcix(xics_phys + XICS_MFRR, IPI_PRIORITY);
+			/* Let side effects complete */
+			smp_mb();
+			return 1;
+		}
+
+		/* OK, it's an IPI for us */
+		return -1;
+	}
+
+	return 1;
 }
