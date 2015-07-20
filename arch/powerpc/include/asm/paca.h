@@ -171,6 +171,11 @@ struct paca_struct {
 	 */
 	u16 in_mce;
 	u8 hmi_event_available;		 /* HMI event is available */
+	/*
+	 * Bitmap for sibling subcore status. See kvm/book3s_hv_ras.c for
+	 * more details
+	 */
+	unsigned long *sibling_subcore_state;
 #endif
 
 	/* Stuff for accurate time accounting */

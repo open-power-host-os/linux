@@ -1443,9 +1443,46 @@ void kvmppc_init_lpid(unsigned long nr_lpids_param)
 }
 EXPORT_SYMBOL_GPL(kvmppc_init_lpid);
 
+#ifdef CONFIG_PPC_BOOK3S_64
+static int kvm_init_subcore_bitmap(void)
+{
+	int i, j;
+	int nr_cores = cpu_nr_cores();
+	unsigned long *sibling_subcore_state;
+
+	for (i = 0; i < nr_cores; i++) {
+		int first_cpu = i * threads_per_core;
+		int node = cpu_to_node(first_cpu);
+
+		/* Ignore if it is already allocated. */
+		if (paca[first_cpu].sibling_subcore_state)
+			continue;
+
+		sibling_subcore_state = kmalloc_node(sizeof(unsigned long),
+							GFP_KERNEL, node);
+		if (!sibling_subcore_state)
+			return -ENOMEM;
+
+		*sibling_subcore_state = 0;
+
+		for (j = 0; j < threads_per_core; j++) {
+			int cpu = first_cpu + j;
+
+			paca[cpu].sibling_subcore_state = sibling_subcore_state;
+		}
+	}
+	return 0;
+}
+#else
+static inline int kvm_init_subcore_bitmap(void) { return 0; }
+#endif
+
 int kvm_arch_init(void *opaque)
 {
-	return 0;
+	int rc = 0;
+
+	rc = kvm_init_subcore_bitmap();
+	return rc;
 }
 
 EXPORT_TRACEPOINT_SYMBOL_GPL(kvm_ppc_instr);
