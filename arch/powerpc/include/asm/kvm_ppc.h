@@ -168,6 +168,8 @@ extern long kvm_spapr_tce_attach_iommu_group(struct kvm *kvm,
 				unsigned long liobn,
 				phys_addr_t start_addr,
 				struct iommu_group *grp);
+extern void kvm_spapr_tce_detach_iommu_group(struct kvm *kvm,
+				struct iommu_group *grp);
 extern long kvm_vm_ioctl_create_spapr_tce(struct kvm *kvm,
 				struct kvm_create_spapr_tce_64 *args);
 extern struct kvmppc_spapr_tce_table *kvmppc_find_table(

@@ -175,6 +175,7 @@ struct kvmppc_pginfo {
 
 struct kvmppc_spapr_tce_group {
 	struct list_head next;
+	struct rcu_head rcu;
 	struct iommu_group *refgrp;/* for reference counting only */
 	struct iommu_table *tbl;
 };

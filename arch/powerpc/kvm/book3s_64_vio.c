@@ -229,6 +229,38 @@ extern long kvm_spapr_tce_attach_iommu_group(struct kvm *kvm,
 	return 0;
 }
 
+static void kvm_spapr_tce_put_group(struct rcu_head *head)
+{
+	struct kvmppc_spapr_tce_group *kg = container_of(head,
+			struct kvmppc_spapr_tce_group, rcu);
+
+	iommu_group_put(kg->refgrp);
+	kg->refgrp = NULL;
+	kfree(kg);
+}
+
+extern void kvm_spapr_tce_detach_iommu_group(struct kvm *kvm,
+				struct iommu_group *grp)
+{
+	struct kvmppc_spapr_tce_table *stt;
+	struct iommu_table_group *table_group;
+	struct kvmppc_spapr_tce_group *kg;
+
+	table_group = iommu_group_get_iommudata(grp);
+	if (!table_group)
+		return;
+
+	list_for_each_entry_rcu(stt, &kvm->arch.spapr_tce_tables, list) {
+		list_for_each_entry_rcu(kg, &stt->groups, next) {
+			if (kg->refgrp == grp) {
+				list_del_rcu(&kg->next);
+				call_rcu(&kg->rcu, kvm_spapr_tce_put_group);
+				break;
+			}
+		}
+	}
+}
+
 long kvm_vm_ioctl_create_spapr_tce(struct kvm *kvm,
 				   struct kvm_create_spapr_tce_64 *args)
 {
