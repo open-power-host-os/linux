@@ -130,6 +130,22 @@ static void kvm_vfio_update_coherency(struct kvm_device *dev)
 	mutex_unlock(&kv->lock);
 }
 
+#ifdef CONFIG_SPAPR_TCE_IOMMU
+static void kvm_vfio_spapr_detach_iommu_group(struct kvm *kvm,
+		struct vfio_group *vfio_group)
+{
+	int group_id;
+	struct iommu_group *grp;
+
+	group_id = kvm_vfio_external_user_iommu_id(vfio_group);
+	grp = iommu_group_get_by_id(group_id);
+	if (grp) {
+		kvm_spapr_tce_detach_iommu_group(kvm, grp);
+		iommu_group_put(grp);
+	}
+}
+#endif
+
 static int kvm_vfio_set_group(struct kvm_device *dev, long attr, u64 arg)
 {
 	struct kvm_vfio *kv = dev->private;
@@ -204,6 +220,10 @@ static int kvm_vfio_set_group(struct kvm_device *dev, long attr, u64 arg)
 				continue;
 
 			list_del(&kvg->node);
+#ifdef CONFIG_SPAPR_TCE_IOMMU
+			kvm_vfio_spapr_detach_iommu_group(dev->kvm,
+					kvg->vfio_group);
+#endif
 			kvm_vfio_group_put_external_user(kvg->vfio_group);
 			kfree(kvg);
 			ret = 0;
