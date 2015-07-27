@@ -369,6 +369,7 @@ long kvmppc_rm_h_put_tce(struct kvm_vcpu *vcpu, unsigned long liobn,
 	struct kvmppc_spapr_tce_table *stt = kvmppc_find_table(vcpu, liobn);
 	long ret = H_TOO_HARD;
 	struct kvmppc_spapr_tce_group *kg;
+	struct iommu_table *tbltmp = NULL;
 
 	/* udbg_printf("H_PUT_TCE(): liobn=0x%lx ioba=0x%lx, tce=0x%lx\n", */
 	/* 	    liobn, ioba, tce); */
@@ -385,8 +386,9 @@ long kvmppc_rm_h_put_tce(struct kvm_vcpu *vcpu, unsigned long liobn,
 		return ret;
 
 	list_for_each_entry_rcu_notrace(kg, &stt->groups, next) {
-		if (!kg->tbl)
+		if (kg->tbl == tbltmp)
 			continue;
+		tbltmp = kg->tbl;
 		ret = kvmppc_rm_h_put_tce_iommu(vcpu, kg->tbl,
 				liobn, ioba, tce);
 		if (ret)
@@ -433,6 +435,7 @@ long kvmppc_rm_h_put_tce_indirect(struct kvm_vcpu *vcpu,
 	long i, ret = H_SUCCESS;
 	unsigned long tces, entry, ua = 0;
 	unsigned long *rmap = NULL;
+	struct iommu_table *tbltmp = NULL;
 
 	stt = kvmppc_find_table(vcpu, liobn);
 	if (!stt)
@@ -471,8 +474,9 @@ long kvmppc_rm_h_put_tce_indirect(struct kvm_vcpu *vcpu,
 
 
 		list_for_each_entry_rcu_notrace(kg, &stt->groups, next) {
-			if (!kg->tbl)
+			if (kg->tbl == tbltmp)
 				continue;
+			tbltmp = kg->tbl;
 			ret = kvmppc_rm_h_put_tce_indirect_iommu(vcpu,
 					kg->tbl, ioba, (u64 *)tces, npages);
 			if (ret)
@@ -518,6 +522,7 @@ long kvmppc_rm_h_stuff_tce(struct kvm_vcpu *vcpu,
 	struct kvmppc_spapr_tce_table *stt;
 	struct kvmppc_spapr_tce_group *kg;
 	long i, ret;
+	struct iommu_table *tbltmp = NULL;
 
 	stt = kvmppc_find_table(vcpu, liobn);
 	if (!stt)
@@ -533,8 +538,9 @@ long kvmppc_rm_h_stuff_tce(struct kvm_vcpu *vcpu,
 
 
 	list_for_each_entry_rcu_notrace(kg, &stt->groups, next) {
-		if (!kg->tbl)
+		if (kg->tbl == tbltmp)
 			continue;
+		tbltmp = kg->tbl;
 		ret = kvmppc_rm_h_stuff_tce_iommu(vcpu, kg->tbl,
 				liobn, ioba, tce_value, npages);
 		if (ret)
