@@ -698,7 +698,7 @@ static void opal_i2c_create_devs(void)
 
 static int __init opal_init(void)
 {
-	struct device_node *np, *consoles, *epow;
+	struct device_node *np, *consoles, *epow, *leds;
 	const __be32 *irqs;
 	int rc, i, irqlen;
 
@@ -749,6 +749,13 @@ static int __init opal_init(void)
 			pr_warning("opal: Error %d requesting irq %d"
 				   " (0x%x)\n", rc, irq, hwirq);
 		opal_irqs[i] = irq;
+	}
+
+	/* Create leds platform devices */
+	leds = of_find_node_by_path("/ibm,opal/leds");
+	if (leds) {
+		of_platform_device_create(leds, "opal_leds", NULL);
+		of_node_put(leds);
 	}
 
 	/* Create "opal" kobject under /sys/firmware */
@@ -879,3 +886,6 @@ EXPORT_SYMBOL_GPL(opal_rtc_write);
 EXPORT_SYMBOL_GPL(opal_tpo_read);
 EXPORT_SYMBOL_GPL(opal_tpo_write);
 EXPORT_SYMBOL_GPL(opal_i2c_request);
+/* Export these symbols for PowerNV LED class driver */
+EXPORT_SYMBOL_GPL(opal_leds_get_ind);
+EXPORT_SYMBOL_GPL(opal_leds_set_ind);
