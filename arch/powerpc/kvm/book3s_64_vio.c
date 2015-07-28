@@ -208,17 +208,6 @@ extern long kvm_spapr_tce_attach_iommu_group(struct kvm *kvm,
 	list_for_each_entry_rcu(kg, &stt->groups, next) {
 		if (kg->refgrp == grp)
 			return -EBUSY;
-		/*
-		 * Check if the table is in the list already.
-		 * We might be dealing with 2 cases here:
-		 * 1) shared IOMMU table for IODA2 - all groups will have
-		 * the same actual table which only needs to be updated once
-		 * so @stt must have tbl==NULL
-		 * 2) invidual IOMMU tables (IODA1, P5IOC2) - each group has
-		 * its own table.
-		 */
-		if (kg->tbl && (kg->tbl->it_base == tbltmp->it_base))
-			tbltmp = NULL;
 	}
 
 	kg = kzalloc(sizeof(*kg), GFP_KERNEL);
@@ -483,6 +472,7 @@ long kvmppc_h_put_tce(struct kvm_vcpu *vcpu,
 	long ret;
 	struct kvmppc_spapr_tce_table *stt;
 	struct kvmppc_spapr_tce_group *kg;
+	struct iommu_table *tbltmp = NULL;
 
 	stt = kvmppc_find_table(vcpu, liobn);
 	if (!stt)
@@ -497,8 +487,9 @@ long kvmppc_h_put_tce(struct kvm_vcpu *vcpu,
 		return ret;
 
 	list_for_each_entry_rcu_notrace(kg, &stt->groups, next) {
-		if (!kg->tbl)
+		if (kg->tbl == tbltmp)
 			continue;
+		tbltmp = kg->tbl;
 		ret = kvmppc_h_put_tce_iommu(vcpu, kg->tbl, liobn, ioba, tce);
 		if (ret)
 			return ret;
@@ -519,6 +510,7 @@ long kvmppc_h_put_tce_indirect(struct kvm_vcpu *vcpu,
 	unsigned long entry, ua = 0;
 	u64 __user *tces, tce;
 	struct kvmppc_spapr_tce_group *kg;
+	struct iommu_table *tbltmp = NULL;
 
 	stt = kvmppc_find_table(vcpu, liobn);
 	if (!stt)
@@ -547,8 +539,9 @@ long kvmppc_h_put_tce_indirect(struct kvm_vcpu *vcpu,
 	tces = (u64 *) ua;
 
 	list_for_each_entry_rcu_notrace(kg, &stt->groups, next) {
-		if (!kg->tbl)
+		if (kg->tbl == tbltmp)
 			continue;
+		tbltmp = kg->tbl;
 		ret = kvmppc_h_put_tce_indirect_iommu(vcpu,
 				kg->tbl, ioba, tces, npages);
 		if (ret)
@@ -583,6 +576,7 @@ long kvmppc_h_stuff_tce(struct kvm_vcpu *vcpu,
 	struct kvmppc_spapr_tce_table *stt;
 	long i, ret;
 	struct kvmppc_spapr_tce_group *kg;
+	struct iommu_table *tbltmp = NULL;
 
 	stt = kvmppc_find_table(vcpu, liobn);
 	if (!stt)
@@ -597,8 +591,9 @@ long kvmppc_h_stuff_tce(struct kvm_vcpu *vcpu,
 		return H_PARAMETER;
 
 	list_for_each_entry_rcu_notrace(kg, &stt->groups, next) {
-		if (!kg->tbl)
+		if (kg->tbl == tbltmp)
 			continue;
+		tbltmp = kg->tbl;
 		ret = kvmppc_h_stuff_tce_iommu(vcpu, kg->tbl, liobn, ioba,
 				tce_value, npages);
 		if (ret)

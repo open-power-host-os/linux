@@ -2073,17 +2073,23 @@ static long pnv_pci_ioda2_create_table(struct iommu_table_group *table_group,
 static long pnv_pci_ioda2_setup_default_config(struct pnv_ioda_pe *pe)
 {
 	struct iommu_table *tbl = NULL;
-	long rc;
+	long rc, levels = POWERNV_IOMMU_DEFAULT_LEVELS;
 
-	rc = pnv_pci_ioda2_create_table(&pe->table_group, 0,
-			IOMMU_PAGE_SHIFT_4K,
-			pe->table_group.tce32_size,
-			POWERNV_IOMMU_DEFAULT_LEVELS, &tbl);
-	if (rc) {
-		pe_err(pe, "Failed to create 32-bit TCE table, err %ld",
-				rc);
-		return rc;
+	for (levels = POWERNV_IOMMU_DEFAULT_LEVELS;
+			levels <= POWERNV_IOMMU_MAX_LEVELS;
+			++levels) {
+		rc = pnv_pci_ioda2_create_table(&pe->table_group, 0,
+				IOMMU_PAGE_SHIFT_4K,
+				pe->table_group.tce32_size,
+				levels, &tbl);
+		if (!rc)
+			break;
+		if (rc)
+			pe_err(pe, "Failed to create 32-bit TCE table with %d leverls, err %ld",
+					levels, rc);
 	}
+	if (rc)
+		return rc;
 
 	iommu_init_table(tbl, pe->phb->hose->node);
 

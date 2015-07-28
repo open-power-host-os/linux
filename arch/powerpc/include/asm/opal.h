@@ -170,6 +170,10 @@ struct opal_sg_list {
 #define OPAL_IPMI_SEND				107
 #define OPAL_IPMI_RECV				108
 #define OPAL_I2C_REQUEST			109
+#define OPAL_LEDS_GET_INDICATOR			114
+#define OPAL_LEDS_SET_INDICATOR			115
+#define OPAL_LAST				115
+
 
 /* Device tree flags */
 
@@ -381,9 +385,25 @@ enum OpalPciMaskAction {
 	OPAL_MASK_ERROR_TYPE = 1
 };
 
+/* LED Mode */
+#define POWERNV_LED_MODE_LIGHT_PATH	"lightpath"
+#define POWERNV_LED_MODE_GUIDING_LIGHT	"guidinglight"
+
+/* LED type */
+#define POWERNV_LED_TYPE_IDENTIFY	"identify"
+#define POWERNV_LED_TYPE_FAULT		"fault"
+#define POWERNV_LED_TYPE_ATTENTION	"attention"
+
 enum OpalSlotLedType {
-	OPAL_SLOT_LED_ID_TYPE = 0,
-	OPAL_SLOT_LED_FAULT_TYPE = 1
+	OPAL_SLOT_LED_TYPE_ID = 0,	/* IDENTIFY LED */
+	OPAL_SLOT_LED_TYPE_FAULT = 1,	/* FAULT LED */
+	OPAL_SLOT_LED_TYPE_ATTN = 2,	/* System Attention LED */
+	OPAL_SLOT_LED_TYPE_MAX = 3
+};
+
+enum OpalSlotLedState {
+	OPAL_SLOT_LED_STATE_OFF = 0,	/* LED is OFF */
+	OPAL_SLOT_LED_STATE_ON = 1	/* LED is ON */
 };
 
 enum OpalLedAction {
@@ -1027,6 +1047,10 @@ int64_t opal_ipmi_recv(uint64_t interface, struct opal_ipmi_msg *msg,
 		uint64_t *msg_len);
 int64_t opal_i2c_request(uint64_t async_token, uint32_t bus_id,
 			 struct opal_i2c_request *oreq);
+int64_t opal_leds_get_ind(char *loc_code, __be64 *led_mask,
+			  __be64 *led_value, __be64 *max_led_type);
+int64_t opal_leds_set_ind(uint64_t token, char *loc_code, const u64 led_mask,
+			  const u64 led_value, __be64 *max_led_type);
 
 /* Internal functions */
 extern int early_init_dt_scan_opal(unsigned long node, const char *uname,
