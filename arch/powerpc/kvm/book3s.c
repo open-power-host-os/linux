@@ -35,6 +35,7 @@
 #include <linux/sched.h>
 #include <linux/vmalloc.h>
 #include <linux/highmem.h>
+#include <linux/kvm_irqfd.h>
 
 #include "book3s.h"
 #include "trace.h"
@@ -918,6 +919,43 @@ int kvmppc_core_check_processor_compat(void)
 int kvmppc_book3s_hcall_implemented(struct kvm *kvm, unsigned long hcall)
 {
 	return kvm->arch.kvm_ops->hcall_implemented(hcall);
+}
+
+/*
+ * irq_bypass_add_producer and irq_bypass_del_producer are only
+ * useful if the architecture supports PCI passthrough.
+ * irq_bypass_stop and irq_bypass_start are not needed and so
+ * kvm_ops are not defined for them.
+ */
+int kvm_arch_irq_bypass_add_producer(struct irq_bypass_consumer *cons,
+				     struct irq_bypass_producer *prod)
+{
+	struct kvm_kernel_irqfd *irqfd =
+		container_of(cons, struct kvm_kernel_irqfd, consumer);
+	struct kvm *kvm = irqfd->kvm;
+
+	if (kvm->arch.kvm_ops->irq_bypass_add_producer)
+		return kvm->arch.kvm_ops->irq_bypass_add_producer(cons, prod);
+
+	return 0;
+}
+
+void kvm_arch_irq_bypass_del_producer(struct irq_bypass_consumer *cons,
+				      struct irq_bypass_producer *prod)
+{
+	struct kvm_kernel_irqfd *irqfd =
+		container_of(cons, struct kvm_kernel_irqfd, consumer);
+	struct kvm *kvm = irqfd->kvm;
+
+	if (kvm->arch.kvm_ops->irq_bypass_del_producer)
+		kvm->arch.kvm_ops->irq_bypass_del_producer(cons, prod);
+}
+
+void kvm_arch_irq_bypass_stop(struct irq_bypass_consumer *cons)
+{
+}
+void kvm_arch_irq_bypass_start(struct irq_bypass_consumer *cons)
+{
 }
 
 static int kvmppc_book3s_init(void)
