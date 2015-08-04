@@ -6,6 +6,7 @@ subdir-ccflags-$(CONFIG_PPC_WERROR) := -Werror
 
 ccflags-y := -Ivirt/kvm -Iarch/powerpc/kvm
 KVM := ../../../virt/kvm
+LIB := ../../../virt/lib
 
 common-objs-y = $(KVM)/kvm_main.o $(KVM)/coalesced_mmio.o \
 		$(KVM)/eventfd.o
@@ -18,6 +19,7 @@ CFLAGS_emulate_loadstore.o  := -I.
 common-objs-y += powerpc.o emulate.o emulate_loadstore.o
 obj-$(CONFIG_KVM_EXIT_TIMING) += timing.o
 obj-$(CONFIG_KVM_BOOK3S_HANDLER) += book3s_exports.o
+obj-$(CONFIG_IRQ_BYPASS_MANAGER) += $(LIB)/
 
 AFLAGS_booke_interrupts.o := -I$(obj)
 
@@ -127,5 +129,7 @@ obj-$(CONFIG_KVM_BOOK3S_32) += kvm.o
 
 obj-$(CONFIG_KVM_BOOK3S_64_PR) += kvm-pr.o
 obj-$(CONFIG_KVM_BOOK3S_64_HV) += kvm-hv.o
+
+obj-y += ../../../virt/lib/
 
 obj-y += $(kvm-book3s_64-builtin-objs-y)
