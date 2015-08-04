@@ -516,6 +516,17 @@ static int vfio_msi_enable(struct vfio_pci_device *vdev, int nvec, bool msix)
 	return 0;
 }
 
+static int vfio_pci_add_consumer(struct irq_bypass_producer *prod,
+				 struct irq_bypass_consumer *cons)
+{
+	return 0;
+}
+
+static void vfio_pci_del_consumer(struct irq_bypass_producer *prod,
+				  struct irq_bypass_consumer *cons)
+{
+}
+
 static int vfio_msi_set_vector_signal(struct vfio_pci_device *vdev,
 				      int vector, int fd, bool msix)
 {
@@ -530,6 +541,7 @@ static int vfio_msi_set_vector_signal(struct vfio_pci_device *vdev,
 
 	if (vdev->ctx[vector].trigger) {
 		free_irq(irq, vdev->ctx[vector].trigger);
+		irq_bypass_unregister_producer(&vdev->ctx[vector].producer);
 		kfree(vdev->ctx[vector].name);
 		eventfd_ctx_put(vdev->ctx[vector].trigger);
 		vdev->ctx[vector].trigger = NULL;
@@ -570,6 +582,14 @@ static int vfio_msi_set_vector_signal(struct vfio_pci_device *vdev,
 		eventfd_ctx_put(trigger);
 		return ret;
 	}
+
+	INIT_LIST_HEAD(&vdev->ctx[vector].producer.node);
+	vdev->ctx[vector].producer.token = trigger;
+	vdev->ctx[vector].producer.irq = irq;
+	vdev->ctx[vector].producer.add_consumer = vfio_pci_add_consumer;
+	vdev->ctx[vector].producer.del_consumer = vfio_pci_del_consumer;
+	ret = irq_bypass_register_producer(&vdev->ctx[vector].producer);
+	WARN_ON(ret);
 
 	vdev->ctx[vector].trigger = trigger;
 
