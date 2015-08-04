@@ -3247,6 +3247,8 @@ static void kvmppc_core_destroy_vm_hv(struct kvm *kvm)
 	kvmppc_free_vcores(kvm);
 
 	kvmppc_free_hpt(kvm);
+
+	kfree(kvm->arch.pmap);
 }
 
 /* We don't need to emulate any privileged instructions or dcbz */
@@ -3273,6 +3275,108 @@ static int kvmppc_core_check_processor_compat_hv(void)
 	if (!cpu_has_feature(CPU_FTR_HVMODE) ||
 	    !cpu_has_feature(CPU_FTR_ARCH_206))
 		return -EIO;
+	return 0;
+}
+
+static int kvmppc_set_passthru_irq(struct kvm *kvm, int host_irq, int guest_gsi)
+{
+	struct irq_desc *desc;
+	struct kvmppc_irq_map *irq_map;
+	struct kvmppc_passthru_map *pmap;
+
+	desc = irq_to_desc(host_irq);
+	if (!desc)
+		return -EIO;
+
+	mutex_lock(&kvm->lock);
+
+	if (kvm->arch.pmap == NULL) {
+		/* First call, allocate structure to hold IRQ map */
+		pmap = kzalloc(sizeof(struct kvmppc_passthru_map), GFP_KERNEL);
+		if (pmap == NULL) {
+			mutex_unlock(&kvm->lock);
+			return -ENOMEM;
+		}
+	} else
+		pmap = kvm->arch.pmap;
+
+	arch_spin_lock(&pmap->lock);
+
+	if (pmap->n_hwirq == KVMPPC_PIRQ_MAPS) {
+		arch_spin_unlock(&pmap->lock);
+		mutex_unlock(&kvm->lock);
+		return -EAGAIN;
+	}
+
+	irq_map = &pmap->irq_map[pmap->n_hwirq];
+
+	irq_map->v_hwirq = guest_gsi;
+	irq_map->r_hwirq = desc->irq_data.hwirq;
+	irq_map->irq_data = &desc->irq_data;
+
+	pmap->n_hwirq++;
+
+	if (!kvm->arch.pmap)
+		kvm->arch.pmap = pmap;
+
+	arch_spin_unlock(&pmap->lock);
+	mutex_unlock(&kvm->lock);
+
+	return 0;
+}
+
+static int kvmppc_clr_passthru_irq(struct kvm *kvm, int host_irq, int guest_gsi)
+{
+	struct irq_desc *desc;
+	struct kvmppc_passthru_map *pmap;
+	int i;
+
+	desc = irq_to_desc(host_irq);
+	if (!desc)
+		return -EIO;
+
+	mutex_lock(&kvm->lock);
+
+	if (kvm->arch.pmap == NULL) {
+		mutex_unlock(&kvm->lock);
+		return 0;
+	}
+	pmap = kvm->arch.pmap;
+
+	arch_spin_lock(&pmap->lock);
+
+	WARN_ON(pmap->n_hwirq < 1);
+
+	for (i = 0; i < pmap->n_hwirq; i++) {
+		if (guest_gsi == pmap->irq_map[i].v_hwirq)
+			break;
+	}
+
+	if (i == pmap->n_hwirq) {
+		mutex_unlock(&kvm->lock);
+		arch_spin_unlock(&pmap->lock);
+		return -ENODEV;
+	}
+
+	/*
+	 * Replace irq_map entry to be cleared with highest entry (unless
+	 * this is already the highest) so as to not leave any holes in
+	 * the array of irq_maps.
+	 */
+	pmap->n_hwirq--;
+	if (i != pmap->n_hwirq)
+		pmap->irq_map[i] = pmap->irq_map[pmap->n_hwirq];
+
+	/*
+	 * We don't free this structure even when the count goes to
+	 * zero, this is to handle the case where the real mode KVM
+	 * handler is spinning for the pmap lock after checking for
+	 * the existence of kvm->arch.pmap. The structure is freed
+	 * when we destroy the VM
+	 */
+
+	arch_spin_unlock(&pmap->lock);
+	mutex_unlock(&kvm->lock);
 	return 0;
 }
 
