@@ -2472,9 +2472,7 @@ static noinline void kvmppc_run_core(struct kvmppc_vcore *vc)
 		unsigned long hid0 = mfspr(SPRN_HID0);
 
 		hid0 |= cmd_bit | HID0_POWER8_DYNLPARDIS;
-		mb();
-		mtspr(SPRN_HID0, hid0);
-		isync();
+		update_power8_hid0(hid0);
 		for (;;) {
 			hid0 = mfspr(SPRN_HID0);
 			if (hid0 & stat_bit)
@@ -2559,9 +2557,7 @@ static noinline void kvmppc_run_core(struct kvmppc_vcore *vc)
 
 		hid0 &= ~HID0_POWER8_DYNLPARDIS;
 		stat_bit = HID0_POWER8_2LPARMODE | HID0_POWER8_4LPARMODE;
-		mb();
-		mtspr(SPRN_HID0, hid0);
-		isync();
+		update_power8_hid0(hid0);
 		for (;;) {
 			hid0 = mfspr(SPRN_HID0);
 			if (!(hid0 & stat_bit))
