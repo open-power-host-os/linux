@@ -2472,6 +2472,8 @@ static noinline void kvmppc_run_core(struct kvmppc_vcore *vc)
 		unsigned long hid0 = mfspr(SPRN_HID0);
 
 		hid0 |= cmd_bit | HID0_POWER8_DYNLPARDIS;
+
+		local_irq_disable();
 		update_power8_hid0(hid0);
 		for (;;) {
 			hid0 = mfspr(SPRN_HID0);
@@ -2480,6 +2482,7 @@ static noinline void kvmppc_run_core(struct kvmppc_vcore *vc)
 			cpu_relax();
 		}
 		split_info.do_nap = 1;	/* ask secondaries to nap when done */
+		local_irq_enable();
 	}
 
 	kvmppc_clear_host_core(pcpu);
@@ -2557,6 +2560,8 @@ static noinline void kvmppc_run_core(struct kvmppc_vcore *vc)
 
 		hid0 &= ~HID0_POWER8_DYNLPARDIS;
 		stat_bit = HID0_POWER8_2LPARMODE | HID0_POWER8_4LPARMODE;
+
+		local_irq_disable();
 		update_power8_hid0(hid0);
 		for (;;) {
 			hid0 = mfspr(SPRN_HID0);
@@ -2565,6 +2570,8 @@ static noinline void kvmppc_run_core(struct kvmppc_vcore *vc)
 			cpu_relax();
 			++loops;
 		}
+		local_irq_enable();
+
 		split_info.do_nap = 0;
 	}
 
