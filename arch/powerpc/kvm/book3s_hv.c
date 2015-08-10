@@ -3286,6 +3286,9 @@ static int kvmppc_set_passthru_irq(struct kvm *kvm, int host_irq, int guest_gsi)
 	struct kvmppc_irq_map *irq_map;
 	struct kvmppc_passthru_map *pmap;
 
+	if (!kvm_irq_bypass)
+		return 0;
+
 	desc = irq_to_desc(host_irq);
 	if (!desc)
 		return -EIO;
@@ -3332,6 +3335,9 @@ static int kvmppc_clr_passthru_irq(struct kvm *kvm, int host_irq, int guest_gsi)
 	struct irq_desc *desc;
 	struct kvmppc_passthru_map *pmap;
 	int i;
+
+	if (!kvm_irq_bypass)
+		return 0;
 
 	desc = irq_to_desc(host_irq);
 	if (!desc)
