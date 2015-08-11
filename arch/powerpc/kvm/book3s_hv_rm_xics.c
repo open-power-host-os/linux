@@ -28,6 +28,8 @@
 
 int h_ipi_redirect = 1;
 EXPORT_SYMBOL(h_ipi_redirect);
+int kvm_irq_bypass = 0;
+EXPORT_SYMBOL(kvm_irq_bypass);
 
 static void icp_rm_deliver_irq(struct kvmppc_xics *xics, struct kvmppc_icp *icp,
 			    u32 new_irq);
@@ -855,7 +857,7 @@ long kvmppc_read_intr(struct kvm_vcpu *vcpu, int path)
 	 * saved a copy of the XIRR in the PACA, it will be picked up by
 	 * the host ICP driver
 	 */
-	if (vcpu) {
+	if (vcpu && kvm_irq_bypass) {
 		pmap = vcpu->kvm->arch.pmap;
 		if (pmap && likely(__arch_spin_trylock(&pmap->lock) == 0)) {
 			irq_map = get_irqmap(pmap, xisr);

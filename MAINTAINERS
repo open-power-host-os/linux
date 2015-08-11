@@ -4631,7 +4631,6 @@ IBM Power 842 compression accelerator
 M:	Dan Streetman <ddstreet@us.ibm.com>
 S:	Supported
 F:	drivers/crypto/nx/nx-842*
-F:	include/linux/nx842.h
 F:	include/linux/sw842.h
 F:	crypto/842.c
 F:	lib/842/
@@ -10022,6 +10021,13 @@ M:	Francois Romieu <romieu@fr.zoreil.com>
 L:	netdev@vger.kernel.org
 S:	Maintained
 F:	drivers/net/ethernet/via/via-velocity.*
+
+VIRT LIB
+M:	Alex Williamson <alex.williamson@redhat.com>
+M:	Paolo Bonzini <pbonzini@redhat.com>
+L:	kvm@vger.kernel.org
+S:	Supported
+F:	virt/lib/
 
 VIVI VIRTUAL VIDEO DRIVER
 M:	Hans Verkuil <hverkuil@xs4all.nl>

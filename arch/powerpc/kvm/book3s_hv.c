@@ -56,6 +56,8 @@
 #include <linux/vmalloc.h>
 #include <linux/highmem.h>
 #include <linux/hugetlb.h>
+#include <linux/kvm_irqfd.h>
+#include <linux/irqbypass.h>
 #include <linux/module.h>
 
 #include "book3s.h"
@@ -2507,9 +2509,9 @@ static noinline void kvmppc_run_core(struct kvmppc_vcore *vc)
 		unsigned long hid0 = mfspr(SPRN_HID0);
 
 		hid0 |= cmd_bit | HID0_POWER8_DYNLPARDIS;
-		mb();
-		mtspr(SPRN_HID0, hid0);
-		isync();
+
+		local_irq_disable();
+		update_power8_hid0(hid0);
 		for (;;) {
 			hid0 = mfspr(SPRN_HID0);
 			if (hid0 & stat_bit)
@@ -2517,6 +2519,7 @@ static noinline void kvmppc_run_core(struct kvmppc_vcore *vc)
 			cpu_relax();
 		}
 		split_info.do_nap = 1;	/* ask secondaries to nap when done */
+		local_irq_enable();
 	}
 
 	kvmppc_clear_host_core(pcpu);
@@ -2604,9 +2607,9 @@ static noinline void kvmppc_run_core(struct kvmppc_vcore *vc)
 		tb_before = mftb();
 		hid0 &= ~HID0_POWER8_DYNLPARDIS;
 		stat_bit = HID0_POWER8_2LPARMODE | HID0_POWER8_4LPARMODE;
-		mb();
-		mtspr(SPRN_HID0, hid0);
-		isync();
+
+		local_irq_disable();
+		update_power8_hid0(hid0);
 		for (;;) {
 			hid0 = mfspr(SPRN_HID0);
 			if (!(hid0 & stat_bit))
@@ -2614,6 +2617,8 @@ static noinline void kvmppc_run_core(struct kvmppc_vcore *vc)
 			cpu_relax();
 			++loops;
 		}
+		local_irq_enable();
+
 		split_info.do_nap = 0;
 		if (nap_timeout) {
 			tb_after = mftb();
@@ -3300,6 +3305,8 @@ static void kvmppc_core_destroy_vm_hv(struct kvm *kvm)
 	kvmppc_free_vcores(kvm);
 
 	kvmppc_free_hpt(kvm);
+
+	kfree(kvm->arch.pmap);
 }
 
 /* We don't need to emulate any privileged instructions or dcbz */
@@ -3327,6 +3334,147 @@ static int kvmppc_core_check_processor_compat_hv(void)
 	    !cpu_has_feature(CPU_FTR_ARCH_206))
 		return -EIO;
 	return 0;
+}
+
+static int kvmppc_set_passthru_irq(struct kvm *kvm, int host_irq, int guest_gsi)
+{
+	struct irq_desc *desc;
+	struct kvmppc_irq_map *irq_map;
+	struct kvmppc_passthru_map *pmap;
+
+	if (!kvm_irq_bypass)
+		return 0;
+
+	desc = irq_to_desc(host_irq);
+	if (!desc)
+		return -EIO;
+
+	mutex_lock(&kvm->lock);
+
+	if (kvm->arch.pmap == NULL) {
+		/* First call, allocate structure to hold IRQ map */
+		pmap = kzalloc(sizeof(struct kvmppc_passthru_map), GFP_KERNEL);
+		if (pmap == NULL) {
+			mutex_unlock(&kvm->lock);
+			return -ENOMEM;
+		}
+	} else
+		pmap = kvm->arch.pmap;
+
+	arch_spin_lock(&pmap->lock);
+
+	if (pmap->n_hwirq == KVMPPC_PIRQ_MAPS) {
+		arch_spin_unlock(&pmap->lock);
+		mutex_unlock(&kvm->lock);
+		return -EAGAIN;
+	}
+
+	irq_map = &pmap->irq_map[pmap->n_hwirq];
+
+	irq_map->v_hwirq = guest_gsi;
+	irq_map->r_hwirq = desc->irq_data.hwirq;
+	irq_map->irq_data = &desc->irq_data;
+
+	pmap->n_hwirq++;
+
+	if (!kvm->arch.pmap)
+		kvm->arch.pmap = pmap;
+
+	arch_spin_unlock(&pmap->lock);
+	mutex_unlock(&kvm->lock);
+
+	return 0;
+}
+
+static int kvmppc_clr_passthru_irq(struct kvm *kvm, int host_irq, int guest_gsi)
+{
+	struct irq_desc *desc;
+	struct kvmppc_passthru_map *pmap;
+	int i;
+
+	if (!kvm_irq_bypass)
+		return 0;
+
+	desc = irq_to_desc(host_irq);
+	if (!desc)
+		return -EIO;
+
+	mutex_lock(&kvm->lock);
+
+	if (kvm->arch.pmap == NULL) {
+		mutex_unlock(&kvm->lock);
+		return 0;
+	}
+	pmap = kvm->arch.pmap;
+
+	arch_spin_lock(&pmap->lock);
+
+	WARN_ON(pmap->n_hwirq < 1);
+
+	for (i = 0; i < pmap->n_hwirq; i++) {
+		if (guest_gsi == pmap->irq_map[i].v_hwirq)
+			break;
+	}
+
+	if (i == pmap->n_hwirq) {
+		mutex_unlock(&kvm->lock);
+		arch_spin_unlock(&pmap->lock);
+		return -ENODEV;
+	}
+
+	/*
+	 * Replace irq_map entry to be cleared with highest entry (unless
+	 * this is already the highest) so as to not leave any holes in
+	 * the array of irq_maps.
+	 */
+	pmap->n_hwirq--;
+	if (i != pmap->n_hwirq)
+		pmap->irq_map[i] = pmap->irq_map[pmap->n_hwirq];
+
+	/*
+	 * We don't free this structure even when the count goes to
+	 * zero, this is to handle the case where the real mode KVM
+	 * handler is spinning for the pmap lock after checking for
+	 * the existence of kvm->arch.pmap. The structure is freed
+	 * when we destroy the VM
+	 */
+
+	arch_spin_unlock(&pmap->lock);
+	mutex_unlock(&kvm->lock);
+	return 0;
+}
+
+int kvmppc_irq_bypass_add_producer_hv(struct irq_bypass_consumer *cons,
+				      struct irq_bypass_producer *prod)
+{
+	int ret;
+	struct kvm_kernel_irqfd *irqfd =
+		container_of(cons, struct kvm_kernel_irqfd, consumer);
+
+	irqfd->producer = prod;
+
+	ret = kvmppc_set_passthru_irq(irqfd->kvm, prod->irq, irqfd->gsi);
+	WARN_ON(ret);
+
+	return ret;
+}
+
+void kvmppc_irq_bypass_del_producer_hv(struct irq_bypass_consumer *cons,
+				      struct irq_bypass_producer *prod)
+{
+	int ret;
+	struct kvm_kernel_irqfd *irqfd =
+		container_of(cons, struct kvm_kernel_irqfd, consumer);
+
+	irqfd->producer = NULL;
+
+	/*
+	 * When producer of consumer is unregistered, we change back to
+	 * default external interrupt handling mode - KVM real mode
+	 * will switch back to host.
+	 */
+	ret = kvmppc_clr_passthru_irq(irqfd->kvm, prod->irq, irqfd->gsi);
+	WARN_ON(ret);
 }
 
 static long kvm_arch_vm_ioctl_hv(struct file *filp,
@@ -3448,6 +3596,8 @@ static struct kvmppc_ops kvm_ops_hv = {
 	.fast_vcpu_kick = kvmppc_fast_vcpu_kick_hv,
 	.arch_vm_ioctl  = kvm_arch_vm_ioctl_hv,
 	.hcall_implemented = kvmppc_hcall_impl_hv,
+	.irq_bypass_add_producer = kvmppc_irq_bypass_add_producer_hv,
+	.irq_bypass_del_producer = kvmppc_irq_bypass_del_producer_hv,
 };
 
 static int kvmppc_book3s_init_hv(void)

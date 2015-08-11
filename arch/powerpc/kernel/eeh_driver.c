@@ -420,7 +420,8 @@ static void *eeh_rmv_device(void *data, void *userdata)
 	struct pci_driver *driver;
 	struct eeh_dev *edev = (struct eeh_dev *)data;
 	struct pci_dev *dev = eeh_dev_to_pci_dev(edev);
-	int *removed = (int *)userdata;
+	struct eeh_rmv_data *rmv_data = (struct eeh_rmv_data *)userdata;
+	int *removed = rmv_data ? &rmv_data->removed : NULL;
 	struct pci_dn *pdn = eeh_dev_to_pdn(edev);
 
 	/*
@@ -467,6 +468,9 @@ static void *eeh_rmv_device(void *data, void *userdata)
 		 * required to plug the VF successfully.
 		 */
 		pdn->pe_number = IODA_INVALID_PE;
+
+		if (rmv_data)
+			list_add(&edev->rmv_list, &rmv_data->edev_list);
 	} else {
 		pci_lock_rescan_remove();
 		pci_stop_and_remove_bus_device(dev);
@@ -585,11 +589,12 @@ int eeh_pe_reset_and_recover(struct eeh_pe *pe)
  * During the reset, udev might be invoked because those affected
  * PCI devices will be removed and then added.
  */
-static int eeh_reset_device(struct eeh_pe *pe, struct pci_bus *bus)
+static int eeh_reset_device(struct eeh_pe *pe, struct pci_bus *bus,
+				struct eeh_rmv_data *rmv_data)
 {
 	struct pci_bus *frozen_bus = eeh_pe_bus_get(pe);
 	struct timeval tstamp;
-	int cnt, rc, removed = 0;
+	int cnt, rc;
 	struct eeh_dev *edev;
 
 	/* pcibios will clear the counter; save the value */
@@ -612,7 +617,7 @@ static int eeh_reset_device(struct eeh_pe *pe, struct pci_bus *bus)
 			pci_unlock_rescan_remove();
 		}
 	} else if (frozen_bus)
-		eeh_pe_dev_traverse(pe, eeh_rmv_device, &removed);
+		eeh_pe_dev_traverse(pe, eeh_rmv_device, rmv_data);
 
 	/*
 	 * Reset the pci controller. (Asserts RST#; resets config space).
@@ -659,7 +664,7 @@ static int eeh_reset_device(struct eeh_pe *pe, struct pci_bus *bus)
 			eeh_add_virt_device(edev, NULL);
 		else
 			pcibios_add_pci_devices(bus);
-	} else if (frozen_bus && removed) {
+	} else if (frozen_bus && rmv_data->removed) {
 		pr_info("EEH: Sleep 5s ahead of partial hotplug\n");
 		ssleep(5);
 
@@ -687,8 +692,10 @@ static int eeh_reset_device(struct eeh_pe *pe, struct pci_bus *bus)
 static void eeh_handle_normal_event(struct eeh_pe *pe)
 {
 	struct pci_bus *frozen_bus;
+	struct eeh_dev *edev, *tmp;
 	int rc = 0;
 	enum pci_ers_result result = PCI_ERS_RESULT_NONE;
+	struct eeh_rmv_data rmv_data = {LIST_HEAD_INIT(rmv_data.edev_list), 0};
 
 	frozen_bus = eeh_pe_bus_get(pe);
 	if (!frozen_bus) {
@@ -735,7 +742,7 @@ static void eeh_handle_normal_event(struct eeh_pe *pe)
 	 */
 	if (result == PCI_ERS_RESULT_NONE) {
 		pr_info("EEH: Reset with hotplug activity\n");
-		rc = eeh_reset_device(pe, frozen_bus);
+		rc = eeh_reset_device(pe, frozen_bus, NULL);
 		if (rc) {
 			pr_warn("%s: Unable to reset, err=%d\n",
 				__func__, rc);
@@ -787,7 +794,7 @@ static void eeh_handle_normal_event(struct eeh_pe *pe)
 	/* If any device called out for a reset, then reset the slot */
 	if (result == PCI_ERS_RESULT_NEED_RESET) {
 		pr_info("EEH: Reset without hotplug activity\n");
-		rc = eeh_reset_device(pe, NULL);
+		rc = eeh_reset_device(pe, NULL, &rmv_data);
 		if (rc) {
 			pr_warn("%s: Cannot reset, err=%d\n",
 				__func__, rc);
@@ -805,6 +812,15 @@ static void eeh_handle_normal_event(struct eeh_pe *pe)
 	    (result != PCI_ERS_RESULT_NONE)) {
 		pr_warn("EEH: Not recovered\n");
 		goto hard_fail;
+	}
+
+	/*
+	 * For those hot removed VFs, we should add back them after PF get
+	 * recovered properly.
+	 */
+	list_for_each_entry_safe(edev, tmp, &rmv_data.edev_list, rmv_list) {
+		eeh_add_virt_device(edev, NULL);
+		list_del(&edev->rmv_list);
 	}
 
 	/* Tell all device drivers that they can resume operations */
