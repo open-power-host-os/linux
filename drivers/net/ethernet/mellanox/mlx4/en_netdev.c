@@ -1724,7 +1724,7 @@ mac_err:
 cq_err:
 	while (rx_index--) {
 		mlx4_en_deactivate_cq(priv, priv->rx_cq[rx_index]);
-		mlx4_en_free_affinity_hint(priv, i);
+		mlx4_en_free_affinity_hint(priv, rx_index);
 	}
 	for (i = 0; i < priv->rx_ring_num; i++)
 		mlx4_en_deactivate_rx_ring(priv, priv->rx_ring[i]);
@@ -1973,10 +1973,6 @@ void mlx4_en_free_resources(struct mlx4_en_priv *priv)
 			mlx4_en_destroy_cq(priv, &priv->rx_cq[i]);
 	}
 
-	if (priv->base_tx_qpn) {
-		mlx4_qp_release_range(priv->mdev->dev, priv->base_tx_qpn, priv->tx_ring_num);
-		priv->base_tx_qpn = 0;
-	}
 }
 
 int mlx4_en_alloc_resources(struct mlx4_en_priv *priv)

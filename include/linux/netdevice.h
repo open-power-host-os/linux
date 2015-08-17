@@ -314,6 +314,7 @@ struct napi_struct {
 	struct net_device	*dev;
 	struct sk_buff		*gro_list;
 	struct sk_buff		*skb;
+	struct hrtimer		timer;
 	struct list_head	dev_list;
 	struct hlist_node	napi_hash_node;
 	unsigned int		napi_id;
@@ -430,14 +431,19 @@ static inline bool napi_reschedule(struct napi_struct *napi)
 	return false;
 }
 
+void __napi_complete(struct napi_struct *n);
+void napi_complete_done(struct napi_struct *n, int work_done);
 /**
  *	napi_complete - NAPI processing complete
  *	@n: napi context
  *
  * Mark NAPI processing as complete.
+ * Consider using napi_complete_done() instead.
  */
-void __napi_complete(struct napi_struct *n);
-void napi_complete(struct napi_struct *n);
+static inline void napi_complete(struct napi_struct *n)
+{
+	return napi_complete_done(n, 0);
+}
 
 /**
  *	napi_by_id - lookup a NAPI by napi_id
@@ -472,14 +478,7 @@ void napi_hash_del(struct napi_struct *napi);
  * Stop NAPI from being scheduled on this context.
  * Waits till any outstanding processing completes.
  */
-static inline void napi_disable(struct napi_struct *n)
-{
-	might_sleep();
-	set_bit(NAPI_STATE_DISABLE, &n->state);
-	while (test_and_set_bit(NAPI_STATE_SCHED, &n->state))
-		msleep(1);
-	clear_bit(NAPI_STATE_DISABLE, &n->state);
-}
+void napi_disable(struct napi_struct *n);
 
 /**
  *	napi_enable - enable NAPI scheduling
@@ -1594,6 +1593,7 @@ struct net_device {
 
 #endif
 
+	unsigned long		gro_flush_timeout;
 	rx_handler_func_t __rcu	*rx_handler;
 	void __rcu		*rx_handler_data;
 
@@ -2326,10 +2326,7 @@ extern int netdev_flow_limit_table_len;
  * Incoming packets are placed on per-cpu queues
  */
 struct softnet_data {
-	struct Qdisc		*output_queue;
-	struct Qdisc		**output_queue_tailp;
 	struct list_head	poll_list;
-	struct sk_buff		*completion_queue;
 	struct sk_buff_head	process_queue;
 
 	/* stats */
@@ -2337,10 +2334,17 @@ struct softnet_data {
 	unsigned int		time_squeeze;
 	unsigned int		cpu_collision;
 	unsigned int		received_rps;
-
 #ifdef CONFIG_RPS
 	struct softnet_data	*rps_ipi_list;
+#endif
+#ifdef CONFIG_NET_FLOW_LIMIT
+	struct sd_flow_limit __rcu *flow_limit;
+#endif
+	struct Qdisc		*output_queue;
+	struct Qdisc		**output_queue_tailp;
+	struct sk_buff		*completion_queue;
 
+#ifdef CONFIG_RPS
 	/* Elements below can be accessed between CPUs for RPS */
 	struct call_single_data	csd ____cacheline_aligned_in_smp;
 	struct softnet_data	*rps_ipi_next;
@@ -2352,9 +2356,6 @@ struct softnet_data {
 	struct sk_buff_head	input_pkt_queue;
 	struct napi_struct	backlog;
 
-#ifdef CONFIG_NET_FLOW_LIMIT
-	struct sd_flow_limit __rcu *flow_limit;
-#endif
 };
 
 static inline void input_queue_head_incr(struct softnet_data *sd)
