@@ -516,17 +516,6 @@ static int vfio_msi_enable(struct vfio_pci_device *vdev, int nvec, bool msix)
 	return 0;
 }
 
-static int vfio_pci_add_consumer(struct irq_bypass_producer *prod,
-				 struct irq_bypass_consumer *cons)
-{
-	return 0;
-}
-
-static void vfio_pci_del_consumer(struct irq_bypass_producer *prod,
-				  struct irq_bypass_consumer *cons)
-{
-}
-
 static int vfio_msi_set_vector_signal(struct vfio_pci_device *vdev,
 				      int vector, int fd, bool msix)
 {
@@ -586,10 +575,11 @@ static int vfio_msi_set_vector_signal(struct vfio_pci_device *vdev,
 	INIT_LIST_HEAD(&vdev->ctx[vector].producer.node);
 	vdev->ctx[vector].producer.token = trigger;
 	vdev->ctx[vector].producer.irq = irq;
-	vdev->ctx[vector].producer.add_consumer = vfio_pci_add_consumer;
-	vdev->ctx[vector].producer.del_consumer = vfio_pci_del_consumer;
 	ret = irq_bypass_register_producer(&vdev->ctx[vector].producer);
-	WARN_ON(ret);
+	if (unlikely(ret))
+		dev_info(&pdev->dev,
+		"irq bypass producer (token %p) registeration fails: %d\n",
+		vdev->ctx[vector].producer.token, ret);
 
 	vdev->ctx[vector].trigger = trigger;
 
