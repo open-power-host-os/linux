@@ -36,8 +36,8 @@ struct irq_bypass_consumer;
  * @node: IRQ bypass manager private list management
  * @token: opaque token to match between producer and consumer
  * @irq: Linux IRQ number for the producer device
- * @add_consumer: Connect the IRQ producer to an IRQ consumer
- * @del_consumer: Disconnect the IRQ producer from an IRQ consumer
+ * @add_consumer: Connect the IRQ producer to an IRQ consumer (optional)
+ * @del_consumer: Disconnect the IRQ producer from an IRQ consumer (optional)
  * @stop: Perform any quiesce operations necessary prior to add/del (optional)
  * @start: Perform any startup operations necessary after add/del (optional)
  *
