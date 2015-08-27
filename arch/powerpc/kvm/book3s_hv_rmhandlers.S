@@ -446,6 +446,9 @@ kvm_no_guest:
  * whole-core mode, so we need to nap.
  */
 kvm_unsplit_nap:
+	ld	r0, HSTATE_KVM_VCORE(r13)
+	cmpdi	r0, 0
+	bne	kvm_no_guest
 	/* clear any pending message */
 BEGIN_FTR_SECTION
 	lis	r6, (PPC_DBELL_SERVER << (63-36))@h
