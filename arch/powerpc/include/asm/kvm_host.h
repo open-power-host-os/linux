@@ -407,7 +407,6 @@ struct kvmhv_tb_accumulator {
 struct kvmppc_irq_map {
 	unsigned long	r_hwirq;
 	unsigned long	v_hwirq;
-	struct irq_data *irq_data;
 };
 
 #define	KVMPPC_PIRQ_MAPS	16
@@ -418,6 +417,7 @@ struct kvmppc_passthru_map {
 	int n_all_irq;
 	unsigned long min_irq;
 	unsigned long max_irq;
+	struct irq_chip *irq_chip;
 	struct kvmppc_passthru_map *next;
 	struct kvmppc_irq_map irq_map[KVMPPC_PIRQ_MAPS];
 	struct kvmppc_irq_map irq_all[KVMPPC_PIRQ_ALL];

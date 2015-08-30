@@ -3333,15 +3333,15 @@ static int kvmppc_map_passthru_irq_hv(struct kvm *kvm, int irq)
 	if (i == pmap->n_all_irq)
 		goto err_out;
 
-	if (pmap->irq_all[i].irq_data == NULL)
+	if (pmap->irq_all[i].r_hwirq == 0)
 		/* Someone beat us to mapping the IRQ */
 		goto err_out;
 
 	pmap->irq_map[pmap->n_map_irq] = pmap->irq_all[i];
 	pmap->n_map_irq++;
 
-	/* irq_data == NULL to indicate a mapped IRQ */
-	pmap->irq_all[i].irq_data = NULL;
+	/* r_hwirq == 0 to indicate a mapped IRQ */
+	pmap->irq_all[i].r_hwirq = 0;
 
 	arch_spin_unlock(&pmap->lock);
 	mutex_unlock(&kvm->lock);
@@ -3396,10 +3396,22 @@ static int kvmppc_set_passthru_irq(struct kvm *kvm, int host_irq, int guest_gsi)
 			mutex_unlock(&kvm->lock);
 			return -ENOMEM;
 		}
+		pmap->irq_chip = irq_data_get_irq_chip(&desc->irq_data);
 	} else
 		pmap = kvm->arch.pmap;
 
 	arch_spin_lock(&pmap->lock);
+
+	/*
+	 * For now, we support only a single IRQ chip
+	 */
+	if (irq_data_get_irq_chip(&desc->irq_data) != pmap->irq_chip) {
+		pr_warn("kvmppc_set_passthru_irq: Could not assign IRQ map for (%d,%d)\n",
+			host_irq, guest_gsi);
+		arch_spin_unlock(&pmap->lock);
+		mutex_unlock(&kvm->lock);
+		return -ENOENT;
+	}
 
 	if (pmap->n_all_irq == KVMPPC_PIRQ_ALL) {
 		arch_spin_unlock(&pmap->lock);
@@ -3419,7 +3431,6 @@ static int kvmppc_set_passthru_irq(struct kvm *kvm, int host_irq, int guest_gsi)
 
 	irq_all->v_hwirq = guest_gsi;
 	irq_all->r_hwirq = desc->irq_data.hwirq;
-	irq_all->irq_data = &desc->irq_data;
 
 	pmap->n_all_irq++;
 
@@ -3473,7 +3484,7 @@ static int kvmppc_clr_passthru_irq(struct kvm *kvm, int host_irq, int guest_gsi)
 	/*
 	 * If this is a mapped IRQ, remove it from the mapped array also
 	 */
-	if (!pmap->irq_all[i].irq_data)
+	if (!pmap->irq_all[i].r_hwirq)
 		unmap_passthru_irq(pmap, guest_gsi);
 
 	/*

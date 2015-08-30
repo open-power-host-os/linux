@@ -707,13 +707,12 @@ int kvmppc_rm_h_eoi(struct kvm_vcpu *vcpu, unsigned long xirr)
 
 unsigned long eoi_rc;
 
-static noinline void icp_eoi(u32 xirr, struct irq_data *d)
+static noinline void icp_eoi(struct irq_chip *c, u32 hwirq, u32 xirr)
 {
 	unsigned long xics_phys;
 	int64_t rc;
 
-	rc = pnv_opal_pci_msi_eoi(irq_data_get_irq_chip(d),
-				(unsigned int)irqd_to_hwirq(d));
+	rc = pnv_opal_pci_msi_eoi(c, hwirq);
 
 	if (rc)
 		eoi_rc = rc;
@@ -727,7 +726,8 @@ static noinline void icp_eoi(u32 xirr, struct irq_data *d)
 
 static noinline long deliver_irq_passthru(struct kvm_vcpu *vcpu,
 				 u32 xirr,
-				 struct kvmppc_irq_map *irq_map)
+				 struct kvmppc_irq_map *irq_map,
+				 struct kvmppc_passthru_map *pmap)
 {
 	struct kvmppc_xics *xics;
 	struct kvmppc_icp *icp;
@@ -740,7 +740,7 @@ static noinline long deliver_irq_passthru(struct kvm_vcpu *vcpu,
 	icp_rm_deliver_irq(xics, icp, irq);
 
 	/* EOI the interrupt */
-	icp_eoi(xirr, irq_map->irq_data);
+	icp_eoi(pmap->irq_chip, irq_map->r_hwirq, xirr);
 
 	if (check_too_hard(xics, icp) == H_TOO_HARD)
 		return 2;
@@ -863,7 +863,8 @@ long kvmppc_read_intr(struct kvm_vcpu *vcpu, int path)
 		if (pmap && likely(__arch_spin_trylock(&pmap->lock) == 0)) {
 			irq_map = get_irqmap(pmap, xisr);
 			if (irq_map) {
-				r = deliver_irq_passthru(vcpu, xirr, irq_map);
+				r = deliver_irq_passthru(vcpu, xirr,
+								irq_map, pmap);
 				arch_spin_unlock(&pmap->lock);
 				return r;
 			}
