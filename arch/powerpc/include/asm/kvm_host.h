@@ -195,6 +195,7 @@ struct kvmppc_spapr_tce_table {
 /* XICS components, defined in book3s_xics.c */
 struct kvmppc_xics;
 struct kvmppc_icp;
+
 struct kvmppc_passthru_map;
 
 /*
@@ -401,6 +402,7 @@ struct kvmhv_tb_accumulator {
 };
 
 #ifdef CONFIG_PPC_BOOK3S_64
+#ifdef CONFIG_KVM_XICS
 struct kvmppc_irq_map {
 	unsigned long	r_hwirq;
 	unsigned long	v_hwirq;
@@ -416,6 +418,7 @@ struct kvmppc_passthru_map {
 	struct kvmppc_passthru_map *next;
 	struct kvmppc_irq_map irq_map[KVMPPC_PIRQ_MAPS];
 };
+#endif
 #endif
 
 # ifdef CONFIG_PPC_FSL_BOOK3E

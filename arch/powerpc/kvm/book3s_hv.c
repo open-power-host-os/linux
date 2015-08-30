@@ -3291,6 +3291,7 @@ static int kvmppc_core_check_processor_compat_hv(void)
 	return 0;
 }
 
+#ifdef CONFIG_KVM_XICS
 static int kvmppc_set_passthru_irq(struct kvm *kvm, int host_irq, int guest_gsi)
 {
 	struct irq_desc *desc;
@@ -3399,19 +3400,23 @@ static int kvmppc_clr_passthru_irq(struct kvm *kvm, int host_irq, int guest_gsi)
 	return 0;
 }
 
+#endif
+
 int kvmppc_irq_bypass_add_producer_hv(struct irq_bypass_consumer *cons,
 				      struct irq_bypass_producer *prod)
 {
-	int ret;
+	int ret = 0;
 	struct kvm_kernel_irqfd *irqfd =
 		container_of(cons, struct kvm_kernel_irqfd, consumer);
 
+#ifdef CONFIG_KVM_XICS
 	irqfd->producer = prod;
 
 	ret = kvmppc_set_passthru_irq(irqfd->kvm, prod->irq, irqfd->gsi);
 	if (ret)
 		pr_info("kvmppc_set_passthru_irq (irq %d, gsi %d) fails: %d\n",
 			prod->irq, irqfd->gsi, ret);
+#endif
 
 	return ret;
 }
@@ -3423,6 +3428,7 @@ void kvmppc_irq_bypass_del_producer_hv(struct irq_bypass_consumer *cons,
 	struct kvm_kernel_irqfd *irqfd =
 		container_of(cons, struct kvm_kernel_irqfd, consumer);
 
+#ifdef CONFIG_KVM_XICS
 	irqfd->producer = NULL;
 
 	/*
@@ -3434,6 +3440,7 @@ void kvmppc_irq_bypass_del_producer_hv(struct irq_bypass_consumer *cons,
 	if (ret)
 		pr_warn("kvmppc_clr_passthru_irq (irq %d, gsi %d) fails: %d\n",
 			prod->irq, irqfd->gsi, ret);
+#endif
 }
 
 static long kvm_arch_vm_ioctl_hv(struct file *filp,
