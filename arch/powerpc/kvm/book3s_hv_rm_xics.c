@@ -712,7 +712,8 @@ static noinline void icp_eoi(u32 xirr, struct irq_data *d)
 	unsigned long xics_phys;
 	int64_t rc;
 
-	rc = pnv_opal_pci_msi_eoi(d);
+	rc = pnv_opal_pci_msi_eoi(irq_data_get_irq_chip(d),
+				(unsigned int)irqd_to_hwirq(d));
 
 	if (rc)
 		eoi_rc = rc;
