@@ -3423,6 +3423,8 @@ static int kvmppc_set_passthru_irq(struct kvm *kvm, int host_irq, int guest_gsi)
 
 	pmap->n_all_irq++;
 
+	kvmppc_xics_set_passthru(kvm, guest_gsi);
+
 	if (!kvm->arch.pmap)
 		kvm->arch.pmap = pmap;
 
@@ -3482,6 +3484,8 @@ static int kvmppc_clr_passthru_irq(struct kvm *kvm, int host_irq, int guest_gsi)
 	pmap->n_all_irq--;
 	if (i != pmap->n_all_irq)
 		pmap->irq_all[i] = pmap->irq_all[pmap->n_all_irq];
+
+	kvmppc_xics_clr_passthru(kvm, guest_gsi);
 
 	/*
 	 * We don't free this structure even when the count goes to
@@ -3660,6 +3664,7 @@ static struct kvmppc_ops kvm_ops_hv = {
 	.hcall_implemented = kvmppc_hcall_impl_hv,
 	.irq_bypass_add_producer = kvmppc_irq_bypass_add_producer_hv,
 	.irq_bypass_del_producer = kvmppc_irq_bypass_del_producer_hv,
+	.map_passthru_irq = kvmppc_map_passthru_irq_hv,
 };
 
 static int kvmppc_book3s_init_hv(void)

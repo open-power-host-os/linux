@@ -88,6 +88,20 @@ static int ics_deliver_irq(struct kvmppc_xics *xics, u32 irq, u32 level)
 		return -EINVAL;
 
 	/*
+	 * If this is a passed through IRQ, add this to the IRQ
+	 * map so that real mode KVM will redirect this
+	 * Currently, we will map a passthrough IRQ the first time
+	 * we  inject it into the guest.
+	 * Update ICS state only if we successfully mapped the IRQ.
+	 */
+	if (state->passthru) {
+		if (kvmppc_map_passthru_irq(xics->kvm, irq) == 0) {
+			state->passthru = 0;
+			state->mapped = 1;
+		}
+	}
+
+	/*
 	 * We set state->asserted locklessly. This should be fine as
 	 * we are the only setter, thus concurrent access is undefined
 	 * to begin with.
@@ -1429,3 +1443,32 @@ int kvm_irq_map_chip_pin(struct kvm *kvm, unsigned irqchip, unsigned pin)
 {
 	return pin;
 }
+
+void kvmppc_xics_set_passthru(struct kvm *kvm, unsigned long irq)
+{
+	struct kvmppc_xics *xics = kvm->arch.xics;
+	struct kvmppc_ics *ics;
+	u16 idx;
+
+	ics = kvmppc_xics_find_ics(xics, irq, &idx);
+	if (!ics)
+		return;
+
+	ics->irq_state[idx].passthru = 1;
+}
+EXPORT_SYMBOL_GPL(kvmppc_xics_set_passthru);
+
+void kvmppc_xics_clr_passthru(struct kvm *kvm, unsigned long irq)
+{
+	struct kvmppc_xics *xics = kvm->arch.xics;
+	struct kvmppc_ics *ics;
+	u16 idx;
+
+	ics = kvmppc_xics_find_ics(xics, irq, &idx);
+	if (!ics)
+		return;
+
+	ics->irq_state[idx].passthru = 0;
+	ics->irq_state[idx].mapped = 0;
+}
+EXPORT_SYMBOL_GPL(kvmppc_xics_clr_passthru);

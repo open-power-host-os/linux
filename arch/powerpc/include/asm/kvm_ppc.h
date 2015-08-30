@@ -298,6 +298,7 @@ struct kvmppc_ops {
 				       struct irq_bypass_producer *);
 	void (*irq_bypass_del_producer)(struct irq_bypass_consumer *,
 					struct irq_bypass_producer *);
+	int (*map_passthru_irq)(struct kvm *kvm, int irq);
 };
 
 extern struct kvmppc_ops *kvmppc_hv_ops;
@@ -473,6 +474,8 @@ extern int kvmppc_xics_set_icp(struct kvm_vcpu *vcpu, u64 icpval);
 extern int kvmppc_xics_connect_vcpu(struct kvm_device *dev,
 			struct kvm_vcpu *vcpu, u32 cpu);
 extern void kvmppc_xics_ipi_action(void);
+extern void kvmppc_xics_set_passthru(struct kvm *kvm, unsigned long irq);
+extern void kvmppc_xics_clr_passthru(struct kvm *kvm, unsigned long irq);
 
 /*
  * Host-side operations we want to set up while running in real
