@@ -3292,11 +3292,93 @@ static int kvmppc_core_check_processor_compat_hv(void)
 }
 
 #ifdef CONFIG_KVM_XICS
+/*
+ * Map a passthrough IRQ
+ * This is accomplished by copying the IRQ details from the
+ * all_irq array to the map_irq_array
+ *
+ * Return:
+ *	0:  if this was accomplished successfully
+ *	1:  if the map could not be done
+ */
+static int kvmppc_map_passthru_irq_hv(struct kvm *kvm, int irq)
+{
+	struct kvmppc_passthru_map *pmap;
+	int i;
+
+	if (!kvm_irq_bypass)
+		return 1;
+
+	mutex_lock(&kvm->lock);
+
+	if (kvm->arch.pmap == NULL) {
+		mutex_unlock(&kvm->lock);
+		return 1;
+	}
+
+	pmap = kvm->arch.pmap;
+
+	arch_spin_lock(&pmap->lock);
+
+	/* No more entries possible */
+	if (pmap->n_map_irq == KVMPPC_PIRQ_MAPS)
+		goto err_out;
+
+	for (i = 0; i < pmap->n_all_irq; i++) {
+		if (irq == pmap->irq_all[i].v_hwirq)
+			break;
+	}
+
+	/* IRQ not found */
+	if (i == pmap->n_all_irq)
+		goto err_out;
+
+	if (pmap->irq_all[i].irq_data == NULL)
+		/* Someone beat us to mapping the IRQ */
+		goto err_out;
+
+	pmap->irq_map[pmap->n_map_irq] = pmap->irq_all[i];
+	pmap->n_map_irq++;
+
+	/* irq_data == NULL to indicate a mapped IRQ */
+	pmap->irq_all[i].irq_data = NULL;
+
+	arch_spin_unlock(&pmap->lock);
+	mutex_unlock(&kvm->lock);
+	return 0;
+
+err_out:
+	arch_spin_unlock(&pmap->lock);
+	mutex_unlock(&kvm->lock);
+	return 1;
+}
+
+/* Called with kvm->lock and pmap->lock already acquired */
+static void unmap_passthru_irq(struct kvmppc_passthru_map *pmap, int irq)
+{
+	int i;
+
+	for (i = 0; i < pmap->n_map_irq; i++) {
+		if (irq == pmap->irq_map[i].v_hwirq) {
+			/*
+			 * Replace irq_map entry to be cleared with highest
+			 * entry (unless this is already the highest) so
+			 * as to not leave any holes in the array of irq_map.
+			 */
+			pmap->n_map_irq--;
+			pmap->irq_map[i] = pmap->irq_map[pmap->n_map_irq];
+			return;
+		}
+	}
+
+}
+
 static int kvmppc_set_passthru_irq(struct kvm *kvm, int host_irq, int guest_gsi)
 {
 	struct irq_desc *desc;
-	struct kvmppc_irq_map *irq_map;
+	struct kvmppc_irq_map *irq_all;
 	struct kvmppc_passthru_map *pmap;
+	int i;
 
 	if (!kvm_irq_bypass)
 		return 0;
@@ -3319,19 +3401,27 @@ static int kvmppc_set_passthru_irq(struct kvm *kvm, int host_irq, int guest_gsi)
 
 	arch_spin_lock(&pmap->lock);
 
-	if (pmap->n_hwirq == KVMPPC_PIRQ_MAPS) {
+	if (pmap->n_all_irq == KVMPPC_PIRQ_ALL) {
 		arch_spin_unlock(&pmap->lock);
 		mutex_unlock(&kvm->lock);
 		return -EAGAIN;
 	}
 
-	irq_map = &pmap->irq_map[pmap->n_hwirq];
+	for (i = 0; i < pmap->n_all_irq; i++) {
+		if (guest_gsi == pmap->irq_all[i].v_hwirq) {
+			arch_spin_unlock(&pmap->lock);
+			mutex_unlock(&kvm->lock);
+			return -EINVAL;
+		}
+	}
 
-	irq_map->v_hwirq = guest_gsi;
-	irq_map->r_hwirq = desc->irq_data.hwirq;
-	irq_map->irq_data = &desc->irq_data;
+	irq_all = &pmap->irq_all[pmap->n_all_irq];
 
-	pmap->n_hwirq++;
+	irq_all->v_hwirq = guest_gsi;
+	irq_all->r_hwirq = desc->irq_data.hwirq;
+	irq_all->irq_data = &desc->irq_data;
+
+	pmap->n_all_irq++;
 
 	if (!kvm->arch.pmap)
 		kvm->arch.pmap = pmap;
@@ -3365,27 +3455,33 @@ static int kvmppc_clr_passthru_irq(struct kvm *kvm, int host_irq, int guest_gsi)
 
 	arch_spin_lock(&pmap->lock);
 
-	WARN_ON(pmap->n_hwirq < 1);
+	WARN_ON(pmap->n_all_irq < 1);
 
-	for (i = 0; i < pmap->n_hwirq; i++) {
-		if (guest_gsi == pmap->irq_map[i].v_hwirq)
+	for (i = 0; i < pmap->n_all_irq; i++) {
+		if (guest_gsi == pmap->irq_all[i].v_hwirq)
 			break;
 	}
 
-	if (i == pmap->n_hwirq) {
+	if (i == pmap->n_all_irq) {
 		mutex_unlock(&kvm->lock);
 		arch_spin_unlock(&pmap->lock);
 		return -ENODEV;
 	}
 
 	/*
-	 * Replace irq_map entry to be cleared with highest entry (unless
-	 * this is already the highest) so as to not leave any holes in
-	 * the array of irq_maps.
+	 * If this is a mapped IRQ, remove it from the mapped array also
 	 */
-	pmap->n_hwirq--;
-	if (i != pmap->n_hwirq)
-		pmap->irq_map[i] = pmap->irq_map[pmap->n_hwirq];
+	if (!pmap->irq_all[i].irq_data)
+		unmap_passthru_irq(pmap, guest_gsi);
+
+	/*
+	 * Replace irq_all entry to be cleared with highest entry (unless
+	 * this is already the highest) so as to not leave any holes in
+	 * the array of irq_all.
+	 */
+	pmap->n_all_irq--;
+	if (i != pmap->n_all_irq)
+		pmap->irq_all[i] = pmap->irq_all[pmap->n_all_irq];
 
 	/*
 	 * We don't free this structure even when the count goes to

@@ -752,7 +752,7 @@ static inline struct kvmppc_irq_map *get_irqmap(
 {
 	int i;
 
-	for (i = 0; i < pmap->n_hwirq; i++)  {
+	for (i = 0; i < pmap->n_map_irq; i++)  {
 		if (xisr == pmap->irq_map[i].r_hwirq)
 			return &pmap->irq_map[i];
 	}
