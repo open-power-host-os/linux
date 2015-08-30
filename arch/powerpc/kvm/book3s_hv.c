@@ -3409,7 +3409,9 @@ int kvmppc_irq_bypass_add_producer_hv(struct irq_bypass_consumer *cons,
 	irqfd->producer = prod;
 
 	ret = kvmppc_set_passthru_irq(irqfd->kvm, prod->irq, irqfd->gsi);
-	WARN_ON(ret);
+	if (ret)
+		pr_info("kvmppc_set_passthru_irq (irq %d, gsi %d) fails: %d\n",
+			prod->irq, irqfd->gsi, ret);
 
 	return ret;
 }
@@ -3429,7 +3431,9 @@ void kvmppc_irq_bypass_del_producer_hv(struct irq_bypass_consumer *cons,
 	 * will switch back to host.
 	 */
 	ret = kvmppc_clr_passthru_irq(irqfd->kvm, prod->irq, irqfd->gsi);
-	WARN_ON(ret);
+	if (ret)
+		pr_warn("kvmppc_clr_passthru_irq (irq %d, gsi %d) fails: %d\n",
+			prod->irq, irqfd->gsi, ret);
 }
 
 static long kvm_arch_vm_ioctl_hv(struct file *filp,
