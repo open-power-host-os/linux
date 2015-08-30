@@ -726,7 +726,7 @@ static noinline void icp_eoi(struct irq_chip *c, u32 hwirq, u32 xirr)
 
 static noinline long deliver_irq_passthru(struct kvm_vcpu *vcpu,
 				 u32 xirr,
-				 struct kvmppc_irq_map *irq_map,
+				 union kvmppc_irq_map *irq_map,
 				 struct kvmppc_passthru_map *pmap)
 {
 	struct kvmppc_xics *xics;
@@ -748,16 +748,29 @@ static noinline long deliver_irq_passthru(struct kvm_vcpu *vcpu,
 		return -2;
 }
 
-static inline struct kvmppc_irq_map *get_irqmap(
-				struct kvmppc_passthru_map *pmap, u32 xisr)
+static inline u32 get_guest_irq(struct kvmppc_passthru_map *pmap, u32 xisr)
 {
 	int i;
+	union kvmppc_irq_map irq_map;
 
+	/*
+	 * We can access this array without locks, as long we are
+	 * read the irq_map through a single 64-bit read. This
+	 * guarantees that we always read a correct mapping
+	 * between a hwirq and the gsi. If we have a pending IRQ,
+	 * its mapping cannot have been removed and replaced with
+	 * a new mapping (that corresponds to a different device).
+	 * Since we don't have the lock, we might skip over or read
+	 * more than the available entries in here (if an entry here is
+	 * being deleted), and we might thus miss our hwirq, but we
+	 * can never get a bad mapping.
+	 */
 	for (i = 0; i < pmap->n_map_irq; i++)  {
-		if (xisr == pmap->irq_map[i].r_hwirq)
-			return &pmap->irq_map[i];
+		irq_map.raw = pmap->irq_map[i].raw;
+		if (xisr == irq_map.r_hwirq)
+			return irq_map.v_hwirq;
 	}
-	return NULL;
+	return 0;
 }
 
 /*
@@ -776,7 +789,7 @@ long kvmppc_read_intr(struct kvm_vcpu *vcpu, int path)
 	u32 h_xirr, xirr;
 	u32 xisr;
 	struct kvmppc_passthru_map *pmap;
-	struct kvmppc_irq_map *irq_map;
+	union kvmppc_irq_map irq_map;
 	int r;
 	u8 host_ipi;
 
@@ -860,15 +873,14 @@ long kvmppc_read_intr(struct kvm_vcpu *vcpu, int path)
 	 */
 	if (vcpu && kvm_irq_bypass) {
 		pmap = vcpu->kvm->arch.pmap;
-		if (pmap && likely(__arch_spin_trylock(&pmap->lock) == 0)) {
-			irq_map = get_irqmap(pmap, xisr);
-			if (irq_map) {
+		if (pmap) {
+			irq_map.v_hwirq = get_guest_irq(pmap, xisr);
+			if (irq_map.v_hwirq) {
+				irq_map.r_hwirq = xisr;
 				r = deliver_irq_passthru(vcpu, xirr,
-								irq_map, pmap);
-				arch_spin_unlock(&pmap->lock);
+								&irq_map, pmap);
 				return r;
 			}
-			arch_spin_unlock(&pmap->lock);
 		}
 	}
 

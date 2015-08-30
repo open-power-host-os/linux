@@ -917,7 +917,7 @@ static void xics_debugfs_irqmap(struct seq_file *m,
 	seq_printf(m, "========\nPMAP state: %d maps\n===========\n",
 				pmap->n_map_irq);
 	for (i = 0; i < pmap->n_map_irq; i++)  {
-		seq_printf(m, "r_hwirq=%lx, v_hwirq=%lx\n",
+		seq_printf(m, "r_hwirq=%x, v_hwirq=%x\n",
 			pmap->irq_map[i].r_hwirq, pmap->irq_map[i].v_hwirq);
 	}
 }

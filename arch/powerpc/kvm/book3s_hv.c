@@ -3311,14 +3311,10 @@ static int kvmppc_map_passthru_irq_hv(struct kvm *kvm, int irq)
 
 	mutex_lock(&kvm->lock);
 
-	if (kvm->arch.pmap == NULL) {
-		mutex_unlock(&kvm->lock);
-		return 1;
-	}
+	if (kvm->arch.pmap == NULL)
+		goto err_out;
 
 	pmap = kvm->arch.pmap;
-
-	arch_spin_lock(&pmap->lock);
 
 	/* No more entries possible */
 	if (pmap->n_map_irq == KVMPPC_PIRQ_MAPS)
@@ -3337,23 +3333,22 @@ static int kvmppc_map_passthru_irq_hv(struct kvm *kvm, int irq)
 		/* Someone beat us to mapping the IRQ */
 		goto err_out;
 
-	pmap->irq_map[pmap->n_map_irq] = pmap->irq_all[i];
+	/* Make sure this is a 64 bit store */
+	pmap->irq_map[pmap->n_map_irq].raw = pmap->irq_all[i].raw;
 	pmap->n_map_irq++;
 
 	/* r_hwirq == 0 to indicate a mapped IRQ */
 	pmap->irq_all[i].r_hwirq = 0;
 
-	arch_spin_unlock(&pmap->lock);
 	mutex_unlock(&kvm->lock);
 	return 0;
 
 err_out:
-	arch_spin_unlock(&pmap->lock);
 	mutex_unlock(&kvm->lock);
 	return 1;
 }
 
-/* Called with kvm->lock and pmap->lock already acquired */
+/* Called with kvm->lock already acquired */
 static void unmap_passthru_irq(struct kvmppc_passthru_map *pmap, int irq)
 {
 	int i;
@@ -3366,7 +3361,8 @@ static void unmap_passthru_irq(struct kvmppc_passthru_map *pmap, int irq)
 			 * as to not leave any holes in the array of irq_map.
 			 */
 			pmap->n_map_irq--;
-			pmap->irq_map[i] = pmap->irq_map[pmap->n_map_irq];
+			pmap->irq_map[i].raw =
+					pmap->irq_map[pmap->n_map_irq].raw;
 			return;
 		}
 	}
@@ -3376,7 +3372,7 @@ static void unmap_passthru_irq(struct kvmppc_passthru_map *pmap, int irq)
 static int kvmppc_set_passthru_irq(struct kvm *kvm, int host_irq, int guest_gsi)
 {
 	struct irq_desc *desc;
-	struct kvmppc_irq_map *irq_all;
+	union kvmppc_irq_map *irq_all;
 	struct kvmppc_passthru_map *pmap;
 	int i;
 
@@ -3400,28 +3396,23 @@ static int kvmppc_set_passthru_irq(struct kvm *kvm, int host_irq, int guest_gsi)
 	} else
 		pmap = kvm->arch.pmap;
 
-	arch_spin_lock(&pmap->lock);
-
 	/*
 	 * For now, we support only a single IRQ chip
 	 */
 	if (irq_data_get_irq_chip(&desc->irq_data) != pmap->irq_chip) {
 		pr_warn("kvmppc_set_passthru_irq: Could not assign IRQ map for (%d,%d)\n",
 			host_irq, guest_gsi);
-		arch_spin_unlock(&pmap->lock);
 		mutex_unlock(&kvm->lock);
 		return -ENOENT;
 	}
 
 	if (pmap->n_all_irq == KVMPPC_PIRQ_ALL) {
-		arch_spin_unlock(&pmap->lock);
 		mutex_unlock(&kvm->lock);
 		return -EAGAIN;
 	}
 
 	for (i = 0; i < pmap->n_all_irq; i++) {
 		if (guest_gsi == pmap->irq_all[i].v_hwirq) {
-			arch_spin_unlock(&pmap->lock);
 			mutex_unlock(&kvm->lock);
 			return -EINVAL;
 		}
@@ -3439,7 +3430,6 @@ static int kvmppc_set_passthru_irq(struct kvm *kvm, int host_irq, int guest_gsi)
 	if (!kvm->arch.pmap)
 		kvm->arch.pmap = pmap;
 
-	arch_spin_unlock(&pmap->lock);
 	mutex_unlock(&kvm->lock);
 
 	return 0;
@@ -3466,8 +3456,6 @@ static int kvmppc_clr_passthru_irq(struct kvm *kvm, int host_irq, int guest_gsi)
 	}
 	pmap = kvm->arch.pmap;
 
-	arch_spin_lock(&pmap->lock);
-
 	WARN_ON(pmap->n_all_irq < 1);
 
 	for (i = 0; i < pmap->n_all_irq; i++) {
@@ -3477,7 +3465,6 @@ static int kvmppc_clr_passthru_irq(struct kvm *kvm, int host_irq, int guest_gsi)
 
 	if (i == pmap->n_all_irq) {
 		mutex_unlock(&kvm->lock);
-		arch_spin_unlock(&pmap->lock);
 		return -ENODEV;
 	}
 
@@ -3494,19 +3481,15 @@ static int kvmppc_clr_passthru_irq(struct kvm *kvm, int host_irq, int guest_gsi)
 	 */
 	pmap->n_all_irq--;
 	if (i != pmap->n_all_irq)
-		pmap->irq_all[i] = pmap->irq_all[pmap->n_all_irq];
+		pmap->irq_all[i].raw = pmap->irq_all[pmap->n_all_irq].raw;
 
 	kvmppc_xics_clr_passthru(kvm, guest_gsi);
 
 	/*
 	 * We don't free this structure even when the count goes to
-	 * zero, this is to handle the case where the real mode KVM
-	 * handler is spinning for the pmap lock after checking for
-	 * the existence of kvm->arch.pmap. The structure is freed
-	 * when we destroy the VM
+	 * zero. The structure is freed when we destroy the VM.
 	 */
 
-	arch_spin_unlock(&pmap->lock);
 	mutex_unlock(&kvm->lock);
 	return 0;
 }
