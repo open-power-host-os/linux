@@ -2463,10 +2463,8 @@ static void pnv_ioda_setup_dma(struct pnv_phb *phb)
 }
 
 #ifdef CONFIG_PCI_MSI
-int64_t pnv_opal_pci_msi_eoi(struct irq_data *d)
+int64_t pnv_opal_pci_msi_eoi(struct irq_chip *chip, unsigned int hw_irq)
 {
-	unsigned int hw_irq = (unsigned int)irqd_to_hwirq(d);
-	struct irq_chip *chip = irq_data_get_irq_chip(d);
 	struct pnv_phb *phb = container_of(chip, struct pnv_phb,
 					   ioda.irq_chip);
 	int64_t rc;
@@ -2478,8 +2476,10 @@ int64_t pnv_opal_pci_msi_eoi(struct irq_data *d)
 static void pnv_ioda2_msi_eoi(struct irq_data *d)
 {
 	int64_t rc;
+	unsigned int hw_irq = (unsigned int)irqd_to_hwirq(d);
+	struct irq_chip *chip = irq_data_get_irq_chip(d);
 
-	rc = pnv_opal_pci_msi_eoi(d);
+	rc = pnv_opal_pci_msi_eoi(chip, hw_irq);
 	WARN_ON_ONCE(rc);
 
 	icp_native_eoi(d);

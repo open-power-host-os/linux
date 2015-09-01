@@ -958,6 +958,16 @@ void kvm_arch_irq_bypass_start(struct irq_bypass_consumer *cons)
 {
 }
 
+int kvmppc_map_passthru_irq(struct kvm *kvm, int irq)
+{
+	int r = 0;
+
+	if (kvm->arch.kvm_ops->map_passthru_irq)
+		r = kvm->arch.kvm_ops->map_passthru_irq(kvm, irq);
+
+	return r;
+}
+
 static int kvmppc_book3s_init(void)
 {
 	int r;

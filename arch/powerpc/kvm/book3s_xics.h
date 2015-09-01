@@ -41,6 +41,8 @@ struct ics_irq_state {
 	u8  masked_pending;
 	u8  asserted; /* Only for LSI */
 	u8  exists;
+	u8  passthru;
+	u8  mapped;
 };
 
 /* Atomic ICP state, updated with a single compare & swap */

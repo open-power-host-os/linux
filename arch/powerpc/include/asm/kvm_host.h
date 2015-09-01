@@ -60,6 +60,7 @@ extern int kvm_unmap_hva_range(struct kvm *kvm,
 extern int kvm_age_hva(struct kvm *kvm, unsigned long start, unsigned long end);
 extern int kvm_test_age_hva(struct kvm *kvm, unsigned long hva);
 extern void kvm_set_spte_hva(struct kvm *kvm, unsigned long hva, pte_t pte);
+extern int kvmppc_map_passthru_irq(struct kvm *kvm, int guest_gsi);
 
 static inline void kvm_arch_mmu_notifier_invalidate_page(struct kvm *kvm,
 							 unsigned long address)
@@ -195,6 +196,7 @@ struct kvmppc_spapr_tce_table {
 /* XICS components, defined in book3s_xics.c */
 struct kvmppc_xics;
 struct kvmppc_icp;
+
 struct kvmppc_passthru_map;
 
 /*
@@ -401,21 +403,28 @@ struct kvmhv_tb_accumulator {
 };
 
 #ifdef CONFIG_PPC_BOOK3S_64
-struct kvmppc_irq_map {
-	unsigned long	r_hwirq;
-	unsigned long	v_hwirq;
-	struct irq_data *irq_data;
+#ifdef CONFIG_KVM_XICS
+union kvmppc_irq_map {
+	unsigned long raw;
+	struct {
+		u32	r_hwirq;
+		u32	v_hwirq;
+	};
 };
 
 #define	KVMPPC_PIRQ_MAPS	16
+#define	KVMPPC_PIRQ_ALL		64
 struct kvmppc_passthru_map {
-	arch_spinlock_t lock;
-	int n_hwirq;
+	int n_map_irq;
+	int n_all_irq;
 	unsigned long min_irq;
 	unsigned long max_irq;
+	struct irq_chip *irq_chip;
 	struct kvmppc_passthru_map *next;
-	struct kvmppc_irq_map irq_map[KVMPPC_PIRQ_MAPS];
+	union kvmppc_irq_map irq_map[KVMPPC_PIRQ_MAPS];
+	union kvmppc_irq_map irq_all[KVMPPC_PIRQ_ALL];
 };
+#endif
 #endif
 
 # ifdef CONFIG_PPC_FSL_BOOK3E
