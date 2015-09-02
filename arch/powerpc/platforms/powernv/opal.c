@@ -319,6 +319,7 @@ int opal_message_notifier_register(enum OpalMessageType msg_type,
 	return atomic_notifier_chain_register(
 				&opal_msg_notifier_head[msg_type], nb);
 }
+EXPORT_SYMBOL_GPL(opal_message_notifier_register);
 
 int opal_message_notifier_unregister(enum OpalMessageType msg_type,
 				     struct notifier_block *nb)
@@ -326,6 +327,7 @@ int opal_message_notifier_unregister(enum OpalMessageType msg_type,
 	return atomic_notifier_chain_unregister(
 			&opal_msg_notifier_head[msg_type], nb);
 }
+EXPORT_SYMBOL_GPL(opal_message_notifier_unregister);
 
 static void opal_message_do_notify(uint32_t msg_type, void *msg)
 {
@@ -821,6 +823,8 @@ void opal_shutdown(void)
 
 /* Export this so that test modules can use it */
 EXPORT_SYMBOL_GPL(opal_invalid_call);
+EXPORT_SYMBOL_GPL(opal_xscom_read);
+EXPORT_SYMBOL_GPL(opal_xscom_write);
 EXPORT_SYMBOL_GPL(opal_ipmi_send);
 EXPORT_SYMBOL_GPL(opal_ipmi_recv);
 
