@@ -312,6 +312,8 @@ enum OpalMessageType {
 	OPAL_MSG_SHUTDOWN,
 	OPAL_MSG_HMI_EVT,
 	OPAL_MSG_DPO,
+	OPAL_MSG_PRD,
+	OPAL_MSG_OCC,
 	OPAL_MSG_TYPE_MAX,
 };
 
@@ -855,6 +857,17 @@ typedef struct oppanel_line {
 	const char * 	line;
 	uint64_t 	line_len;
 } oppanel_line_t;
+
+#define OCC_RESET                       0
+#define OCC_LOAD                        1
+#define OCC_THROTTLE                    2
+#define OCC_MAX_THROTTLE_STATUS         5
+
+struct opal_occ_msg {
+        __be64 type;
+        __be64 chip;
+        __be64 throttle_status;
+};
 
 /* OPAL I2C request */
 struct opal_i2c_request {
