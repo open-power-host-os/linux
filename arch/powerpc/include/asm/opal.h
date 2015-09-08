@@ -312,6 +312,8 @@ enum OpalMessageType {
 	OPAL_MSG_SHUTDOWN,
 	OPAL_MSG_HMI_EVT,
 	OPAL_MSG_DPO,
+	OPAL_MSG_PRD,
+	OPAL_MSG_OCC,
 	OPAL_MSG_TYPE_MAX,
 };
 
@@ -856,6 +858,17 @@ typedef struct oppanel_line {
 	uint64_t 	line_len;
 } oppanel_line_t;
 
+#define OCC_RESET                       0
+#define OCC_LOAD                        1
+#define OCC_THROTTLE                    2
+#define OCC_MAX_THROTTLE_STATUS         5
+
+struct opal_occ_msg {
+        __be64 type;
+        __be64 chip;
+        __be64 throttle_status;
+};
+
 /* OPAL I2C request */
 struct opal_i2c_request {
 	uint8_t	type;
@@ -1068,6 +1081,8 @@ extern int opal_notifier_unregister(struct notifier_block *nb);
 
 extern int opal_message_notifier_register(enum OpalMessageType msg_type,
 						struct notifier_block *nb);
+extern int opal_message_notifier_unregister(enum OpalMessageType msg_type,
+					    struct notifier_block *nb);
 extern void opal_notifier_enable(void);
 extern void opal_notifier_disable(void);
 extern void opal_notifier_update_evt(uint64_t evt_mask, uint64_t evt_val);
