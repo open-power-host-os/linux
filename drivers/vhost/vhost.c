@@ -1452,11 +1452,11 @@ static int __copyhead_to_user(struct vhost_virtqueue *vq,
 	int i;
 
 	for (i = 0; i < count; i++) {
-		if (__vq_put_user(vq, heads[i].id, &used[i].id)) {
+		if (__put_user(heads[i].id, &used[i].id)) {
 			vq_err(vq, "Failed to write used id");
 			return -EFAULT;
 		}
-		if (__vq_put_user(vq, heads[i].len, &used[i].len)) {
+		if (__put_user(heads[i].len, &used[i].len)) {
 			vq_err(vq, "Failed to write used len");
 			return -EFAULT;
 		}
@@ -1527,7 +1527,7 @@ int vhost_add_used_n(struct vhost_virtqueue *vq, struct vring_used_elem *heads,
 
 	/* Make sure buffer is written before we update index. */
 	smp_wmb();
-	if (vq_put_user(vq, vq->last_used_idx, &vq->used->idx)) {
+	if (put_user(vq->last_used_idx, &vq->used->idx)) {
 		vq_err(vq, "Failed to increment used idx");
 		return -EFAULT;
 	}
