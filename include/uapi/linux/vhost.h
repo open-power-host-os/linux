@@ -34,9 +34,6 @@ struct vhost_vring_addr {
 	/* Flag values: */
 	/* Whether log address is valid. If set enables logging. */
 #define VHOST_VRING_F_LOG 0
-	/* Whether vring memory accesses should be byte-swapped.
-	 * required when the guest has a different endianess */
-#define VHOST_VRING_F_BYTESWAP 1
 
 	/* Start of array of descriptors (virtually contiguous) */
 	__u64 desc_user_addr;

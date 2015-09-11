@@ -701,8 +701,7 @@ long vhost_vring_ioctl(struct vhost_dev *d, int ioctl, void __user *argp)
 			r = -EFAULT;
 			break;
 		}
-		if (a.flags & ~(0x1 << VHOST_VRING_F_LOG |
-				0x1 << VHOST_VRING_F_BYTESWAP)) {
+		if (a.flags & ~(0x1 << VHOST_VRING_F_LOG)) {
 			r = -EOPNOTSUPP;
 			break;
 		}
@@ -748,7 +747,6 @@ long vhost_vring_ioctl(struct vhost_dev *d, int ioctl, void __user *argp)
 		vq->avail = (void __user *)(unsigned long)a.avail_user_addr;
 		vq->log_addr = a.log_guest_addr;
 		vq->used = (void __user *)(unsigned long)a.used_user_addr;
-		vq->byteswap = !!(a.flags & (0x1 << VHOST_VRING_F_BYTESWAP));
 		break;
 	case VHOST_SET_VRING_KICK:
 		if (copy_from_user(&f, argp, sizeof f)) {

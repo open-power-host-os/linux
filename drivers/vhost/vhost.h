@@ -110,7 +110,6 @@ struct vhost_virtqueue {
 	/* Log write descriptors */
 	void __user *log_base;
 	struct vhost_log *log;
-	bool byteswap;
 };
 
 struct vhost_dev {
