@@ -1095,7 +1095,7 @@ static void vring_desc_swap(struct vring_desc *desc)
 static int vhost_update_used_flags(struct vhost_virtqueue *vq)
 {
 	void __user *used;
-	if (__vq_put_user(vq, vq->used_flags, &vq->used->flags) < 0)
+	if (__put_user(vq->used_flags, &vq->used->flags) < 0)
 		return -EFAULT;
 	if (unlikely(vq->log_used)) {
 		/* Make sure the flag is seen before log. */
@@ -1113,7 +1113,7 @@ static int vhost_update_used_flags(struct vhost_virtqueue *vq)
 
 static int vhost_update_avail_event(struct vhost_virtqueue *vq, u16 avail_event)
 {
-	if (__vq_put_user(vq, vq->avail_idx, vhost_avail_event(vq)))
+	if (__put_user(vq->avail_idx, vhost_avail_event(vq)))
 		return -EFAULT;
 	if (unlikely(vq->log_used)) {
 		void __user *used;
@@ -1140,7 +1140,7 @@ int vhost_init_used(struct vhost_virtqueue *vq)
 	if (r)
 		return r;
 	vq->signalled_used_valid = false;
-	return vq_get_user(vq, vq->last_used_idx, &vq->used->idx);
+	return get_user(vq->last_used_idx, &vq->used->idx);
 }
 EXPORT_SYMBOL_GPL(vhost_init_used);
 
@@ -1252,10 +1252,6 @@ static int get_indirect(struct vhost_virtqueue *vq,
 			       i, (size_t)indirect->addr + i * sizeof desc);
 			return -EINVAL;
 		}
-
-		if (vq->byteswap)
-			vring_desc_swap(&desc);
-
 		if (unlikely(desc.flags & VRING_DESC_F_INDIRECT)) {
 			vq_err(vq, "Nested indirect descriptor: idx %d, %zx\n",
 			       i, (size_t)indirect->addr + i * sizeof desc);
@@ -1311,7 +1307,7 @@ int vhost_get_vq_desc(struct vhost_virtqueue *vq,
 
 	/* Check it isn't doing very strange things with descriptor numbers. */
 	last_avail_idx = vq->last_avail_idx;
-	if (unlikely(__vq_get_user(vq, vq->avail_idx, &vq->avail->idx))) {
+	if (unlikely(__get_user(vq->avail_idx, &vq->avail->idx))) {
 		vq_err(vq, "Failed to access avail idx at %p\n",
 		       &vq->avail->idx);
 		return -EFAULT;
@@ -1332,7 +1328,7 @@ int vhost_get_vq_desc(struct vhost_virtqueue *vq,
 
 	/* Grab the next descriptor number they're advertising, and increment
 	 * the index we've seen. */
-	if (unlikely(__vq_get_user(vq, head,
+	if (unlikely(__get_user(head,
 				&vq->avail->ring[last_avail_idx % vq->num]))) {
 		vq_err(vq, "Failed to read head: idx %d address %p\n",
 		       last_avail_idx,
@@ -1372,10 +1368,6 @@ int vhost_get_vq_desc(struct vhost_virtqueue *vq,
 			       i, vq->desc + i);
 			return -EFAULT;
 		}
-
-		if (vq->byteswap)
-			vring_desc_swap(&desc);
-
 		if (desc.flags & VRING_DESC_F_INDIRECT) {
 			ret = get_indirect(vq, iov, iov_size,
 					   out_num, in_num,
@@ -1443,26 +1435,6 @@ int vhost_add_used(struct vhost_virtqueue *vq, unsigned int head, int len)
 }
 EXPORT_SYMBOL_GPL(vhost_add_used);
 
-static int __copyhead_to_user(struct vhost_virtqueue *vq,
-			struct vring_used_elem *heads,
-			struct vring_used_elem __user *used,
-			unsigned count)
-{
-	int i;
-
-	for (i = 0; i < count; i++) {
-		if (__put_user(heads[i].id, &used[i].id)) {
-			vq_err(vq, "Failed to write used id");
-			return -EFAULT;
-		}
-		if (__put_user(heads[i].len, &used[i].len)) {
-			vq_err(vq, "Failed to write used len");
-			return -EFAULT;
-		}
-	}
-	return 0;
-}
-
 static int __vhost_add_used_n(struct vhost_virtqueue *vq,
 			    struct vring_used_elem *heads,
 			    unsigned count)
@@ -1473,16 +1445,7 @@ static int __vhost_add_used_n(struct vhost_virtqueue *vq,
 
 	start = vq->last_used_idx % vq->num;
 	used = vq->used->ring + start;
-	if (count == 1) {
-		if (__vq_put_user(vq, heads[0].id, &used->id)) {
-			vq_err(vq, "Failed to write used id");
-			return -EFAULT;
-		}
-		if (__vq_put_user(vq, heads[0].len, &used->len)) {
-			vq_err(vq, "Failed to write used len");
-			return -EFAULT;
-		}
-	} else if (__copyhead_to_user(vq, heads, used, count)) {
+	if (__copy_to_user(used, heads, count * sizeof *used)) {
 		vq_err(vq, "Failed to write used");
 		return -EFAULT;
 	}
@@ -1557,7 +1520,7 @@ static bool vhost_notify(struct vhost_dev *dev, struct vhost_virtqueue *vq)
 
 	if (!vhost_has_feature(vq, VIRTIO_RING_F_EVENT_IDX)) {
 		__u16 flags;
-		if (__vq_get_user(vq, flags, &vq->avail->flags)) {
+		if (__get_user(flags, &vq->avail->flags)) {
 			vq_err(vq, "Failed to get flags");
 			return true;
 		}
@@ -1571,7 +1534,7 @@ static bool vhost_notify(struct vhost_dev *dev, struct vhost_virtqueue *vq)
 	if (unlikely(!v))
 		return true;
 
-	if (vq_get_user(vq, event, vhost_used_event(vq))) {
+	if (get_user(event, vhost_used_event(vq))) {
 		vq_err(vq, "Failed to get used event idx");
 		return true;
 	}
@@ -1634,7 +1597,7 @@ bool vhost_enable_notify(struct vhost_dev *dev, struct vhost_virtqueue *vq)
 	/* They could have slipped one in as we were doing that: make
 	 * sure it's written, then check again. */
 	smp_mb();
-	r = __vq_get_user(vq, avail_idx, &vq->avail->idx);
+	r = __get_user(avail_idx, &vq->avail->idx);
 	if (r) {
 		vq_err(vq, "Failed to check avail idx at %p: %d\n",
 		       &vq->avail->idx, r);
