@@ -170,6 +170,9 @@ struct opal_sg_list {
 #define OPAL_IPMI_SEND				107
 #define OPAL_IPMI_RECV				108
 #define OPAL_I2C_REQUEST			109
+#define OPAL_FLASH_READ				110
+#define OPAL_FLASH_WRITE			111
+#define OPAL_FLASH_ERASE			112
 #define OPAL_LEDS_GET_INDICATOR			114
 #define OPAL_LEDS_SET_INDICATOR			115
 #define OPAL_LAST				115
@@ -1065,6 +1068,13 @@ int64_t opal_leds_get_ind(char *loc_code, __be64 *led_mask,
 int64_t opal_leds_set_ind(uint64_t token, char *loc_code, const u64 led_mask,
 			  const u64 led_value, __be64 *max_led_type);
 
+int64_t opal_flash_read(uint64_t id, uint64_t offset, uint64_t buf,
+		uint64_t size, uint64_t token);
+int64_t opal_flash_write(uint64_t id, uint64_t offset, uint64_t buf,
+		uint64_t size, uint64_t token);
+int64_t opal_flash_erase(uint64_t id, uint64_t offset, uint64_t size,
+		uint64_t token);
+
 /* Internal functions */
 extern int early_init_dt_scan_opal(unsigned long node, const char *uname,
 				   int depth, void *data);
@@ -1098,7 +1108,7 @@ struct rtc_time;
 extern unsigned long opal_get_boot_time(void);
 extern void opal_nvram_init(void);
 extern int opal_elog_register_init(void);
-extern void opal_flash_init(void);
+extern void opal_flash_update_init(void);
 extern void opal_flash_term_callback(void);
 extern int opal_elog_init(void);
 extern void opal_platform_dump_init(void);
