@@ -198,7 +198,6 @@ static void vhost_vq_reset(struct vhost_dev *dev,
 	vq->call_ctx = NULL;
 	vq->call = NULL;
 	vq->log_ctx = NULL;
-	vq->byteswap = 0;
 	vq->memory = NULL;
 }
 
