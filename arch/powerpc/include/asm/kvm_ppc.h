@@ -233,7 +233,9 @@ extern int kvmppc_xics_get_xive(struct kvm *kvm, u32 irq, u32 *server,
 				u32 *priority);
 extern int kvmppc_xics_int_on(struct kvm *kvm, u32 irq);
 extern int kvmppc_xics_int_off(struct kvm *kvm, u32 irq);
-extern int kvmppc_xics_rm_complete(struct kvm_vcpu *vcpu, u32 hcall);
+extern long kvmppc_deliver_irq_passthru(struct kvm_vcpu *vcpu, u32 xirr,
+				 union kvmppc_irq_map *irq_map,
+				 struct kvmppc_passthru_map *pmap);
 
 void kvmppc_core_dequeue_debug(struct kvm_vcpu *vcpu);
 void kvmppc_core_queue_debug(struct kvm_vcpu *vcpu);
@@ -465,6 +467,20 @@ static inline int kvmppc_xics_enabled(struct kvm_vcpu *vcpu)
 {
 	return vcpu->arch.irq_type == KVMPPC_IRQ_XICS;
 }
+
+static inline struct kvmppc_passthru_map *kvmppc_get_passthru_map(
+				struct kvm_vcpu *vcpu)
+{
+	if (vcpu && kvm_irq_bypass)
+		return vcpu->kvm->arch.pmap;
+	else
+		return NULL;
+}
+
+extern void kvmppc_alloc_host_rm_ops(void);
+extern void kvmppc_free_host_rm_ops(void);
+extern void kvmppc_free_pmap(struct kvm *kvm);
+extern int kvmppc_xics_rm_complete(struct kvm_vcpu *vcpu, u32 hcall);
 extern void kvmppc_xics_free_icp(struct kvm_vcpu *vcpu);
 extern int kvmppc_xics_create_icp(struct kvm_vcpu *vcpu, unsigned long server);
 extern int kvm_vm_ioctl_xics_irq(struct kvm *kvm, struct kvm_irq_level *args);
@@ -476,6 +492,28 @@ extern int kvmppc_xics_connect_vcpu(struct kvm_device *dev,
 extern void kvmppc_xics_ipi_action(void);
 extern void kvmppc_xics_set_passthru(struct kvm *kvm, unsigned long irq);
 extern void kvmppc_xics_clr_passthru(struct kvm *kvm, unsigned long irq);
+
+#else
+static inline int kvmppc_xics_enabled(struct kvm_vcpu *vcpu)
+	{ return 0; }
+static inline struct kvmppc_passthru_map *kvmppc_get_passthru_map(
+				struct kvm_vcpu *vcpu)
+	{ return NULL; }
+static inline void kvmppc_alloc_host_rm_ops(void) {};
+static inline void kvmppc_free_host_rm_ops(void) {};
+static inline void kvmppc_free_pmap(struct kvm *kvm) {};
+static inline int kvmppc_xics_rm_complete(struct kvm_vcpu *vcpu, u32 hcall)
+	{ return 0; }
+static inline void kvmppc_xics_free_icp(struct kvm_vcpu *vcpu) { }
+static inline int kvmppc_xics_create_icp(struct kvm_vcpu *vcpu,
+					 unsigned long server)
+	{ return -EINVAL; }
+static inline int kvm_vm_ioctl_xics_irq(struct kvm *kvm,
+					struct kvm_irq_level *args)
+	{ return -ENOTTY; }
+static inline int kvmppc_xics_hcall(struct kvm_vcpu *vcpu, u32 cmd)
+	{ return 0; }
+#endif
 
 /*
  * Host-side operations we want to set up while running in real
@@ -502,19 +540,6 @@ struct kvmppc_host_rm_ops {
 };
 
 extern struct kvmppc_host_rm_ops *kvmppc_host_rm_ops_hv;
-#else
-static inline int kvmppc_xics_enabled(struct kvm_vcpu *vcpu)
-	{ return 0; }
-static inline void kvmppc_xics_free_icp(struct kvm_vcpu *vcpu) { }
-static inline int kvmppc_xics_create_icp(struct kvm_vcpu *vcpu,
-					 unsigned long server)
-	{ return -EINVAL; }
-static inline int kvm_vm_ioctl_xics_irq(struct kvm *kvm,
-					struct kvm_irq_level *args)
-	{ return -ENOTTY; }
-static inline int kvmppc_xics_hcall(struct kvm_vcpu *vcpu, u32 cmd)
-	{ return 0; }
-#endif
 
 static inline unsigned long kvmppc_get_epr(struct kvm_vcpu *vcpu)
 {

@@ -25,8 +25,7 @@
 #include <asm/xics.h>
 #include <asm/dbell.h>
 #include <asm/cputhreads.h>
-
-#include "book3s_xics.h"
+#include <asm/io.h>
 
 #define KVM_CMA_CHUNK_ORDER	18
 
@@ -292,37 +291,139 @@ void kvmhv_commence_exit(int trap)
 struct kvmppc_host_rm_ops *kvmppc_host_rm_ops_hv;
 EXPORT_SYMBOL_GPL(kvmppc_host_rm_ops_hv);
 
-/**
- * Host Operations poked by RM
- */
-static void rm_host_ipi_action(int action, void *data)
+static inline u32 get_guest_irq(struct kvmppc_passthru_map *pmap, u32 xisr)
 {
-	switch (action) {
-	case XICS_RM_KICK_VCPU:
-		kvmppc_host_rm_ops_hv->vcpu_kick(data);
-		break;
-	default:
-		WARN(1, "Unexpected rm_action=%d data=%p\n", action, data);
-		break;
-	}
+	int i;
+	union kvmppc_irq_map irq_map;
 
+	/*
+	 * We can access this array without locks, as long we are
+	 * read the irq_map through a single 64-bit read. This
+	 * guarantees that we always read a correct mapping
+	 * between a hwirq and the gsi. If we have a pending IRQ,
+	 * its mapping cannot have been removed and replaced with
+	 * a new mapping (that corresponds to a different device).
+	 * Since we don't have the lock, we might skip over or read
+	 * more than the available entries in here (if an entry here is
+	 * being deleted), and we might thus miss our hwirq, but we
+	 * can never get a bad mapping.
+	 */
+	for (i = 0; i < pmap->n_map_irq; i++)  {
+		irq_map.raw = pmap->irq_map[i].raw;
+		if (xisr == irq_map.r_hwirq)
+			return irq_map.v_hwirq;
+	}
+	return 0;
 }
 
-void kvmppc_xics_ipi_action(void)
+/*
+ * Determine what sort of external interrupt is pending (if any).
+ * Returns:
+ *	0 if no interrupt is pending
+ *	1 if an interrupt is pending that needs to be handled by the host
+ *	2 Passthrough that needs completion in the host
+ *	-1 if there was a guest wakeup IPI (which has now been cleared)
+ *	-2 if there is PCI passthrough external interrupt that was handled
+ */
+
+long kvmppc_read_intr(struct kvm_vcpu *vcpu, int path)
 {
-	int core;
-	unsigned int cpu = smp_processor_id();
-	struct kvmppc_host_rm_core *rm_corep;
+	unsigned long xics_phys;
+	u32 h_xirr, xirr;
+	u32 xisr;
+	struct kvmppc_passthru_map *pmap;
+	union kvmppc_irq_map irq_map;
+	int r;
+	u8 host_ipi;
 
-	core = cpu >> threads_shift;
-	rm_corep = &kvmppc_host_rm_ops_hv->rm_core[core];
+	/* see if a host IPI is pending */
+	host_ipi = local_paca->kvm_hstate.host_ipi;
+	if (host_ipi)
+		return 1;
 
-	if (rm_corep->rm_data) {
-		rm_host_ipi_action(rm_corep->rm_state.rm_action,
-							rm_corep->rm_data);
-		/* Order these stores against the real mode KVM */
-		rm_corep->rm_data = NULL;
-		smp_wmb();
-		rm_corep->rm_state.rm_action = 0;
+	/* Now read the interrupt from the ICP */
+	xics_phys = local_paca->kvm_hstate.xics_phys;
+	if (unlikely(!xics_phys))
+		return 1;
+
+	/*
+	 * Save XIRR for later. Since we get control in reverse endian
+	 * on LE systems, save it byte reversed and fetch it back in
+	 * host endian. Note that xirr is the value read from the
+	 * XIRR register, while h_xirr is the host endian version.
+	 */
+	xirr = _lwzcix(xics_phys + XICS_XIRR);
+#ifdef __LITTLE_ENDIAN__
+	st_le32(&local_paca->kvm_hstate.saved_xirr, xirr);
+	h_xirr = local_paca->kvm_hstate.saved_xirr;
+#else
+	h_xirr = xirr;
+#endif
+	xisr = h_xirr & 0xffffff;
+	/*
+	 * Ensure that the store/load complete to guarantee all side
+	 * effects of loading from XIRR has completed
+	 */
+	smp_mb();
+
+	/* if nothing pending in the ICP */
+	if (!xisr)
+		return 0;
+
+	/* We found something in the ICP...
+	 *
+	 * If it is an IPI, clear the MFRR and EOI it.
+	 */
+	if (xisr == XICS_IPI) {
+		_stbcix(xics_phys + XICS_MFRR, 0xff);
+		_stwcix(xics_phys + XICS_XIRR, xirr);
+		/*
+		 * Need to ensure side effects of above stores
+		 * complete before proceeding.
+		 */
+		smp_mb();
+
+		/*
+		 * We need to re-check host IPI now in case it got set in the
+		 * meantime. If it's clear, we bounce the interrupt to the
+		 * guest
+		 */
+		host_ipi = local_paca->kvm_hstate.host_ipi;
+		if (unlikely(host_ipi != 0)) {
+			/* We raced with the host,
+			 * we need to resend that IPI, bummer
+			 */
+			_stbcix(xics_phys + XICS_MFRR, IPI_PRIORITY);
+			/* Let side effects complete */
+			smp_mb();
+			return 1;
+		}
+
+		/* OK, it's an IPI for us */
+		return -1;
 	}
+
+	/*
+	 * If it's not an IPI, check if we have a passthrough adapter and
+	 * if so, check if this external interrupt is for the adapter.
+	 * We will attempt to deliver the IRQ directly to the target VCPU's
+	 * ICP, the virtual ICP (based on affinity - the xive value in ICS).
+	 *
+	 * If the delivery fails or if this is not for a passthrough adapter,
+	 * return to the host to handle this interrupt. We earlier
+	 * saved a copy of the XIRR in the PACA, it will be picked up by
+	 * the host ICP driver
+	 */
+	pmap = kvmppc_get_passthru_map(vcpu);
+	if (pmap) {
+		irq_map.v_hwirq = get_guest_irq(pmap, xisr);
+		if (irq_map.v_hwirq) {
+			irq_map.r_hwirq = xisr;
+			r = kvmppc_deliver_irq_passthru(vcpu, xirr,
+								&irq_map, pmap);
+			return r;
+		}
+	}
+
+	return 1;
 }
