@@ -3136,6 +3136,7 @@ static int kvmppc_hv_setup_htab_rma(struct kvm_vcpu *vcpu)
 	goto out_srcu;
 }
 
+#ifdef CONFIG_KVM_XICS
 static int kvmppc_cpu_notify(struct notifier_block *self, unsigned long action,
 			void *hcpu)
 {
@@ -3176,7 +3177,7 @@ static struct notifier_block kvmppc_cpu_notifier = {
  * It's OK for this routine to fail, we just don't support host
  * core operations like redirecting H_IPI wakeups.
  */
-static void kvmppc_alloc_host_rm_ops(void)
+void kvmppc_alloc_host_rm_ops(void)
 {
 	struct kvmppc_host_rm_ops *ops;
 	unsigned long l_ops;
@@ -3231,6 +3232,17 @@ static void kvmppc_alloc_host_rm_ops(void)
 
 	put_online_cpus();
 }
+
+void kvmppc_free_host_rm_ops(void)
+{
+	if (kvmppc_host_rm_ops_hv) {
+		unregister_cpu_notifier(&kvmppc_cpu_notifier);
+		kfree(kvmppc_host_rm_ops_hv->rm_core);
+		kfree(kvmppc_host_rm_ops_hv);
+		kvmppc_host_rm_ops_hv = NULL;
+	}
+}
+#endif
 
 static int kvmppc_core_init_vm_hv(struct kvm *kvm)
 {
@@ -3314,7 +3326,7 @@ static void kvmppc_core_destroy_vm_hv(struct kvm *kvm)
 
 	kvmppc_free_hpt(kvm);
 
-	kfree(kvm->arch.pmap);
+	kvmppc_free_pmap(kvm);
 }
 
 /* We don't need to emulate any privileged instructions or dcbz */
@@ -3345,6 +3357,23 @@ static int kvmppc_core_check_processor_compat_hv(void)
 }
 
 #ifdef CONFIG_KVM_XICS
+
+void kvmppc_free_pmap(struct kvm *kvm)
+{
+	kfree(kvm->arch.pmap);
+}
+
+static struct kvmppc_passthru_map* kvmppc_alloc_pmap(struct irq_desc *desc)
+{
+	struct kvmppc_passthru_map *pmap;
+
+	pmap = kzalloc(sizeof(struct kvmppc_passthru_map), GFP_KERNEL);
+	if (pmap != NULL)
+		pmap->irq_chip = irq_data_get_irq_chip(&desc->irq_data);
+
+	return pmap;
+}
+
 /*
  * Map a passthrough IRQ
  * This is accomplished by copying the IRQ details from the
@@ -3440,12 +3469,11 @@ static int kvmppc_set_passthru_irq(struct kvm *kvm, int host_irq, int guest_gsi)
 
 	if (kvm->arch.pmap == NULL) {
 		/* First call, allocate structure to hold IRQ map */
-		pmap = kzalloc(sizeof(struct kvmppc_passthru_map), GFP_KERNEL);
+		pmap = kvmppc_alloc_pmap(desc);
 		if (pmap == NULL) {
 			mutex_unlock(&kvm->lock);
 			return -ENOMEM;
 		}
-		pmap->irq_chip = irq_data_get_irq_chip(&desc->irq_data);
 	} else
 		pmap = kvm->arch.pmap;
 
@@ -3547,8 +3575,6 @@ static int kvmppc_clr_passthru_irq(struct kvm *kvm, int host_irq, int guest_gsi)
 	return 0;
 }
 
-#endif
-
 int kvmppc_irq_bypass_add_producer_hv(struct irq_bypass_consumer *cons,
 				      struct irq_bypass_producer *prod)
 {
@@ -3556,14 +3582,12 @@ int kvmppc_irq_bypass_add_producer_hv(struct irq_bypass_consumer *cons,
 	struct kvm_kernel_irqfd *irqfd =
 		container_of(cons, struct kvm_kernel_irqfd, consumer);
 
-#ifdef CONFIG_KVM_XICS
 	irqfd->producer = prod;
 
 	ret = kvmppc_set_passthru_irq(irqfd->kvm, prod->irq, irqfd->gsi);
 	if (ret)
 		pr_info("kvmppc_set_passthru_irq (irq %d, gsi %d) fails: %d\n",
 			prod->irq, irqfd->gsi, ret);
-#endif
 
 	return ret;
 }
@@ -3575,7 +3599,6 @@ void kvmppc_irq_bypass_del_producer_hv(struct irq_bypass_consumer *cons,
 	struct kvm_kernel_irqfd *irqfd =
 		container_of(cons, struct kvm_kernel_irqfd, consumer);
 
-#ifdef CONFIG_KVM_XICS
 	irqfd->producer = NULL;
 
 	/*
@@ -3587,8 +3610,8 @@ void kvmppc_irq_bypass_del_producer_hv(struct irq_bypass_consumer *cons,
 	if (ret)
 		pr_warn("kvmppc_clr_passthru_irq (irq %d, gsi %d) fails: %d\n",
 			prod->irq, irqfd->gsi, ret);
-#endif
 }
+#endif
 
 static long kvm_arch_vm_ioctl_hv(struct file *filp,
 				 unsigned int ioctl, unsigned long arg)
@@ -3709,9 +3732,11 @@ static struct kvmppc_ops kvm_ops_hv = {
 	.fast_vcpu_kick = kvmppc_fast_vcpu_kick_hv,
 	.arch_vm_ioctl  = kvm_arch_vm_ioctl_hv,
 	.hcall_implemented = kvmppc_hcall_impl_hv,
+#ifdef CONFIG_KVM_XICS
 	.irq_bypass_add_producer = kvmppc_irq_bypass_add_producer_hv,
 	.irq_bypass_del_producer = kvmppc_irq_bypass_del_producer_hv,
 	.map_passthru_irq = kvmppc_map_passthru_irq_hv,
+#endif
 };
 
 static int kvmppc_book3s_init_hv(void)
@@ -3737,13 +3762,9 @@ static int kvmppc_book3s_init_hv(void)
 
 static void kvmppc_book3s_exit_hv(void)
 {
-	if (kvmppc_host_rm_ops_hv) {
-		unregister_cpu_notifier(&kvmppc_cpu_notifier);
-		kfree(kvmppc_host_rm_ops_hv->rm_core);
-		kfree(kvmppc_host_rm_ops_hv);
-		kvmppc_host_rm_ops_hv = NULL;
-	}
+	kvmppc_free_host_rm_ops();
 	kvmppc_hv_ops = NULL;
+
 }
 
 module_init(kvmppc_book3s_init_hv);

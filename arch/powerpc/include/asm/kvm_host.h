@@ -403,7 +403,6 @@ struct kvmhv_tb_accumulator {
 };
 
 #ifdef CONFIG_PPC_BOOK3S_64
-#ifdef CONFIG_KVM_XICS
 union kvmppc_irq_map {
 	unsigned long raw;
 	struct {
@@ -424,7 +423,6 @@ struct kvmppc_passthru_map {
 	union kvmppc_irq_map irq_map[KVMPPC_PIRQ_MAPS];
 	union kvmppc_irq_map irq_all[KVMPPC_PIRQ_ALL];
 };
-#endif
 #endif
 
 # ifdef CONFIG_PPC_FSL_BOOK3E
@@ -526,7 +524,7 @@ struct kvm_vcpu_arch {
 	ulong ciabr;
 	ulong cfar;
 	ulong ppr;
-	ulong pspb;
+	u32 pspb;
 	ulong fscr;
 	ulong shadow_fscr;
 	ulong ebbhr;
