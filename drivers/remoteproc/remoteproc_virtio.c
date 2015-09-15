@@ -207,7 +207,7 @@ static void rproc_virtio_reset(struct virtio_device *vdev)
 }
 
 /* provide the vdev features as retrieved from the firmware */
-static u32 rproc_virtio_get_features(struct virtio_device *vdev)
+static u64 rproc_virtio_get_features(struct virtio_device *vdev)
 {
 	struct rproc_vdev *rvdev = vdev_to_rvdev(vdev);
 	struct fw_rsc_vdev *rsc;
@@ -231,7 +231,7 @@ static void rproc_virtio_finalize_features(struct virtio_device *vdev)
 	 * Remember the finalized features of our vdev, and provide it
 	 * to the remote processor once it is powered on.
 	 */
-	rsc->gfeatures = vdev->features[0];
+	rsc->gfeatures = vdev->features;
 }
 
 static void rproc_virtio_get(struct virtio_device *vdev, unsigned offset,

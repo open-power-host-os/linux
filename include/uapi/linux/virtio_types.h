@@ -1,7 +1,9 @@
-#ifndef _UAPI_LINUX_VIRTIO_CONFIG_H
-#define _UAPI_LINUX_VIRTIO_CONFIG_H
-/* This header, excluding the #ifdef __KERNEL__ part, is BSD licensed so
- * anyone can use the definitions to implement compatible drivers/servers.
+#ifndef _UAPI_LINUX_VIRTIO_TYPES_H
+#define _UAPI_LINUX_VIRTIO_TYPES_H
+/* Type definitions for virtio implementations.
+ *
+ * This header is BSD licensed so anyone can use the definitions to implement
+ * compatible drivers/servers.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -24,37 +26,21 @@
  * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
- * SUCH DAMAGE. */
-
-/* Virtio devices use a standardized configuration space to define their
- * features and pass configuration information, but each implementation can
- * store and access that space differently. */
+ * SUCH DAMAGE.
+ *
+ * Copyright (C) 2014 Red Hat, Inc.
+ * Author: Michael S. Tsirkin <mst@redhat.com>
+ */
 #include <linux/types.h>
 
-/* Status byte for guest to report progress, and synchronize features. */
-/* We have seen device and processed generic fields (VIRTIO_CONFIG_F_VIRTIO) */
-#define VIRTIO_CONFIG_S_ACKNOWLEDGE	1
-/* We have found a driver for the device. */
-#define VIRTIO_CONFIG_S_DRIVER		2
-/* Driver has used its parts of the config, and is happy */
-#define VIRTIO_CONFIG_S_DRIVER_OK	4
-/* We've given up on this device. */
-#define VIRTIO_CONFIG_S_FAILED		0x80
+/*
+ * __virtio{16,32,64} have the following meaning:
+ * - __u{16,32,64} for virtio devices in legacy mode, accessed in native endian
+ * - __le{16,32,64} for standard-compliant virtio devices
+ */
 
-/* Some virtio feature bits (currently bits 28 through 31) are reserved for the
- * transport being used (eg. virtio_ring), the rest are per-device feature
- * bits. */
-#define VIRTIO_TRANSPORT_F_START	28
-#define VIRTIO_TRANSPORT_F_END		32
+typedef __u16 __bitwise__ __virtio16;
+typedef __u32 __bitwise__ __virtio32;
+typedef __u64 __bitwise__ __virtio64;
 
-/* Do we get callbacks when the ring is completely used, even if we've
- * suppressed them? */
-#define VIRTIO_F_NOTIFY_ON_EMPTY	24
-
-/* Can the device handle any descriptor layout? */
-#define VIRTIO_F_ANY_LAYOUT		27
-
-/* v1.0 compliant. */
-#define VIRTIO_F_VERSION_1		32
-
-#endif /* _UAPI_LINUX_VIRTIO_CONFIG_H */
+#endif /* _UAPI_LINUX_VIRTIO_TYPES_H */

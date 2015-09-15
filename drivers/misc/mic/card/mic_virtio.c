@@ -68,7 +68,7 @@ static inline struct device *mic_dev(struct mic_vdev *mvdev)
 }
 
 /* This gets the device's feature bits. */
-static u32 mic_get_features(struct virtio_device *vdev)
+static u64 mic_get_features(struct virtio_device *vdev)
 {
 	unsigned int i, bits;
 	u32 features = 0;
@@ -101,7 +101,7 @@ static void mic_finalize_features(struct virtio_device *vdev)
 	bits = min_t(unsigned, feature_len,
 		sizeof(vdev->features)) * 8;
 	for (i = 0; i < bits; i++) {
-		if (test_bit(i, vdev->features))
+		if (__virtio_test_bit(vdev, i))
 			iowrite8(ioread8(&out_features[i / 8]) | (1 << (i % 8)),
 				 &out_features[i / 8]);
 	}
