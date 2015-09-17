@@ -741,7 +741,7 @@ static void pnv_pci_dma_dev_setup(struct pci_dev *pdev)
 	struct pci_controller *hose = pci_bus_to_host(pdev->bus);
 	struct pnv_phb *phb = hose->private_data;
 #ifdef CONFIG_PCI_IOV
-	struct pnv_ioda_pe *pe, *slave;
+	struct pnv_ioda_pe *pe;
 	struct pci_dn *pdn;
 
 	/* Fix the VF pdn PE number */
@@ -753,23 +753,10 @@ static void pnv_pci_dma_dev_setup(struct pci_dev *pdev)
 			    (pdev->devfn & 0xff))) {
 				pdn->pe_number = pe->pe_number;
 				pe->pdev = pdev;
-				goto found;
-			}
-
-			if ((pe->flags & PNV_IODA_PE_MASTER) &&
-			    (pe->flags & PNV_IODA_PE_VF)) {
-				list_for_each_entry(slave, &pe->slaves, list) {
-					if (slave->rid == ((pdev->bus->number << 8)
-					   | (pdev->devfn & 0xff))) {
-						pdn->pe_number = slave->pe_number;
-						slave->pdev = pdev;
-						goto found;
-					}
-				}
+				break;
 			}
 		}
 	}
-found:
 #endif /* CONFIG_PCI_IOV */
 
 	if (phb && phb->dma_dev_setup)

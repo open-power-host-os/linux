@@ -1296,19 +1296,8 @@ static void pnv_ioda_release_vf_PE(struct pci_dev *pdev, u16 num_vfs)
 	}
 
 	list_for_each_entry_safe(pe, pe_n, &phb->ioda.pe_list, list) {
-		struct pnv_ioda_pe *s, *sn;
 		if (pe->parent_dev != pdev)
 			continue;
-
-		if ((pe->flags & PNV_IODA_PE_MASTER) &&
-		    (pe->flags & PNV_IODA_PE_VF)) {
-			list_for_each_entry_safe(s, sn, &pe->slaves, list) {
-				pnv_pci_ioda2_release_dma_pe(pdev, s);
-				list_del(&s->list);
-				pnv_ioda_deconfigure_pe(phb, s);
-				pnv_ioda_free_pe(phb, s->pe_number);
-			}
-		}
 
 		pnv_pci_ioda2_release_dma_pe(pdev, pe);
 
@@ -1362,7 +1351,7 @@ static void pnv_ioda_setup_vf_PE(struct pci_dev *pdev, u16 num_vfs)
 	struct pci_bus        *bus;
 	struct pci_controller *hose;
 	struct pnv_phb        *phb;
-	struct pnv_ioda_pe    *pe, *master_pe;
+	struct pnv_ioda_pe    *pe;
 	int                    pe_num;
 	u16                    vf_index;
 	struct pci_dn         *pdn;
@@ -1404,13 +1393,10 @@ static void pnv_ioda_setup_vf_PE(struct pci_dev *pdev, u16 num_vfs)
 			continue;
 		}
 
-		/* Put PE to the list, or postpone it for compound PEs */
-		if ((pdn->m64_per_iov != M64_PER_IOV) ||
-		    (num_vfs <= M64_PER_IOV)) {
-			mutex_lock(&phb->ioda.pe_list_mutex);
-			list_add_tail(&pe->list, &phb->ioda.pe_list);
-			mutex_unlock(&phb->ioda.pe_list_mutex);
-		}
+		/* Put PE to the list */
+		mutex_lock(&phb->ioda.pe_list_mutex);
+		list_add_tail(&pe->list, &phb->ioda.pe_list);
+		mutex_unlock(&phb->ioda.pe_list_mutex);
 
 		pnv_pci_ioda2_setup_dma_pe(phb, pe);
 	}
@@ -1423,32 +1409,10 @@ static void pnv_ioda_setup_vf_PE(struct pci_dev *pdev, u16 num_vfs)
 		vf_per_group = roundup_pow_of_two(num_vfs) / pdn->m64_per_iov;
 
 		for (vf_group = 0; vf_group < M64_PER_IOV; vf_group++) {
-			master_pe = NULL;
-
 			for (vf_index = vf_group * vf_per_group;
 			     vf_index < (vf_group + 1) * vf_per_group &&
 			     vf_index < num_vfs;
 			     vf_index++) {
-
-				/*
-				 * Figure out the master PE and put all slave
-				 * PEs to master PE's list.
-				 */
-				pe = &phb->ioda.pe_array[pdn->offset + vf_index];
-				if (!master_pe) {
-					pe->flags |= PNV_IODA_PE_MASTER;
-					INIT_LIST_HEAD(&pe->slaves);
-					master_pe = pe;
-					mutex_lock(&phb->ioda.pe_list_mutex);
-					list_add_tail(&pe->list, &phb->ioda.pe_list);
-					mutex_unlock(&phb->ioda.pe_list_mutex);
-				} else {
-					pe->flags |= PNV_IODA_PE_SLAVE;
-					pe->master = master_pe;
-					list_add_tail(&pe->list,
-						&master_pe->slaves);
-				}
-
 				for (vf_index1 = vf_group * vf_per_group;
 				     vf_index1 < (vf_group + 1) * vf_per_group &&
 				     vf_index1 < num_vfs;
