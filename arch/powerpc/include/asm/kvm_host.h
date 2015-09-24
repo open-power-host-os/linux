@@ -406,6 +406,7 @@ struct kvmhv_tb_accumulator {
 struct kvmppc_irq_map {
 	u32	r_hwirq;
 	u32	v_hwirq;
+	struct irq_desc *desc;
 };
 
 #define	KVMPPC_PIRQ_MAPS	16

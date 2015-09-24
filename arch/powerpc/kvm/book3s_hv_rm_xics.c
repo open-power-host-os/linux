@@ -10,6 +10,7 @@
 #include <linux/kernel.h>
 #include <linux/kvm_host.h>
 #include <linux/err.h>
+#include <linux/kernel_stat.h>
 
 #include <asm/kvm_book3s.h>
 #include <asm/kvm_ppc.h>
@@ -723,6 +724,26 @@ static void icp_eoi(struct irq_chip *c, u32 hwirq, u32 xirr)
 	_stwcix(xics_phys + XICS_XIRR, xirr);
 }
 
+/*
+ * We don't update the flags in the irq_desc istate in here as would
+ * happen in the normal IRQ handling path for several reasons:
+ *  - flags represent internal IRQ state anda are not expected to be updated
+ *    outside IRQ subsystem
+ *  - Requires taking the desc->lock.
+ *  - State flags are useful for edge triggered interrupts, IRQ probing
+ *    (but we are only handling MSI/MSIx interrupts here and these shouldn't
+ *     apply to us).
+ *
+ * However, we do update irq_stats - we duplicate the code in
+ * kstat_incr_irqs_this_cpu() for this since this function is defined
+ * in irq/internal.h which we don't want to include here.
+ */
+static void kvmppc_rm_handle_irq_desc(struct irq_desc *desc)
+{
+	__this_cpu_inc(*desc->kstat_irqs);
+	__this_cpu_inc(kstat.irqs_sum);
+}
+
 long kvmppc_deliver_irq_passthru(struct kvm_vcpu *vcpu,
 				 u32 xirr,
 				 struct kvmppc_irq_map *irq_map,
@@ -736,6 +757,7 @@ long kvmppc_deliver_irq_passthru(struct kvm_vcpu *vcpu,
 	xics = vcpu->kvm->arch.xics;
 	icp = vcpu->arch.icp;
 
+	kvmppc_rm_handle_irq_desc(irq_map->desc);
 	icp_rm_deliver_irq(xics, icp, irq);
 
 	/* EOI the interrupt */

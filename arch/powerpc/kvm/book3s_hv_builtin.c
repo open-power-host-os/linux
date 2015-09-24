@@ -314,7 +314,7 @@ static struct kvmppc_irq_map *get_irqmap(struct kvmppc_passthru_map *pmap,
 	 *
 	 * We have also carefully ordered the stores in the writer
 	 * and the loads here in the reader, so that if we find a matching
-	 * hwirq here, the associated GSI field is valid.
+	 * hwirq here, the associated GSI and irq_desc fields are valid.
 	 */
 	for (i = 0; i < pmap->n_map_irq; i++)  {
 		if (xisr == pmap->irq_map[i].r_hwirq) {

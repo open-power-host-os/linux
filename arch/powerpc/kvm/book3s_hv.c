@@ -3373,9 +3373,10 @@ static int kvmppc_map_passthru_irq_hv(struct kvm *kvm, int irq)
 		goto err_out;
 
 	pmap->irq_map[map_idx].v_hwirq = pmap->irq_all[all_idx].v_hwirq;
+	pmap->irq_map[map_idx].desc = pmap->irq_all[all_idx].desc;
 
 	/*
-	 * Order the above store before the next to serialize with
+	 * Order the above two stores before the next to serialize with
 	 * the KVM real mode handler.
 	 */
 	smp_wmb();
@@ -3412,6 +3413,7 @@ static void unmap_passthru_irq(struct kvmppc_passthru_map *pmap, int irq)
 			 */
 			pmap->irq_map[i].r_hwirq = 0;
 			pmap->irq_map[i].v_hwirq = 0;
+			pmap->irq_map[i].desc = NULL;
 
 			/*
 			 * Only need to decrement maximum mapped count if
@@ -3488,6 +3490,7 @@ static int kvmppc_set_passthru_irq(struct kvm *kvm, int host_irq, int guest_gsi)
 
 	irq_all->v_hwirq = guest_gsi;
 	irq_all->r_hwirq = desc->irq_data.hwirq;
+	irq_all->desc = desc;
 
 	pmap->n_all_irq++;
 
