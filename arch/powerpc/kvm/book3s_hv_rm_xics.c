@@ -725,7 +725,7 @@ static void icp_eoi(struct irq_chip *c, u32 hwirq, u32 xirr)
 
 long kvmppc_deliver_irq_passthru(struct kvm_vcpu *vcpu,
 				 u32 xirr,
-				 union kvmppc_irq_map *irq_map,
+				 struct kvmppc_irq_map *irq_map,
 				 struct kvmppc_passthru_map *pmap)
 {
 	struct kvmppc_xics *xics;

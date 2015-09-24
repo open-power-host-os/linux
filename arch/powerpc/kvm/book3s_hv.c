@@ -3337,7 +3337,7 @@ static struct kvmppc_passthru_map* kvmppc_alloc_pmap(struct irq_desc *desc)
 static int kvmppc_map_passthru_irq_hv(struct kvm *kvm, int irq)
 {
 	struct kvmppc_passthru_map *pmap;
-	int i;
+	int map_idx, all_idx;
 
 	if (!kvm_irq_bypass)
 		return 1;
@@ -3349,29 +3349,43 @@ static int kvmppc_map_passthru_irq_hv(struct kvm *kvm, int irq)
 
 	pmap = kvm->arch.pmap;
 
-	/* No more entries possible */
-	if (pmap->n_map_irq == KVMPPC_PIRQ_MAPS)
+	/* Look for first empty slot */
+	for (map_idx = 0; map_idx < KVMPPC_PIRQ_MAPS; map_idx++)
+		if (pmap->irq_map[map_idx].r_hwirq == 0)
+			break;
+
+	/* Out of empty slots */
+	if (map_idx == KVMPPC_PIRQ_MAPS)
 		goto err_out;
 
-	for (i = 0; i < pmap->n_all_irq; i++) {
-		if (irq == pmap->irq_all[i].v_hwirq)
+	/* Find entry in the irq_all map */
+	for (all_idx = 0; all_idx < pmap->n_all_irq; all_idx++) {
+		if (irq == pmap->irq_all[all_idx].v_hwirq)
 			break;
 	}
 
 	/* IRQ not found */
-	if (i == pmap->n_all_irq)
+	if (all_idx == pmap->n_all_irq)
 		goto err_out;
 
-	if (pmap->irq_all[i].r_hwirq == 0)
+	if (pmap->irq_all[all_idx].r_hwirq == 0)
 		/* Someone beat us to mapping the IRQ */
 		goto err_out;
 
-	/* Make sure this is a 64 bit store */
-	pmap->irq_map[pmap->n_map_irq].raw = pmap->irq_all[i].raw;
-	pmap->n_map_irq++;
+	pmap->irq_map[map_idx].v_hwirq = pmap->irq_all[all_idx].v_hwirq;
 
-	/* r_hwirq == 0 to indicate a mapped IRQ */
-	pmap->irq_all[i].r_hwirq = 0;
+	/*
+	 * Order the above store before the next to serialize with
+	 * the KVM real mode handler.
+	 */
+	smp_wmb();
+	pmap->irq_map[map_idx].r_hwirq = pmap->irq_all[all_idx].r_hwirq;
+
+	if (map_idx >= pmap->n_map_irq)
+		pmap->n_map_irq = map_idx + 1;
+
+	/* r_hwirq == 0 in irq_all to indicate a mapped IRQ */
+	pmap->irq_all[all_idx].r_hwirq = 0;
 
 	mutex_unlock(&kvm->lock);
 	return 0;
@@ -3388,14 +3402,34 @@ static void unmap_passthru_irq(struct kvmppc_passthru_map *pmap, int irq)
 
 	for (i = 0; i < pmap->n_map_irq; i++) {
 		if (irq == pmap->irq_map[i].v_hwirq) {
+
 			/*
-			 * Replace irq_map entry to be cleared with highest
-			 * entry (unless this is already the highest) so
-			 * as to not leave any holes in the array of irq_map.
+			 * Zero out the IRQ being unmapped.
+			 * No barriers needed since the IRQ must
+			 * be disabled/unmasked before it is unmapped,
+			 * so real mode code cannot possibly be
+			 * searching for this IRQ in the map.
 			 */
-			pmap->n_map_irq--;
-			pmap->irq_map[i].raw =
-					pmap->irq_map[pmap->n_map_irq].raw;
+			pmap->irq_map[i].r_hwirq = 0;
+			pmap->irq_map[i].v_hwirq = 0;
+
+			/*
+			 * Only need to decrement maximum mapped count if
+			 * this is the highest entry being unmapped.
+			 */
+			if (i + 1 == pmap->n_map_irq)
+				pmap->n_map_irq--;
+			/*
+			 * Ensure that all readers have exited any
+			 * critical sections in real mode KVM and
+			 * come back to the host at least once. This
+			 * guarantees that they cannot see any stale
+			 * values for the HW IRQ being unmapped. This
+			 * is required to handle Hot plug re-adding
+			 * this function/device and passing through
+			 * the HW IRQ with a different guest GSI.
+			 */
+			kick_all_cpus_sync();
 			return;
 		}
 	}
@@ -3405,7 +3439,7 @@ static void unmap_passthru_irq(struct kvmppc_passthru_map *pmap, int irq)
 static int kvmppc_set_passthru_irq(struct kvm *kvm, int host_irq, int guest_gsi)
 {
 	struct irq_desc *desc;
-	union kvmppc_irq_map *irq_all;
+	struct kvmppc_irq_map *irq_all;
 	struct kvmppc_passthru_map *pmap;
 	int i;
 
@@ -3513,7 +3547,7 @@ static int kvmppc_clr_passthru_irq(struct kvm *kvm, int host_irq, int guest_gsi)
 	 */
 	pmap->n_all_irq--;
 	if (i != pmap->n_all_irq)
-		pmap->irq_all[i].raw = pmap->irq_all[pmap->n_all_irq].raw;
+		pmap->irq_all[i] = pmap->irq_all[pmap->n_all_irq];
 
 	kvmppc_xics_clr_passthru(kvm, guest_gsi);
 

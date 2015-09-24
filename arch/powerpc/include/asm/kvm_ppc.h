@@ -234,7 +234,7 @@ extern int kvmppc_xics_get_xive(struct kvm *kvm, u32 irq, u32 *server,
 extern int kvmppc_xics_int_on(struct kvm *kvm, u32 irq);
 extern int kvmppc_xics_int_off(struct kvm *kvm, u32 irq);
 extern long kvmppc_deliver_irq_passthru(struct kvm_vcpu *vcpu, u32 xirr,
-				 union kvmppc_irq_map *irq_map,
+				 struct kvmppc_irq_map *irq_map,
 				 struct kvmppc_passthru_map *pmap);
 
 void kvmppc_core_dequeue_debug(struct kvm_vcpu *vcpu);
