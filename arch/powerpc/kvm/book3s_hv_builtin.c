@@ -291,29 +291,42 @@ void kvmhv_commence_exit(int trap)
 struct kvmppc_host_rm_ops *kvmppc_host_rm_ops_hv;
 EXPORT_SYMBOL_GPL(kvmppc_host_rm_ops_hv);
 
-static inline u32 get_guest_irq(struct kvmppc_passthru_map *pmap, u32 xisr)
+static struct kvmppc_irq_map *get_irqmap(struct kvmppc_passthru_map *pmap,
+					 u32 xisr)
 {
 	int i;
-	union kvmppc_irq_map irq_map;
 
 	/*
-	 * We can access this array without locks, as long we are
-	 * read the irq_map through a single 64-bit read. This
-	 * guarantees that we always read a correct mapping
-	 * between a hwirq and the gsi. If we have a pending IRQ,
-	 * its mapping cannot have been removed and replaced with
-	 * a new mapping (that corresponds to a different device).
-	 * Since we don't have the lock, we might skip over or read
-	 * more than the available entries in here (if an entry here is
-	 * being deleted), and we might thus miss our hwirq, but we
-	 * can never get a bad mapping.
+	 * We can access this array unsafely because if there
+	 * is a pending IRQ, its mapping cannot be removed
+	 * and replaced with a new mapping (that corresponds to a
+	 * different device) while we are accessing it. After
+	 * unmappping, we do a kick_all_cpus_sync which guarantees
+	 * that we don't see a stale value in here.
+	 *
+	 * Since we don't take a lock, we might skip over or read
+	 * more than the available entries in here (if a different
+	 * entry here is * being deleted), and we might thus miss
+	 * our hwirq, but we can never get a bad mapping. Missing
+	 * an entry is not fatal, in this case, we simply fall back
+	 * on the default interrupt handling mechanism - that is,
+	 * this interrupt goes through VFIO.
+	 *
+	 * We have also carefully ordered the stores in the writer
+	 * and the loads here in the reader, so that if we find a matching
+	 * hwirq here, the associated GSI and irq_desc fields are valid.
 	 */
 	for (i = 0; i < pmap->n_map_irq; i++)  {
-		irq_map.raw = pmap->irq_map[i].raw;
-		if (xisr == irq_map.r_hwirq)
-			return irq_map.v_hwirq;
+		if (xisr == pmap->irq_map[i].r_hwirq) {
+			/*
+			 * Order subsequent reads in the caller to serialize
+			 * with the writer.
+			 */
+			smp_rmb();
+			return &pmap->irq_map[i];
+		}
 	}
-	return 0;
+	return NULL;
 }
 
 /*
@@ -332,7 +345,7 @@ long kvmppc_read_intr(struct kvm_vcpu *vcpu, int path)
 	u32 h_xirr, xirr;
 	u32 xisr;
 	struct kvmppc_passthru_map *pmap;
-	union kvmppc_irq_map irq_map;
+	struct kvmppc_irq_map *irq_map;
 	int r;
 	u8 host_ipi;
 
@@ -416,11 +429,10 @@ long kvmppc_read_intr(struct kvm_vcpu *vcpu, int path)
 	 */
 	pmap = kvmppc_get_passthru_map(vcpu);
 	if (pmap) {
-		irq_map.v_hwirq = get_guest_irq(pmap, xisr);
-		if (irq_map.v_hwirq) {
-			irq_map.r_hwirq = xisr;
+		irq_map = get_irqmap(pmap, xisr);
+		if (irq_map) {
 			r = kvmppc_deliver_irq_passthru(vcpu, xirr,
-								&irq_map, pmap);
+								irq_map, pmap);
 			return r;
 		}
 	}
