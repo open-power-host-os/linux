@@ -2536,15 +2536,59 @@ static inline void rb_end_commit(struct ring_buffer_per_cpu *cpu_buffer)
 }
 
 static struct ring_buffer_event *
+__rb_reserve_next_event(struct ring_buffer_per_cpu *cpu_buffer,
+			u64 ts,
+			u64 write_stamp,
+			unsigned long length)
+{
+	struct ring_buffer_event *event;
+	u64 delta;
+	int add_timestamp;
+	u64 diff;
+
+	add_timestamp = 0;
+	delta = 0;
+
+	diff = ts - write_stamp;
+
+	/* make sure this diff is calculated here */
+	barrier();
+
+	/* Did the write stamp get updated already? */
+	if (likely(ts >= write_stamp)) {
+		delta = diff;
+		if (unlikely(test_time_stamp(delta))) {
+			int local_clock_stable = 1;
+#ifdef CONFIG_HAVE_UNSTABLE_SCHED_CLOCK
+			local_clock_stable = sched_clock_stable();
+#endif
+			WARN_ONCE(delta > (1ULL << 59),
+				  KERN_WARNING "Delta way too big! %llu ts=%llu write stamp = %llu\n%s",
+				  (unsigned long long)delta,
+				  (unsigned long long)ts,
+				  (unsigned long long)write_stamp,
+				  local_clock_stable ? "" :
+				  "If you just came from a suspend/resume,\n"
+				  "please switch to the trace global clock:\n"
+				  "  echo global > /sys/kernel/debug/tracing/trace_clock\n");
+			add_timestamp = 1;
+		}
+	}
+
+	event = __rb_reserve_next(cpu_buffer, length, ts,
+				  delta, add_timestamp);
+
+	return event;
+}
+
+static struct ring_buffer_event *
 rb_reserve_next_event(struct ring_buffer *buffer,
 		      struct ring_buffer_per_cpu *cpu_buffer,
 		      unsigned long length)
 {
 	struct ring_buffer_event *event;
-	u64 ts, delta;
+	u64 ts;
 	int nr_loops = 0;
-	int add_timestamp;
-	u64 diff;
 
 	rb_start_commit(cpu_buffer);
 
@@ -2565,8 +2609,6 @@ rb_reserve_next_event(struct ring_buffer *buffer,
 
 	length = rb_calculate_event_length(length);
  again:
-	add_timestamp = 0;
-	delta = 0;
 
 	/*
 	 * We allow for interrupts to reenter here and do a trace.
@@ -2581,34 +2623,9 @@ rb_reserve_next_event(struct ring_buffer *buffer,
 		goto out_fail;
 
 	ts = rb_time_stamp(cpu_buffer->buffer);
-	diff = ts - cpu_buffer->write_stamp;
+	event = __rb_reserve_next_event(cpu_buffer, ts,
+					cpu_buffer->write_stamp, length);
 
-	/* make sure this diff is calculated here */
-	barrier();
-
-	/* Did the write stamp get updated already? */
-	if (likely(ts >= cpu_buffer->write_stamp)) {
-		delta = diff;
-		if (unlikely(test_time_stamp(delta))) {
-			int local_clock_stable = 1;
-#ifdef CONFIG_HAVE_UNSTABLE_SCHED_CLOCK
-			local_clock_stable = sched_clock_stable();
-#endif
-			WARN_ONCE(delta > (1ULL << 59),
-				  KERN_WARNING "Delta way too big! %llu ts=%llu write stamp = %llu\n%s",
-				  (unsigned long long)delta,
-				  (unsigned long long)ts,
-				  (unsigned long long)cpu_buffer->write_stamp,
-				  local_clock_stable ? "" :
-				  "If you just came from a suspend/resume,\n"
-				  "please switch to the trace global clock:\n"
-				  "  echo global > /sys/kernel/debug/tracing/trace_clock\n");
-			add_timestamp = 1;
-		}
-	}
-
-	event = __rb_reserve_next(cpu_buffer, length, ts,
-				  delta, add_timestamp);
 	if (unlikely(PTR_ERR(event) == -EAGAIN))
 		goto again;
 
