@@ -264,6 +264,14 @@ of ftrace. Here is a list of some of the key files:
 	one will show only the first kernel function that is called
 	from user space.
 
+  nested_precise_ts:
+
+	When set, it will generate precise timestamps even for nested
+	writers which otherwise usually all get the same timestamp as
+	the initial preempted writer. However, this will require briefly
+	disabling interrupts on the local CPU for each trace event, which
+	can be expensive on some architectures.
+
   printk_formats:
 
 	This is for tools that read the raw format files. If an event in

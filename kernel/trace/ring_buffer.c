@@ -2535,6 +2535,20 @@ static inline void rb_end_commit(struct ring_buffer_per_cpu *cpu_buffer)
 	}
 }
 
+struct static_key __precise_nested_write_ts;
+
+void rb_enable_precise_nested_write_ts(void)
+{
+	if (!rb_precise_nested_write_ts())
+		static_key_slow_inc(&__precise_nested_write_ts);
+}
+
+void rb_disable_precise_nested_write_ts(void)
+{
+	if (rb_precise_nested_write_ts())
+		static_key_slow_dec(&__precise_nested_write_ts);
+}
+
 static struct ring_buffer_event *
 __rb_reserve_next_event(struct ring_buffer_per_cpu *cpu_buffer,
 			u64 ts,

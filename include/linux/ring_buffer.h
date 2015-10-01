@@ -5,6 +5,7 @@
 #include <linux/mm.h>
 #include <linux/seq_file.h>
 #include <linux/poll.h>
+#include <linux/jump_label.h>
 
 struct ring_buffer;
 struct ring_buffer_iter;
@@ -96,6 +97,14 @@ __ring_buffer_alloc(unsigned long size, unsigned flags, struct lock_class_key *k
 	static struct lock_class_key __key;		\
 	__ring_buffer_alloc((size), (flags), &__key);	\
 })
+
+extern struct static_key __precise_nested_write_ts;
+static inline bool rb_precise_nested_write_ts(void)
+{
+	return static_key_false(&__precise_nested_write_ts);
+}
+void rb_enable_precise_nested_write_ts(void);
+void rb_disable_precise_nested_write_ts(void);
 
 int ring_buffer_wait(struct ring_buffer *buffer, int cpu, bool full);
 int ring_buffer_poll_wait(struct ring_buffer *buffer, int cpu,
