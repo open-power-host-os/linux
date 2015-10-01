@@ -482,6 +482,7 @@ struct ring_buffer_per_cpu {
 	unsigned long			read_bytes;
 	u64				write_stamp;
 	u64				read_stamp;
+	u64				last_stamp;
 	/* ring buffer pages to update, > 0 to add, < 0 to remove */
 	int				nr_pages_to_update;
 	struct list_head		new_pages; /* new pages to add */
@@ -2007,6 +2008,29 @@ rb_add_time_stamp(struct ring_buffer_event *event, u64 delta)
 	return skip_time_extend(event);
 }
 
+/*
+ * Update the last timestamp only if it hasn't changed since we
+ * read it to compute our delta. If it has changed, then this
+ * delta is no longer valid - this should only happen if an NMI
+ * interrupted us between the time we read the last time stamp
+ * and we got here AND if the NMI handler does a trace write.
+ * We fall back to the default behavior in this case and set
+ * delta to zero.
+ */
+static u64 rb_update_last_tstamp(struct ring_buffer_per_cpu *cpu_buffer,
+				 u64 delta, u64 ts)
+{
+	u64 last_ts;
+
+	/* Last timestamp when we read it to compute delta */
+	last_ts = ts - delta;
+
+	if (cmpxchg_local(&cpu_buffer->last_stamp, last_ts, ts) == last_ts)
+		return delta;
+
+	return 0;
+}
+
 /**
  * rb_update_event - update event type and data
  * @event: the event to update
@@ -2021,11 +2045,14 @@ rb_add_time_stamp(struct ring_buffer_event *event, u64 delta)
 static void
 rb_update_event(struct ring_buffer_per_cpu *cpu_buffer,
 		struct ring_buffer_event *event, unsigned length,
-		int add_timestamp, u64 delta)
+		int add_timestamp, u64 delta, u64 ts)
 {
-	/* Only a commit updates the timestamp */
-	if (unlikely(!rb_event_is_commit(cpu_buffer, event)))
-		delta = 0;
+	if (!rb_precise_nested_write_ts()) {
+		/* Only a commit updates the timestamp */
+		if (unlikely(!rb_event_is_commit(cpu_buffer, event)))
+			delta = 0;
+	} else if (delta != 0)
+		delta = rb_update_last_tstamp(cpu_buffer, delta, ts);
 
 	/*
 	 * If we need to add a timestamp, then we
@@ -2440,7 +2467,7 @@ __rb_reserve_next(struct ring_buffer_per_cpu *cpu_buffer,
 
 	event = __rb_page_index(tail_page, tail);
 	kmemcheck_annotate_bitfield(event, bitfield);
-	rb_update_event(cpu_buffer, event, length, add_timestamp, delta);
+	rb_update_event(cpu_buffer, event, length, add_timestamp, delta, ts);
 
 	local_inc(&tail_page->entries);
 
@@ -2636,9 +2663,29 @@ rb_reserve_next_event(struct ring_buffer *buffer,
 	if (RB_WARN_ON(cpu_buffer, ++nr_loops > 1000))
 		goto out_fail;
 
-	ts = rb_time_stamp(cpu_buffer->buffer);
-	event = __rb_reserve_next_event(cpu_buffer, ts,
+	if (rb_precise_nested_write_ts()) {
+		unsigned long flags;
+
+		/* If  precise nested write timestamps are enabled,
+		 * we first disable interrupts on the current processor
+		 * so that we can reserve space on the buffer and save
+		 * the event's timestamp without being preempted.
+		 * The last time stamp is updated before we re-enable
+		 * interrupts so that the nested writers always have
+		 * a valid timestamp to compute the timestamp deltas
+		 * for their events.
+		 */
+		local_irq_save(flags);
+		ts = rb_time_stamp(cpu_buffer->buffer);
+		event = __rb_reserve_next_event(cpu_buffer, ts,
+					cpu_buffer->last_stamp, length);
+		cpu_buffer->last_stamp = ts;
+		local_irq_restore(flags);
+	} else {
+		ts = rb_time_stamp(cpu_buffer->buffer);
+		event = __rb_reserve_next_event(cpu_buffer, ts,
 					cpu_buffer->write_stamp, length);
+	}
 
 	if (unlikely(PTR_ERR(event) == -EAGAIN))
 		goto again;
