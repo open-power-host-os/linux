@@ -56,6 +56,7 @@ struct opal_sg_list {
 #define OPAL_HARDWARE_FROZEN	-13
 #define OPAL_WRONG_STATE	-14
 #define OPAL_ASYNC_COMPLETION	-15
+#define OPAL_EMPTY		-16
 #define OPAL_I2C_TIMEOUT	-17
 #define OPAL_I2C_INVALID_CMD	-18
 #define OPAL_I2C_LBUS_PARITY	-19
