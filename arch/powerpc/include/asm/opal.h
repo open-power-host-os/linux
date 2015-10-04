@@ -177,7 +177,8 @@ struct opal_sg_list {
 #define OPAL_PRD_MSG				113
 #define OPAL_LEDS_GET_INDICATOR			114
 #define OPAL_LEDS_SET_INDICATOR			115
-#define OPAL_LAST				115
+#define OPAL_CEC_REBOOT2			116
+#define OPAL_LAST				116
 
 
 /* Device tree flags */
@@ -516,6 +517,12 @@ enum OpalSysTemp {
 /* Cooling EPOW */
 enum OpalSysCooling {
 	OPAL_SYSCOOL_INSF	= 0x0001, /* System insufficient cooling */
+};
+
+/* Argument to OPAL_CEC_REBOOT2() */
+enum {
+	OPAL_REBOOT_NORMAL		= 0,
+	OPAL_REBOOT_PLATFORM_ERROR	= 1,
 };
 
 /* FSP memory errors handling */
@@ -932,6 +939,7 @@ int64_t opal_tpo_write(uint64_t token, uint32_t year_mon_day,
 		       uint32_t hour_min);
 int64_t opal_cec_power_down(uint64_t request);
 int64_t opal_cec_reboot(void);
+int64_t opal_cec_reboot2(uint32_t reboot_type, char *diag);
 int64_t opal_read_nvram(uint64_t buffer, uint64_t size, uint64_t offset);
 int64_t opal_write_nvram(uint64_t buffer, uint64_t size, uint64_t offset);
 int64_t opal_handle_interrupt(uint64_t isn, __be64 *outstanding_event_mask);
