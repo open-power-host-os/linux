@@ -2597,7 +2597,7 @@ END_FTR_SECTION_IFSET(CPU_FTR_ARCH_207S)
 	blr
 
 	/* Woken up due to Hypervisor maintenance interrupt */
-4:	li	r12, BOOK3S_INTERRUPT_HMI
+4:	li	r31, BOOK3S_INTERRUPT_HMI
 	li	r3, 1
 	blr
 
