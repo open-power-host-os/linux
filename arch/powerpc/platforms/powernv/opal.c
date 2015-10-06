@@ -24,6 +24,8 @@
 #include <linux/uaccess.h>
 #include <linux/delay.h>
 #include <linux/memblock.h>
+#include <linux/kthread.h>
+#include <linux/freezer.h>
 
 #include <asm/machdep.h>
 #include <asm/opal.h>
@@ -59,6 +61,7 @@ static struct atomic_notifier_head opal_msg_notifier_head[OPAL_MSG_TYPE_MAX];
 static DEFINE_SPINLOCK(opal_notifier_lock);
 static uint64_t last_notified_mask = 0x0ul;
 static atomic_t opal_notifier_hold = ATOMIC_INIT(0);
+static uint32_t opal_heartbeat;
 
 static void opal_reinit_cores(void)
 {
@@ -209,7 +212,7 @@ static int __init opal_register_exception_handlers(void)
 	 * start catching/handling HMI directly in Linux.
 	 */
 	if (!opal_check_token(OPAL_HANDLE_HMI)) {
-		pr_info("opal: Old firmware detected, OPAL handles HMIs.\n");
+		pr_info("Old firmware detected, OPAL handles HMIs.\n");
 		opal_register_exception_handler(
 				OPAL_HYPERVISOR_MAINTENANCE_HANDLER,
 				0, glue);
@@ -525,6 +528,7 @@ static int opal_recover_mce(struct pt_regs *regs,
 int opal_machine_check(struct pt_regs *regs)
 {
 	struct machine_check_event evt;
+	int ret;
 
 	if (!get_mce_event(&evt, MCE_EVENT_RELEASE))
 		return 0;
@@ -539,6 +543,40 @@ int opal_machine_check(struct pt_regs *regs)
 
 	if (opal_recover_mce(regs, &evt))
 		return 1;
+
+	/*
+	 * Unrecovered machine check, we are heading to panic path.
+	 *
+	 * We may have hit this MCE in very early stage of kernel
+	 * initialization even before opal-prd has started running. If
+	 * this is the case then this MCE error may go un-noticed or
+	 * un-analyzed if we go down panic path. We need to inform
+	 * BMC/OCC about this error so that they can collect relevant
+	 * data for error analysis before rebooting.
+	 * Use opal_cec_reboot2(OPAL_REBOOT_PLATFORM_ERROR) to do so.
+	 * This function may not return on BMC based system.
+	 */
+	ret = opal_cec_reboot2(OPAL_REBOOT_PLATFORM_ERROR,
+			"Unrecoverable Machine Check exception");
+	if (ret == OPAL_UNSUPPORTED) {
+		pr_emerg("Reboot type %d not supported\n",
+					OPAL_REBOOT_PLATFORM_ERROR);
+	}
+
+	/*
+	 * We reached here. There can be three possibilities:
+	 * 1. We are running on a firmware level that do not support
+	 *    opal_cec_reboot2()
+	 * 2. We are running on a firmware level that do not support
+	 *    OPAL_REBOOT_PLATFORM_ERROR reboot type.
+	 * 3. We are running on FSP based system that does not need opal
+	 *    to trigger checkstop explicitly for error analysis. The FSP
+	 *    PRD component would have already got notified about this
+	 *    error through other channels.
+	 *
+	 * In any case, let us just fall through. We anyway heading
+	 * down to panic path.
+	 */
 	return 0;
 }
 
@@ -688,21 +726,13 @@ static void __init opal_dump_region_init(void)
 			"rc = %d\n", rc);
 }
 
-static void opal_flash_init(struct device_node *opal_node)
+static void opal_pdev_init(struct device_node *opal_node,
+		const char *compatible)
 {
 	struct device_node *np;
 
 	for_each_child_of_node(opal_node, np)
-		if (of_device_is_compatible(np, "ibm,opal-flash"))
-			of_platform_device_create(np, NULL, NULL);
-}
-
-static void opal_ipmi_init(struct device_node *opal_node)
-{
-	struct device_node *np;
-
-	for_each_child_of_node(opal_node, np)
-		if (of_device_is_compatible(np, "ibm,opal-ipmi"))
+		if (of_device_is_compatible(np, compatible))
 			of_platform_device_create(np, NULL, NULL);
 }
 
@@ -714,15 +744,76 @@ static void opal_i2c_create_devs(void)
 		of_platform_device_create(np, NULL, NULL);
 }
 
+static void __init opal_irq_init(struct device_node *dn)
+{
+	const __be32 *irqs;
+	int i, irqlen;
+
+	/* Get interrupt property */
+	irqs = of_get_property(opal_node, "opal-interrupts", &irqlen);
+	pr_debug("Found %d interrupts reserved for OPAL\n",
+		 irqs ? (irqlen / 4) : 0);
+
+	/* Install interrupt handlers */
+	opal_irq_count = irqlen / 4;
+	opal_irqs = kzalloc(opal_irq_count * sizeof(unsigned int), GFP_KERNEL);
+	for (i = 0; irqs && i < opal_irq_count; i++, irqs++) {
+		unsigned int irq, virq;
+		int rc;
+
+		/* Get hardware and virtual IRQ */
+		irq = be32_to_cpup(irqs);
+		virq = irq_create_mapping(NULL, irq);
+		if (virq == NO_IRQ) {
+			pr_warn("Failed to map irq 0x%x\n", irq);
+			continue;
+		}
+
+		/* Install interrupt handler */
+		rc = request_irq(virq, opal_interrupt, 0, "opal", NULL);
+		if (rc) {
+			irq_dispose_mapping(virq);
+			pr_warn("Error %d requesting irq %d (0x%x)\n",
+				 rc, virq, irq);
+			continue;
+		}
+
+		/* Cache IRQ */
+		opal_irqs[i] = virq;
+	}
+}
+
+static int kopald(void *unused)
+{
+	set_freezable();
+	do {
+		try_to_freeze();
+		opal_poll_events(NULL);
+		msleep_interruptible(opal_heartbeat);
+	} while (!kthread_should_stop());
+
+	return 0;
+}
+
+static void opal_init_heartbeat(void)
+{
+	/* Old firwmware, we assume the HVC heartbeat is sufficient */
+	if (of_property_read_u32(opal_node, "ibm,heartbeat-ms",
+				 &opal_heartbeat) != 0)
+		opal_heartbeat = 0;
+
+	if (opal_heartbeat)
+		kthread_run(kopald, NULL, "kopald");
+}
+
 static int __init opal_init(void)
 {
 	struct device_node *np, *consoles, *epow, *leds;
-	const __be32 *irqs;
-	int rc, i, irqlen;
+	int rc;
 
 	opal_node = of_find_node_by_path("/ibm,opal");
 	if (!opal_node) {
-		pr_warn("opal: Node not found\n");
+		pr_warn("Device node not found\n");
 		return -ENODEV;
 	}
 
@@ -749,25 +840,11 @@ static int __init opal_init(void)
 	/* Create i2c platform devices */
 	opal_i2c_create_devs();
 
+	/* Setup a heatbeat thread if requested by OPAL */
+	opal_init_heartbeat();
+
 	/* Find all OPAL interrupts and request them */
-	irqs = of_get_property(opal_node, "opal-interrupts", &irqlen);
-	pr_debug("opal: Found %d interrupts reserved for OPAL\n",
-		 irqs ? (irqlen / 4) : 0);
-	opal_irq_count = irqlen / 4;
-	opal_irqs = kzalloc(opal_irq_count * sizeof(unsigned int), GFP_KERNEL);
-	for (i = 0; irqs && i < (irqlen / 4); i++, irqs++) {
-		unsigned int hwirq = be32_to_cpup(irqs);
-		unsigned int irq = irq_create_mapping(NULL, hwirq);
-		if (irq == NO_IRQ) {
-			pr_warning("opal: Failed to map irq 0x%x\n", hwirq);
-			continue;
-		}
-		rc = request_irq(irq, opal_interrupt, 0, "opal", NULL);
-		if (rc)
-			pr_warning("opal: Error %d requesting irq %d"
-				   " (0x%x)\n", rc, irq, hwirq);
-		opal_irqs[i] = irq;
-	}
+	opal_irq_init(opal_node);
 
 	/* Create leds platform devices */
 	leds = of_find_node_by_path("/ibm,opal/leds");
@@ -795,9 +872,10 @@ static int __init opal_init(void)
 		opal_msglog_init();
 	}
 
-	opal_ipmi_init(opal_node);
-
-	opal_flash_init(opal_node);
+	/* Initialize platform devices: IPMI backend, PRD & flash interface */
+	opal_pdev_init(opal_node, "ibm,opal-ipmi");
+	opal_pdev_init(opal_node, "ibm,opal-flash");
+	opal_pdev_init(opal_node, "ibm,opal-prd");
 
 	return 0;
 }
@@ -841,6 +919,7 @@ EXPORT_SYMBOL_GPL(opal_ipmi_recv);
 EXPORT_SYMBOL_GPL(opal_flash_read);
 EXPORT_SYMBOL_GPL(opal_flash_write);
 EXPORT_SYMBOL_GPL(opal_flash_erase);
+EXPORT_SYMBOL_GPL(opal_prd_msg);
 
 /* Convert a region of vmalloc memory to an opal sg list */
 struct opal_sg_list *opal_vmalloc_to_sg_list(void *vmalloc_addr,

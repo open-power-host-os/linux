@@ -50,8 +50,6 @@ exception_marker:
 	.section	".text"
 	.align 7
 
-#undef SHOW_SYSCALLS
-
 	.globl system_call_common
 system_call_common:
 	andi.	r10,r12,MSR_PR
@@ -143,13 +141,6 @@ END_FW_FTR_SECTION_IFSET(FW_FEATURE_SPLPAR)
 	li	r10,1
 	std	r10,SOFTE(r1)
 
-#ifdef SHOW_SYSCALLS
-	bl	do_show_syscall
-	REST_GPR(0,r1)
-	REST_4GPRS(3,r1)
-	REST_2GPRS(7,r1)
-	addi	r9,r1,STACK_FRAME_OVERHEAD
-#endif
 	CURRENT_THREAD_INFO(r11, r1)
 	ld	r10,TI_FLAGS(r11)
 	andi.	r11,r10,_TIF_SYSCALL_T_OR_A
@@ -178,12 +169,8 @@ system_call:			/* label this so stack traces look sane */
 	mtctr   r12
 	bctrl			/* Call handler */
 
-syscall_exit:
+.Lsyscall_exit:
 	std	r3,RESULT(r1)
-#ifdef SHOW_SYSCALLS
-	bl	do_show_syscall_exit
-	ld	r3,RESULT(r1)
-#endif
 	CURRENT_THREAD_INFO(r12, r1)
 
 	ld	r8,_MSR(r1)
@@ -277,12 +264,12 @@ syscall_dotrace:
 	blt+	system_call
 
 	/* Return code is already in r3 thanks to do_syscall_trace_enter() */
-	b	syscall_exit
+	b	.Lsyscall_exit
 
 
 syscall_enosys:
 	li	r3,-ENOSYS
-	b	syscall_exit
+	b	.Lsyscall_exit
 	
 syscall_exit_work:
 #ifdef CONFIG_PPC_BOOK3S
@@ -359,38 +346,38 @@ _GLOBAL(save_nvgprs)
 _GLOBAL(ppc_fork)
 	bl	save_nvgprs
 	bl	sys_fork
-	b	syscall_exit
+	b	.Lsyscall_exit
 
 _GLOBAL(ppc_vfork)
 	bl	save_nvgprs
 	bl	sys_vfork
-	b	syscall_exit
+	b	.Lsyscall_exit
 
 _GLOBAL(ppc_clone)
 	bl	save_nvgprs
 	bl	sys_clone
-	b	syscall_exit
+	b	.Lsyscall_exit
 
 _GLOBAL(ppc32_swapcontext)
 	bl	save_nvgprs
 	bl	compat_sys_swapcontext
-	b	syscall_exit
+	b	.Lsyscall_exit
 
 _GLOBAL(ppc64_swapcontext)
 	bl	save_nvgprs
 	bl	sys_swapcontext
-	b	syscall_exit
+	b	.Lsyscall_exit
 
 _GLOBAL(ppc_switch_endian)
 	bl	save_nvgprs
 	bl	sys_switch_endian
-	b	syscall_exit
+	b	.Lsyscall_exit
 
 _GLOBAL(ret_from_fork)
 	bl	schedule_tail
 	REST_NVGPRS(r1)
 	li	r3,0
-	b	syscall_exit
+	b	.Lsyscall_exit
 
 _GLOBAL(ret_from_kernel_thread)
 	bl	schedule_tail
@@ -402,7 +389,7 @@ _GLOBAL(ret_from_kernel_thread)
 #endif
 	blrl
 	li	r3,0
-	b	syscall_exit
+	b	.Lsyscall_exit
 
 /*
  * This routine switches between two different tasks.  The process

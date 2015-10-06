@@ -459,6 +459,12 @@ kvm_no_guest:
  * whole-core mode, so we need to nap.
  */
 kvm_unsplit_nap:
+	/* Before we head down to nap, check if HMI is pending and handle it */
+	cmpwi	r12, BOOK3S_INTERRUPT_HMI
+	bne	55f
+	li	r3, 0			/* NULL argument */
+	bl	hmi_exception_realmode
+55:
 	ld	r0, HSTATE_KVM_VCORE(r13)
 	cmpdi	r0, 0
 	bne	kvm_no_guest
@@ -2597,7 +2603,7 @@ END_FTR_SECTION_IFSET(CPU_FTR_ARCH_207S)
 	blr
 
 	/* Woken up due to Hypervisor maintenance interrupt */
-4:	li	r12, BOOK3S_INTERRUPT_HMI
+4:	li	r31, BOOK3S_INTERRUPT_HMI
 	li	r3, 1
 	blr
 

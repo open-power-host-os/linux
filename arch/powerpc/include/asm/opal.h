@@ -56,6 +56,7 @@ struct opal_sg_list {
 #define OPAL_HARDWARE_FROZEN	-13
 #define OPAL_WRONG_STATE	-14
 #define OPAL_ASYNC_COMPLETION	-15
+#define OPAL_EMPTY		-16
 #define OPAL_I2C_TIMEOUT	-17
 #define OPAL_I2C_INVALID_CMD	-18
 #define OPAL_I2C_LBUS_PARITY	-19
@@ -173,9 +174,11 @@ struct opal_sg_list {
 #define OPAL_FLASH_READ				110
 #define OPAL_FLASH_WRITE			111
 #define OPAL_FLASH_ERASE			112
+#define OPAL_PRD_MSG				113
 #define OPAL_LEDS_GET_INDICATOR			114
 #define OPAL_LEDS_SET_INDICATOR			115
-#define OPAL_LAST				115
+#define OPAL_CEC_REBOOT2			116
+#define OPAL_LAST				116
 
 
 /* Device tree flags */
@@ -459,6 +462,23 @@ struct opal_ipmi_msg {
 	uint8_t		data[];
 };
 
+enum opal_prd_msg_type {
+	OPAL_PRD_MSG_TYPE_INIT = 0,	/* HBRT --> OPAL */
+	OPAL_PRD_MSG_TYPE_FINI,		/* HBRT/kernel --> OPAL */
+	OPAL_PRD_MSG_TYPE_ATTN,		/* HBRT <-- OPAL */
+	OPAL_PRD_MSG_TYPE_ATTN_ACK,	/* HBRT --> OPAL */
+	OPAL_PRD_MSG_TYPE_OCC_ERROR,	/* HBRT <-- OPAL */
+	OPAL_PRD_MSG_TYPE_OCC_RESET,	/* HBRT <-- OPAL */
+};
+
+struct opal_prd_msg_header {
+	uint8_t		type;
+	uint8_t		pad[1];
+	__be16		size;
+};
+
+struct opal_prd_msg;
+
 /*
  * EPOW status sharing (OPAL and the host)
  *
@@ -497,6 +517,12 @@ enum OpalSysTemp {
 /* Cooling EPOW */
 enum OpalSysCooling {
 	OPAL_SYSCOOL_INSF	= 0x0001, /* System insufficient cooling */
+};
+
+/* Argument to OPAL_CEC_REBOOT2() */
+enum {
+	OPAL_REBOOT_NORMAL		= 0,
+	OPAL_REBOOT_PLATFORM_ERROR	= 1,
 };
 
 /* FSP memory errors handling */
@@ -913,6 +939,7 @@ int64_t opal_tpo_write(uint64_t token, uint32_t year_mon_day,
 		       uint32_t hour_min);
 int64_t opal_cec_power_down(uint64_t request);
 int64_t opal_cec_reboot(void);
+int64_t opal_cec_reboot2(uint32_t reboot_type, char *diag);
 int64_t opal_read_nvram(uint64_t buffer, uint64_t size, uint64_t offset);
 int64_t opal_write_nvram(uint64_t buffer, uint64_t size, uint64_t offset);
 int64_t opal_handle_interrupt(uint64_t isn, __be64 *outstanding_event_mask);
@@ -1063,6 +1090,7 @@ int64_t opal_ipmi_recv(uint64_t interface, struct opal_ipmi_msg *msg,
 		uint64_t *msg_len);
 int64_t opal_i2c_request(uint64_t async_token, uint32_t bus_id,
 			 struct opal_i2c_request *oreq);
+int64_t opal_prd_msg(struct opal_prd_msg *msg);
 int64_t opal_leds_get_ind(char *loc_code, __be64 *led_mask,
 			  __be64 *led_value, __be64 *max_led_type);
 int64_t opal_leds_set_ind(uint64_t token, char *loc_code, const u64 led_mask,

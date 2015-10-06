@@ -3394,7 +3394,7 @@ static int reset_fundamental(struct pci_dev *dev, int probe)
 	if (probe)
 		return 0;
 
-	pci_set_pcie_reset_state(dev, pcie_hot_reset);
+	pci_set_pcie_reset_state(dev, pcie_warm_reset);
 	msleep(250);
 	pci_set_pcie_reset_state(dev, pcie_deassert_reset);
 	msleep(1800);
