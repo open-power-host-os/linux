@@ -19,6 +19,9 @@
 #include <asm/opal.h>
 #include <asm/machdep.h>
 
+#define SOFT_OFF 0x00
+#define SOFT_REBOOT 0x01
+
 /* Detect EPOW event */
 static bool detect_epow(void)
 {
@@ -79,6 +82,8 @@ static bool poweroff_pending(void)
 static int opal_power_control_event(struct notifier_block *nb,
 					unsigned long msg_type, void *msg)
 {
+	uint64_t type;
+
 	switch (msg_type) {
 	case OPAL_MSG_EPOW:
 		if (detect_epow()) {
@@ -89,6 +94,20 @@ static int opal_power_control_event(struct notifier_block *nb,
 	case OPAL_MSG_DPO:
 		pr_info("DPO msg received. Powering off system\n");
 		orderly_poweroff(true);
+		break;
+	case OPAL_MSG_SHUTDOWN:
+		type = be64_to_cpu(((struct opal_msg *)msg)->params[0]);
+		switch (type) {
+		case SOFT_REBOOT:
+			/* Fall through. The service processor is responsible for
+			* bringing the machine back up */
+		case SOFT_OFF:
+			pr_info("Poweroff requested\n");
+			orderly_poweroff(true);
+			break;
+		default:
+			pr_err("Unknown power-control type %llu\n", type);
+		}
 		break;
 	default:
 		pr_err("Unknown OPAL message type %lu\n", msg_type);
@@ -111,10 +130,23 @@ static struct notifier_block opal_dpo_nb = {
 	.priority	= 0,
 };
 
+/* OPAL power-control event notifier block */
+static struct notifier_block opal_power_control_nb = {
+	.notifier_call	= opal_power_control_event,
+	.next		= NULL,
+	.priority	= 0,
+};
+
 static int __init opal_power_control_init(void)
 {
 	int ret, supported = 0;
 	struct device_node *np;
+
+	/* Register OPAL power-control events notifier */
+	ret = opal_message_notifier_register(OPAL_MSG_SHUTDOWN,
+						&opal_power_control_nb);
+	if (ret)
+		pr_err("Failed to register SHUTDOWN notifier, ret = %d\n", ret);
 
 	/* Determine OPAL EPOW, DPO support */
 	np = of_find_node_by_path("/ibm,opal/epow");
