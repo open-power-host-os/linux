@@ -99,8 +99,9 @@ static int opal_power_control_event(struct notifier_block *nb,
 		type = be64_to_cpu(((struct opal_msg *)msg)->params[0]);
 		switch (type) {
 		case SOFT_REBOOT:
-			/* Fall through. The service processor is responsible for
-			* bringing the machine back up */
+			pr_info("Reboot requested\n");
+			orderly_reboot();
+			break;
 		case SOFT_OFF:
 			pr_info("Poweroff requested\n");
 			orderly_poweroff(true);
