@@ -204,10 +204,12 @@ long kvmppc_do_h_enter(struct kvm *kvm, unsigned long flags,
 	 * retry via mmu_notifier_retry.
 	 */
 	if (realmode)
-		ptep = __find_linux_pte_or_hugepte(pgdir, hva, &hpage_shift);
+		ptep = __find_linux_pte_or_hugepte(pgdir, hva, NULL,
+						   &hpage_shift);
 	else {
 		local_irq_save(irq_flags);
-		ptep = find_linux_pte_or_hugepte(pgdir, hva, &hpage_shift);
+		ptep = find_linux_pte_or_hugepte(pgdir, hva, NULL,
+						 &hpage_shift);
 	}
 	if (ptep) {
 		pte_t pte;

@@ -406,7 +406,7 @@ static long kvmppc_rm_ua_to_hpa(struct kvm_vcpu *vcpu,
 	pte_t *ptep, pte;
 	unsigned shift = 0;
 
-	ptep = __find_linux_pte_or_hugepte(vcpu->arch.pgdir, ua, &shift);
+	ptep = __find_linux_pte_or_hugepte(vcpu->arch.pgdir, ua, NULL, &shift);
 	if (!ptep || !pte_present(*ptep))
 		return -ENXIO;
 	pte = *ptep;
