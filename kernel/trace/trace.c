@@ -3632,6 +3632,7 @@ static const char readme_msg[] =
 	"  trace_options\t\t- Set format or modify how tracing happens\n"
 	"\t\t\t  Disable an option by adding a suffix 'no' to the\n"
 	"\t\t\t  option name\n"
+	"  nested_precise_ts\t- Enable/disable precise timestamps for nested writes\n"
 	"  saved_cmdlines_size\t- echo command number in here to store comm-pid list\n"
 #ifdef CONFIG_DYNAMIC_FTRACE
 	"\n  available_filter_functions - list of functions that can be filtered on\n"
@@ -5019,6 +5020,45 @@ static int tracing_clock_open(struct inode *inode, struct file *file)
 	return ret;
 }
 
+static ssize_t
+tracing_nested_precise_read(struct file *filp, char __user *ubuf,
+	       size_t cnt, loff_t *ppos)
+{
+	char buf[64];
+	int r;
+
+	r = rb_precise_nested_write_ts() ? 1 : 0;
+	r = sprintf(buf, "%d\n", r);
+
+	return simple_read_from_buffer(ubuf, cnt, ppos, buf, r);
+}
+
+static ssize_t
+tracing_nested_precise_write(struct file *filp, const char __user *ubuf,
+		size_t cnt, loff_t *ppos)
+{
+	struct trace_array *tr = filp->private_data;
+	struct ring_buffer *buffer = tr->trace_buffer.buffer;
+	unsigned long val;
+	int ret;
+
+	ret = kstrtoul_from_user(ubuf, cnt, 10, &val);
+	if (ret)
+		return ret;
+
+	if (buffer) {
+		mutex_lock(&trace_types_lock);
+		if (val)
+			rb_enable_precise_nested_write_ts();
+		else
+			rb_disable_precise_nested_write_ts();
+		mutex_unlock(&trace_types_lock);
+	}
+
+	(*ppos)++;
+
+	return cnt;
+}
 struct ftrace_buffer_info {
 	struct trace_iterator	iter;
 	void			*spare;
@@ -5254,6 +5294,14 @@ static const struct file_operations trace_clock_fops = {
 	.llseek		= seq_lseek,
 	.release	= tracing_single_release_tr,
 	.write		= tracing_clock_write,
+};
+
+static const struct file_operations tracing_nested_precise_fops = {
+	.open		= tracing_open_generic_tr,
+	.read		= tracing_nested_precise_read,
+	.write		= tracing_nested_precise_write,
+	.llseek		= generic_file_llseek,
+	.release	= tracing_release_generic_tr,
 };
 
 #ifdef CONFIG_TRACER_SNAPSHOT
@@ -6522,6 +6570,9 @@ init_tracer_debugfs(struct trace_array *tr, struct dentry *d_tracer)
 
 	trace_create_file("trace_clock", 0644, d_tracer, tr,
 			  &trace_clock_fops);
+
+	trace_create_file("nested_precise_ts", 0644, d_tracer,
+			  tr, &tracing_nested_precise_fops);
 
 	trace_create_file("tracing_on", 0644, d_tracer,
 			  tr, &rb_simple_fops);

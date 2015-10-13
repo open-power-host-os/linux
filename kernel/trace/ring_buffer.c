@@ -485,6 +485,7 @@ struct ring_buffer_per_cpu {
 	unsigned long			read_bytes;
 	u64				write_stamp;
 	u64				read_stamp;
+	u64				last_stamp;
 	/* ring buffer pages to update, > 0 to add, < 0 to remove */
 	int				nr_pages_to_update;
 	struct list_head		new_pages; /* new pages to add */
@@ -2026,6 +2027,29 @@ rb_add_time_stamp(struct ring_buffer_event *event, u64 delta)
 	return skip_time_extend(event);
 }
 
+/*
+ * Update the last timestamp only if it hasn't changed since we
+ * read it to compute our delta. If it has changed, then this
+ * delta is no longer valid - this should only happen if an NMI
+ * interrupted us between the time we read the last time stamp
+ * and we got here AND if the NMI handler does a trace write.
+ * We fall back to the default behavior in this case and set
+ * delta to zero.
+ */
+static u64 rb_update_last_tstamp(struct ring_buffer_per_cpu *cpu_buffer,
+				 u64 delta, u64 ts)
+{
+	u64 last_ts;
+
+	/* Last timestamp when we read it to compute delta */
+	last_ts = ts - delta;
+
+	if (cmpxchg_local(&cpu_buffer->last_stamp, last_ts, ts) == last_ts)
+		return delta;
+
+	return 0;
+}
+
 /**
  * rb_update_event - update event type and data
  * @event: the event to update
@@ -2040,11 +2064,14 @@ rb_add_time_stamp(struct ring_buffer_event *event, u64 delta)
 static void
 rb_update_event(struct ring_buffer_per_cpu *cpu_buffer,
 		struct ring_buffer_event *event, unsigned length,
-		int add_timestamp, u64 delta)
+		int add_timestamp, u64 delta, u64 ts)
 {
-	/* Only a commit updates the timestamp */
-	if (unlikely(!rb_event_is_commit(cpu_buffer, event)))
-		delta = 0;
+	if (!rb_precise_nested_write_ts()) {
+		/* Only a commit updates the timestamp */
+		if (unlikely(!rb_event_is_commit(cpu_buffer, event)))
+			delta = 0;
+	} else if (delta != 0)
+		delta = rb_update_last_tstamp(cpu_buffer, delta, ts);
 
 	/*
 	 * If we need to add a timestamp, then we
@@ -2459,7 +2486,7 @@ __rb_reserve_next(struct ring_buffer_per_cpu *cpu_buffer,
 
 	event = __rb_page_index(tail_page, tail);
 	kmemcheck_annotate_bitfield(event, bitfield);
-	rb_update_event(cpu_buffer, event, length, add_timestamp, delta);
+	rb_update_event(cpu_buffer, event, length, add_timestamp, delta, ts);
 
 	local_inc(&tail_page->entries);
 
@@ -2554,16 +2581,74 @@ static inline void rb_end_commit(struct ring_buffer_per_cpu *cpu_buffer)
 	}
 }
 
+struct static_key __precise_nested_write_ts;
+
+void rb_enable_precise_nested_write_ts(void)
+{
+	if (!rb_precise_nested_write_ts())
+		static_key_slow_inc(&__precise_nested_write_ts);
+}
+
+void rb_disable_precise_nested_write_ts(void)
+{
+	if (rb_precise_nested_write_ts())
+		static_key_slow_dec(&__precise_nested_write_ts);
+}
+
+static struct ring_buffer_event *
+__rb_reserve_next_event(struct ring_buffer_per_cpu *cpu_buffer,
+			u64 ts,
+			u64 write_stamp,
+			unsigned long length)
+{
+	struct ring_buffer_event *event;
+	u64 delta;
+	int add_timestamp;
+	u64 diff;
+
+	add_timestamp = 0;
+	delta = 0;
+
+	diff = ts - write_stamp;
+
+	/* make sure this diff is calculated here */
+	barrier();
+
+	/* Did the write stamp get updated already? */
+	if (likely(ts >= write_stamp)) {
+		delta = diff;
+		if (unlikely(test_time_stamp(delta))) {
+			int local_clock_stable = 1;
+#ifdef CONFIG_HAVE_UNSTABLE_SCHED_CLOCK
+			local_clock_stable = sched_clock_stable();
+#endif
+			WARN_ONCE(delta > (1ULL << 59),
+				  KERN_WARNING "Delta way too big! %llu ts=%llu write stamp = %llu\n%s",
+				  (unsigned long long)delta,
+				  (unsigned long long)ts,
+				  (unsigned long long)write_stamp,
+				  local_clock_stable ? "" :
+				  "If you just came from a suspend/resume,\n"
+				  "please switch to the trace global clock:\n"
+				  "  echo global > /sys/kernel/debug/tracing/trace_clock\n");
+			add_timestamp = 1;
+		}
+	}
+
+	event = __rb_reserve_next(cpu_buffer, length, ts,
+				  delta, add_timestamp);
+
+	return event;
+}
+
 static struct ring_buffer_event *
 rb_reserve_next_event(struct ring_buffer *buffer,
 		      struct ring_buffer_per_cpu *cpu_buffer,
 		      unsigned long length)
 {
 	struct ring_buffer_event *event;
-	u64 ts, delta;
+	u64 ts;
 	int nr_loops = 0;
-	int add_timestamp;
-	u64 diff;
 
 	rb_start_commit(cpu_buffer);
 
@@ -2584,8 +2669,6 @@ rb_reserve_next_event(struct ring_buffer *buffer,
 
 	length = rb_calculate_event_length(length);
  again:
-	add_timestamp = 0;
-	delta = 0;
 
 	/*
 	 * We allow for interrupts to reenter here and do a trace.
@@ -2599,35 +2682,30 @@ rb_reserve_next_event(struct ring_buffer *buffer,
 	if (RB_WARN_ON(cpu_buffer, ++nr_loops > 1000))
 		goto out_fail;
 
-	ts = rb_time_stamp(cpu_buffer->buffer);
-	diff = ts - cpu_buffer->write_stamp;
+	if (rb_precise_nested_write_ts()) {
+		unsigned long flags;
 
-	/* make sure this diff is calculated here */
-	barrier();
-
-	/* Did the write stamp get updated already? */
-	if (likely(ts >= cpu_buffer->write_stamp)) {
-		delta = diff;
-		if (unlikely(test_time_stamp(delta))) {
-			int local_clock_stable = 1;
-#ifdef CONFIG_HAVE_UNSTABLE_SCHED_CLOCK
-			local_clock_stable = sched_clock_stable();
-#endif
-			WARN_ONCE(delta > (1ULL << 59),
-				  KERN_WARNING "Delta way too big! %llu ts=%llu write stamp = %llu\n%s",
-				  (unsigned long long)delta,
-				  (unsigned long long)ts,
-				  (unsigned long long)cpu_buffer->write_stamp,
-				  local_clock_stable ? "" :
-				  "If you just came from a suspend/resume,\n"
-				  "please switch to the trace global clock:\n"
-				  "  echo global > /sys/kernel/debug/tracing/trace_clock\n");
-			add_timestamp = 1;
-		}
+		/* If  precise nested write timestamps are enabled,
+		 * we first disable interrupts on the current processor
+		 * so that we can reserve space on the buffer and save
+		 * the event's timestamp without being preempted.
+		 * The last time stamp is updated before we re-enable
+		 * interrupts so that the nested writers always have
+		 * a valid timestamp to compute the timestamp deltas
+		 * for their events.
+		 */
+		local_irq_save(flags);
+		ts = rb_time_stamp(cpu_buffer->buffer);
+		event = __rb_reserve_next_event(cpu_buffer, ts,
+					cpu_buffer->last_stamp, length);
+		cpu_buffer->last_stamp = ts;
+		local_irq_restore(flags);
+	} else {
+		ts = rb_time_stamp(cpu_buffer->buffer);
+		event = __rb_reserve_next_event(cpu_buffer, ts,
+					cpu_buffer->write_stamp, length);
 	}
 
-	event = __rb_reserve_next(cpu_buffer, length, ts,
-				  delta, add_timestamp);
 	if (unlikely(PTR_ERR(event) == -EAGAIN))
 		goto again;
 
