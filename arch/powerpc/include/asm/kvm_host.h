@@ -310,8 +310,6 @@ struct kvmppc_vcore {
 	u32 arch_compat;
 	ulong pcr;
 	ulong dpdes;		/* doorbell state (POWER8) */
-	void *mpp_buffer; /* Micro Partition Prefetch buffer */
-	bool mpp_buffer_is_valid;
 	ulong conferring_threads;
 };
 
@@ -406,11 +404,10 @@ struct kvmhv_tb_accumulator {
 struct kvmppc_irq_map {
 	u32	r_hwirq;
 	u32	v_hwirq;
-	struct irq_desc *desc;
 };
 
 #define	KVMPPC_PIRQ_MAPS	16
-#define	KVMPPC_PIRQ_ALL		64
+#define	KVMPPC_PIRQ_ALL		1024
 struct kvmppc_passthru_map {
 	int n_map_irq;
 	int n_all_irq;
