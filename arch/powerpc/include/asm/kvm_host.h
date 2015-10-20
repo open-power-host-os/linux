@@ -407,7 +407,7 @@ struct kvmppc_irq_map {
 };
 
 #define	KVMPPC_PIRQ_MAPS	16
-#define	KVMPPC_PIRQ_ALL		64
+#define	KVMPPC_PIRQ_ALL		1024
 struct kvmppc_passthru_map {
 	int n_map_irq;
 	int n_all_irq;
