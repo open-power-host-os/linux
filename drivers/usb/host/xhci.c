@@ -657,21 +657,6 @@ int xhci_run(struct usb_hcd *hcd)
 }
 EXPORT_SYMBOL_GPL(xhci_run);
 
-static void xhci_only_stop_hcd(struct usb_hcd *hcd)
-{
-	struct xhci_hcd *xhci = hcd_to_xhci(hcd);
-
-	spin_lock_irq(&xhci->lock);
-	xhci_halt(xhci);
-
-	/* The shared_hcd is going to be deallocated shortly (the USB core only
-	 * calls this function when allocation fails in usb_add_hcd(), or
-	 * usb_remove_hcd() is called).  So we need to unset xHCI's pointer.
-	 */
-	xhci->shared_hcd = NULL;
-	spin_unlock_irq(&xhci->lock);
-}
-
 /*
  * Stop xHCI driver.
  *
@@ -686,12 +671,13 @@ void xhci_stop(struct usb_hcd *hcd)
 	u32 temp;
 	struct xhci_hcd *xhci = hcd_to_xhci(hcd);
 
-	if (!usb_hcd_is_primary_hcd(hcd)) {
-		xhci_only_stop_hcd(xhci->shared_hcd);
+	if (xhci->xhc_state & XHCI_STATE_HALTED)
 		return;
-	}
 
 	spin_lock_irq(&xhci->lock);
+	xhci->xhc_state |= XHCI_STATE_HALTED;
+	xhci->cmd_ring_state = CMD_RING_STATE_STOPPED;
+
 	/* Make sure the xHC is halted for a USB3 roothub
 	 * (xhci_stop() could be called as part of failed init).
 	 */
