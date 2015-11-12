@@ -2551,6 +2551,8 @@ machine_check_realmode:
 	 */
 	ld	r10, VCPU_PC(r9)
 	ld	r11, VCPU_MSR(r9)
+	rldicl.	r0, r11, 64-MSR_HV_LG, 63 /* check if it happened in HV mode */
+	bne	mc_cont			/* if so, exit to host */
 	andi.	r0, r11, MSR_RI		/* check for unrecoverable exception */
 	beq	1f			/* Deliver a machine check to guest */
 	cmpdi	r3, 0			/* Did we handle MCE ? */
