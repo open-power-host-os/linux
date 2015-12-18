@@ -370,6 +370,7 @@ long kvmppc_read_intr(struct kvm_vcpu *vcpu, int path)
 	st_le32(&local_paca->kvm_hstate.saved_xirr, xirr);
 	h_xirr = local_paca->kvm_hstate.saved_xirr;
 #else
+	local_paca->kvm_hstate.saved_xirr = xirr;
 	h_xirr = xirr;
 #endif
 	xisr = h_xirr & 0xffffff;
@@ -413,6 +414,7 @@ long kvmppc_read_intr(struct kvm_vcpu *vcpu, int path)
 		}
 
 		/* OK, it's an IPI for us */
+		local_paca->kvm_hstate.saved_xirr = 0;
 		return -1;
 	}
 
