@@ -26,7 +26,7 @@
 #define XICS_IPI		2	/* interrupt source # for IPIs */
 
 /* Maximum number of threads per physical core */
-#define MAX_THREADS		8
+#define MAX_SMT_THREADS		8
 
 /* Maximum number of subcores per physical core */
 #define MAX_SUBCORES		4
@@ -73,14 +73,14 @@ kvmppc_resume_\intno:
 
 struct kvmppc_vcore;
 
-/* Struct used for coordinating split-code mode changes on POWER8 */
+/* Struct used for coordinating micro-threading (split-core) mode changes */
 struct kvm_split_mode {
 	unsigned long	rpr;
 	unsigned long	pmmar;
 	unsigned long	ldbar;
 	u8		subcore_size;
 	u8		do_nap;
-	u8		napped[MAX_THREADS];
+	u8		napped[MAX_SMT_THREADS];
 	struct kvmppc_vcore *master_vcs[MAX_SUBCORES];
 };
 

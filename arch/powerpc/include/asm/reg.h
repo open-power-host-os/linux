@@ -108,6 +108,7 @@
 #define MSR_TS_T	__MASK(MSR_TS_T_LG)	/*  Transaction Transactional */
 #define MSR_TS_MASK	(MSR_TS_T | MSR_TS_S)   /* Transaction State bits */
 #define MSR_TM_ACTIVE(x) (((x) & MSR_TS_MASK) != 0) /* Transaction active? */
+#define MSR_TM_RESV(x) (((x) & MSR_TS_MASK) == MSR_TS_MASK) /* Reserved */
 #define MSR_TM_TRANSACTIONAL(x)	(((x) & MSR_TS_MASK) == MSR_TS_T)
 #define MSR_TM_SUSPENDED(x)	(((x) & MSR_TS_MASK) == MSR_TS_S)
 
@@ -1192,8 +1193,7 @@
 #ifdef CONFIG_PPC_BOOK3S_64
 #define __mtmsrd(v, l)	asm volatile("mtmsrd %0," __stringify(l) \
 				     : : "r" (v) : "memory")
-#define mtmsrd(v)	__mtmsrd((v), 0)
-#define mtmsr(v)	mtmsrd(v)
+#define mtmsr(v)	__mtmsrd((v), 0)
 #else
 #define mtmsr(v)	asm volatile("mtmsr %0" : \
 				     : "r" ((unsigned long)(v)) \
@@ -1287,7 +1287,7 @@ static inline void update_power8_hid0(unsigned long hid0)
 	 *  preceded by a a SYNC instruction followed by an ISYNC
 	 *  instruction
 	 */
-	asm volatile("sync; mtspr %0,%1; isync" : : "i"(SPRN_HID0), "r"(hid0));
+	asm volatile("sync; mtspr %0,%1; isync":: "i"(SPRN_HID0), "r"(hid0));
 }
 #endif /* __ASSEMBLY__ */
 #endif /* __KERNEL__ */

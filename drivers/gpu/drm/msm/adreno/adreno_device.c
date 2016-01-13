@@ -2,6 +2,8 @@
  * Copyright (C) 2013-2014 Red Hat
  * Author: Rob Clark <robdclark@gmail.com>
  *
+ * Copyright (c) 2014 The Linux Foundation. All rights reserved.
+ *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License version 2 as published by
  * the Free Software Foundation.
@@ -17,7 +19,7 @@
 
 #include "adreno_gpu.h"
 
-#if defined(CONFIG_MSM_BUS_SCALING) && !defined(CONFIG_OF)
+#if defined(DOWNSTREAM_CONFIG_MSM_BUS_SCALING) && !defined(CONFIG_OF)
 #  include <mach/kgsl.h>
 #endif
 
@@ -28,6 +30,7 @@ MODULE_PARM_DESC(hang_debug, "Dump registers when hang is detected (can be slow!
 module_param_named(hang_debug, hang_debug, bool, 0600);
 
 struct msm_gpu *a3xx_gpu_init(struct drm_device *dev);
+struct msm_gpu *a4xx_gpu_init(struct drm_device *dev);
 
 static const struct adreno_info gpulist[] = {
 	{
@@ -37,6 +40,14 @@ static const struct adreno_info gpulist[] = {
 		.pm4fw = "a300_pm4.fw",
 		.pfpfw = "a300_pfp.fw",
 		.gmem  = SZ_256K,
+		.init  = a3xx_gpu_init,
+	}, {
+		.rev   = ADRENO_REV(3, 0, 6, 0),
+		.revn  = 307,        /* because a305c is revn==306 */
+		.name  = "A306",
+		.pm4fw = "a300_pm4.fw",
+		.pfpfw = "a300_pfp.fw",
+		.gmem  = SZ_128K,
 		.init  = a3xx_gpu_init,
 	}, {
 		.rev   = ADRENO_REV(3, 2, ANY_ID, ANY_ID),
@@ -54,6 +65,14 @@ static const struct adreno_info gpulist[] = {
 		.pfpfw = "a330_pfp.fw",
 		.gmem  = SZ_1M,
 		.init  = a3xx_gpu_init,
+	}, {
+		.rev   = ADRENO_REV(4, 2, 0, ANY_ID),
+		.revn  = 420,
+		.name  = "A420",
+		.pm4fw = "a420_pm4.fw",
+		.pfpfw = "a420_pfp.fw",
+		.gmem  = (SZ_1M + SZ_512K),
+		.init  = a4xx_gpu_init,
 	},
 };
 
@@ -61,6 +80,8 @@ MODULE_FIRMWARE("a300_pm4.fw");
 MODULE_FIRMWARE("a300_pfp.fw");
 MODULE_FIRMWARE("a330_pm4.fw");
 MODULE_FIRMWARE("a330_pfp.fw");
+MODULE_FIRMWARE("a420_pm4.fw");
+MODULE_FIRMWARE("a420_pfp.fw");
 
 static inline bool _rev_match(uint8_t entry, uint8_t id)
 {
@@ -227,7 +248,7 @@ static int adreno_bind(struct device *dev, struct device *master, void *data)
 			config.rev = ADRENO_REV(3, 0, 5, 0);
 
 	}
-#  ifdef CONFIG_MSM_BUS_SCALING
+#  ifdef DOWNSTREAM_CONFIG_MSM_BUS_SCALING
 	config.bus_scale_table = pdata->bus_scale_table;
 #  endif
 #endif

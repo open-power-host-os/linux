@@ -38,7 +38,7 @@
 #include <linux/irqbypass.h>
 #include <trace/events/kvm.h>
 
-#include "iodev.h"
+#include <kvm/iodev.h>
 
 #ifdef CONFIG_HAVE_KVM_IRQFD
 
@@ -171,6 +171,15 @@ irqfd_deactivate(struct kvm_kernel_irqfd *irqfd)
 	queue_work(irqfd_cleanup_wq, &irqfd->shutdown);
 }
 
+int __attribute__((weak)) kvm_arch_set_irq_inatomic(
+				struct kvm_kernel_irq_routing_entry *irq,
+				struct kvm *kvm, int irq_source_id,
+				int level,
+				bool line_status)
+{
+	return -EWOULDBLOCK;
+}
+
 /*
  * Called with wqh->lock held and interrupts disabled
  */
@@ -192,10 +201,9 @@ irqfd_wakeup(wait_queue_t *wait, unsigned mode, int sync, void *key)
 			irq = irqfd->irq_entry;
 		} while (read_seqcount_retry(&irqfd->irq_entry_sc, seq));
 		/* An event has been signaled, inject an interrupt */
-		if (irq.type == KVM_IRQ_ROUTING_MSI)
-			kvm_set_msi(&irq, kvm, KVM_USERSPACE_IRQ_SOURCE_ID, 1,
-					false);
-		else
+		if (kvm_arch_set_irq_inatomic(&irq, kvm,
+					      KVM_USERSPACE_IRQ_SOURCE_ID, 1,
+					      false) == -EWOULDBLOCK)
 			schedule_work(&irqfd->inject);
 		srcu_read_unlock(&kvm->irq_srcu, idx);
 	}
@@ -238,23 +246,39 @@ static void irqfd_update(struct kvm *kvm, struct kvm_kernel_irqfd *irqfd)
 {
 	struct kvm_kernel_irq_routing_entry *e;
 	struct kvm_kernel_irq_routing_entry entries[KVM_NR_IRQCHIPS];
-	int i, n_entries;
+	int n_entries;
 
 	n_entries = kvm_irq_map_gsi(kvm, entries, irqfd->gsi);
 
 	write_seqcount_begin(&irqfd->irq_entry_sc);
 
-	irqfd->irq_entry.type = 0;
-
 	e = entries;
-	for (i = 0; i < n_entries; ++i, ++e) {
-		/* Only fast-path MSI. */
-		if (e->type == KVM_IRQ_ROUTING_MSI)
-			irqfd->irq_entry = *e;
-	}
+	if (n_entries == 1)
+		irqfd->irq_entry = *e;
+	else
+		irqfd->irq_entry.type = 0;
 
 	write_seqcount_end(&irqfd->irq_entry_sc);
 }
+
+#ifdef CONFIG_HAVE_KVM_IRQ_BYPASS
+void __attribute__((weak)) kvm_arch_irq_bypass_stop(
+				struct irq_bypass_consumer *cons)
+{
+}
+
+void __attribute__((weak)) kvm_arch_irq_bypass_start(
+				struct irq_bypass_consumer *cons)
+{
+}
+
+int  __attribute__((weak)) kvm_arch_update_irqfd_routing(
+				struct kvm *kvm, unsigned int host_irq,
+				uint32_t guest_irq, bool set)
+{
+	return 0;
+}
+#endif
 
 static int
 kvm_irqfd_assign(struct kvm *kvm, struct kvm_irqfd *args)
@@ -265,6 +289,9 @@ kvm_irqfd_assign(struct kvm *kvm, struct kvm_irqfd *args)
 	int ret;
 	unsigned int events;
 	int idx;
+
+	if (!kvm_arch_intc_initialized(kvm))
+		return -EAGAIN;
 
 	irqfd = kzalloc(sizeof(*irqfd), GFP_KERNEL);
 	if (!irqfd)
@@ -432,9 +459,18 @@ bool kvm_irq_has_notifier(struct kvm *kvm, unsigned irqchip, unsigned pin)
 }
 EXPORT_SYMBOL_GPL(kvm_irq_has_notifier);
 
-void kvm_notify_acked_irq(struct kvm *kvm, unsigned irqchip, unsigned pin)
+void kvm_notify_acked_gsi(struct kvm *kvm, int gsi)
 {
 	struct kvm_irq_ack_notifier *kian;
+
+	hlist_for_each_entry_rcu(kian, &kvm->irq_ack_notifier_list,
+				 link)
+		if (kian->gsi == gsi)
+			kian->irq_acked(kian);
+}
+
+void kvm_notify_acked_irq(struct kvm *kvm, unsigned irqchip, unsigned pin)
+{
 	int gsi, idx;
 
 	trace_kvm_ack_irq(irqchip, pin);
@@ -442,10 +478,7 @@ void kvm_notify_acked_irq(struct kvm *kvm, unsigned irqchip, unsigned pin)
 	idx = srcu_read_lock(&kvm->irq_srcu);
 	gsi = kvm_irq_map_chip_pin(kvm, irqchip, pin);
 	if (gsi != -1)
-		hlist_for_each_entry_rcu(kian, &kvm->irq_ack_notifier_list,
-					 link)
-			if (kian->gsi == gsi)
-				kian->irq_acked(kian);
+		kvm_notify_acked_gsi(kvm, gsi);
 	srcu_read_unlock(&kvm->irq_srcu, idx);
 }
 
@@ -571,8 +604,18 @@ void kvm_irq_routing_update(struct kvm *kvm)
 
 	spin_lock_irq(&kvm->irqfds.lock);
 
-	list_for_each_entry(irqfd, &kvm->irqfds.items, list)
+	list_for_each_entry(irqfd, &kvm->irqfds.items, list) {
 		irqfd_update(kvm, irqfd);
+
+#ifdef CONFIG_HAVE_KVM_IRQ_BYPASS
+		if (irqfd->producer) {
+			int ret = kvm_arch_update_irqfd_routing(
+					irqfd->kvm, irqfd->producer->irq,
+					irqfd->gsi, 1);
+			WARN_ON(ret);
+		}
+#endif
+	}
 
 	spin_unlock_irq(&kvm->irqfds.lock);
 }
@@ -678,8 +721,8 @@ ioeventfd_in_range(struct _ioeventfd *p, gpa_t addr, int len, const void *val)
 
 /* MMIO/PIO writes trigger an event if the addr/val match */
 static int
-ioeventfd_write(struct kvm_io_device *this, gpa_t addr, int len,
-		const void *val)
+ioeventfd_write(struct kvm_vcpu *vcpu, struct kvm_io_device *this, gpa_t addr,
+		int len, const void *val)
 {
 	struct _ioeventfd *p = to_ioeventfd(this);
 
@@ -734,40 +777,14 @@ static enum kvm_bus ioeventfd_bus_from_flags(__u32 flags)
 	return KVM_MMIO_BUS;
 }
 
-static int
-kvm_assign_ioeventfd(struct kvm *kvm, struct kvm_ioeventfd *args)
+static int kvm_assign_ioeventfd_idx(struct kvm *kvm,
+				enum kvm_bus bus_idx,
+				struct kvm_ioeventfd *args)
 {
-	enum kvm_bus              bus_idx;
-	struct _ioeventfd        *p;
-	struct eventfd_ctx       *eventfd;
-	int                       ret;
 
-	bus_idx = ioeventfd_bus_from_flags(args->flags);
-	/* must be natural-word sized, or 0 to ignore length */
-	switch (args->len) {
-	case 0:
-	case 1:
-	case 2:
-	case 4:
-	case 8:
-		break;
-	default:
-		return -EINVAL;
-	}
-
-	/* check for range overflow */
-	if (args->addr + args->len < args->addr)
-		return -EINVAL;
-
-	/* check for extra flags that we don't understand */
-	if (args->flags & ~KVM_IOEVENTFD_VALID_FLAG_MASK)
-		return -EINVAL;
-
-	/* ioeventfd with no length can't be combined with DATAMATCH */
-	if (!args->len &&
-	    args->flags & (KVM_IOEVENTFD_FLAG_PIO |
-			   KVM_IOEVENTFD_FLAG_DATAMATCH))
-		return -EINVAL;
+	struct eventfd_ctx *eventfd;
+	struct _ioeventfd *p;
+	int ret;
 
 	eventfd = eventfd_ctx_fdget(args->fd);
 	if (IS_ERR(eventfd))
@@ -806,16 +823,6 @@ kvm_assign_ioeventfd(struct kvm *kvm, struct kvm_ioeventfd *args)
 	if (ret < 0)
 		goto unlock_fail;
 
-	/* When length is ignored, MMIO is also put on a separate bus, for
-	 * faster lookups.
-	 */
-	if (!args->len && !(args->flags & KVM_IOEVENTFD_FLAG_PIO)) {
-		ret = kvm_io_bus_register_dev(kvm, KVM_FAST_MMIO_BUS,
-					      p->addr, 0, &p->dev);
-		if (ret < 0)
-			goto register_fail;
-	}
-
 	kvm->buses[bus_idx]->ioeventfd_count++;
 	list_add_tail(&p->list, &kvm->ioeventfds);
 
@@ -823,8 +830,6 @@ kvm_assign_ioeventfd(struct kvm *kvm, struct kvm_ioeventfd *args)
 
 	return 0;
 
-register_fail:
-	kvm_io_bus_unregister_dev(kvm, bus_idx, &p->dev);
 unlock_fail:
 	mutex_unlock(&kvm->slots_lock);
 
@@ -836,14 +841,13 @@ fail:
 }
 
 static int
-kvm_deassign_ioeventfd(struct kvm *kvm, struct kvm_ioeventfd *args)
+kvm_deassign_ioeventfd_idx(struct kvm *kvm, enum kvm_bus bus_idx,
+			   struct kvm_ioeventfd *args)
 {
-	enum kvm_bus              bus_idx;
 	struct _ioeventfd        *p, *tmp;
 	struct eventfd_ctx       *eventfd;
 	int                       ret = -ENOENT;
 
-	bus_idx = ioeventfd_bus_from_flags(args->flags);
 	eventfd = eventfd_ctx_fdget(args->fd);
 	if (IS_ERR(eventfd))
 		return PTR_ERR(eventfd);
@@ -864,10 +868,6 @@ kvm_deassign_ioeventfd(struct kvm *kvm, struct kvm_ioeventfd *args)
 			continue;
 
 		kvm_io_bus_unregister_dev(kvm, bus_idx, &p->dev);
-		if (!p->length) {
-			kvm_io_bus_unregister_dev(kvm, KVM_FAST_MMIO_BUS,
-						  &p->dev);
-		}
 		kvm->buses[bus_idx]->ioeventfd_count--;
 		ioeventfd_release(p);
 		ret = 0;
@@ -878,6 +878,69 @@ kvm_deassign_ioeventfd(struct kvm *kvm, struct kvm_ioeventfd *args)
 
 	eventfd_ctx_put(eventfd);
 
+	return ret;
+}
+
+static int kvm_deassign_ioeventfd(struct kvm *kvm, struct kvm_ioeventfd *args)
+{
+	enum kvm_bus bus_idx = ioeventfd_bus_from_flags(args->flags);
+	int ret = kvm_deassign_ioeventfd_idx(kvm, bus_idx, args);
+
+	if (!args->len && bus_idx == KVM_MMIO_BUS)
+		kvm_deassign_ioeventfd_idx(kvm, KVM_FAST_MMIO_BUS, args);
+
+	return ret;
+}
+
+static int
+kvm_assign_ioeventfd(struct kvm *kvm, struct kvm_ioeventfd *args)
+{
+	enum kvm_bus              bus_idx;
+	int ret;
+
+	bus_idx = ioeventfd_bus_from_flags(args->flags);
+	/* must be natural-word sized, or 0 to ignore length */
+	switch (args->len) {
+	case 0:
+	case 1:
+	case 2:
+	case 4:
+	case 8:
+		break;
+	default:
+		return -EINVAL;
+	}
+
+	/* check for range overflow */
+	if (args->addr + args->len < args->addr)
+		return -EINVAL;
+
+	/* check for extra flags that we don't understand */
+	if (args->flags & ~KVM_IOEVENTFD_VALID_FLAG_MASK)
+		return -EINVAL;
+
+	/* ioeventfd with no length can't be combined with DATAMATCH */
+	if (!args->len && (args->flags & KVM_IOEVENTFD_FLAG_DATAMATCH))
+		return -EINVAL;
+
+	ret = kvm_assign_ioeventfd_idx(kvm, bus_idx, args);
+	if (ret)
+		goto fail;
+
+	/* When length is ignored, MMIO is also put on a separate bus, for
+	 * faster lookups.
+	 */
+	if (!args->len && bus_idx == KVM_MMIO_BUS) {
+		ret = kvm_assign_ioeventfd_idx(kvm, KVM_FAST_MMIO_BUS, args);
+		if (ret < 0)
+			goto fast_fail;
+	}
+
+	return 0;
+
+fast_fail:
+	kvm_deassign_ioeventfd_idx(kvm, bus_idx, args);
+fail:
 	return ret;
 }
 

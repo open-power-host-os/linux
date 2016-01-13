@@ -204,14 +204,16 @@ long kvmppc_do_h_enter(struct kvm *kvm, unsigned long flags,
 	 * retry via mmu_notifier_retry.
 	 */
 	if (realmode)
-		ptep = __find_linux_pte_or_hugepte(pgdir, hva, &hpage_shift);
+		ptep = __find_linux_pte_or_hugepte(pgdir, hva, NULL,
+						   &hpage_shift);
 	else {
 		local_irq_save(irq_flags);
-		ptep = find_linux_pte_or_hugepte(pgdir, hva, &hpage_shift);
+		ptep = find_linux_pte_or_hugepte(pgdir, hva, NULL,
+						 &hpage_shift);
 	}
 	if (ptep) {
 		pte_t pte;
-		unsigned long host_pte_size;
+		unsigned int host_pte_size;
 
 		if (hpage_shift)
 			host_pte_size = 1ul << hpage_shift;
@@ -226,9 +228,8 @@ long kvmppc_do_h_enter(struct kvm *kvm, unsigned long flags,
 				local_irq_restore(flags);
 			return H_PARAMETER;
 		}
-
 		pte = kvmppc_read_update_linux_pte(ptep, writing);
-		if (pte_present(pte) && !pte_numa(pte)) {
+		if (pte_present(pte) && !pte_protnone(pte)) {
 			if (writing && !pte_write(pte))
 				/* make the actual HPTE be read-only */
 				ptel = hpte_make_readonly(ptel);
@@ -238,6 +239,8 @@ long kvmppc_do_h_enter(struct kvm *kvm, unsigned long flags,
 			pa |= gpa & ~PAGE_MASK;
 		}
 	}
+	if (!realmode)
+		local_irq_restore(irq_flags);
 
 	ptel &= ~(HPTE_R_PP0 - psize);
 	ptel |= pa;
@@ -310,8 +313,6 @@ long kvmppc_do_h_enter(struct kvm *kvm, unsigned long flags,
 				return H_PTEG_FULL;
 			}
 		}
-		if (!realmode)
-			local_irq_restore(irq_flags);
 	}
 
 	/* Save away the guest's idea of the second HPTE dword */
@@ -438,7 +439,15 @@ long kvmppc_do_h_remove(struct kvm *kvm, unsigned long flags,
 		hpte[0] &= ~cpu_to_be64(HPTE_V_VALID);
 		rb = compute_tlbie_rb(v, be64_to_cpu(hpte[1]), pte_index);
 		do_tlbies(kvm, &rb, 1, global_invalidates(kvm, flags), true);
-		/* Read PTE low word after tlbie to get final R/C values */
+		/*
+		 * The reference (R) and change (C) bits in a HPT
+		 * entry can be set by hardware at any time up until
+		 * the HPTE is invalidated and the TLB invalidation
+		 * sequence has completed.  This means that when
+		 * removing a HPTE, we need to re-read the HPTE after
+		 * the invalidation sequence has completed in order to
+		 * obtain reliable values of R and C.
+		 */
 		remove_revmap_chain(kvm, pte_index, rev, v,
 				    be64_to_cpu(hpte[1]));
 	}

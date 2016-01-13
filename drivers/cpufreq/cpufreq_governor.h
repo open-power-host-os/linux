@@ -153,7 +153,7 @@ struct cpu_dbs_info {
 	 */
 	unsigned int prev_load;
 	struct delayed_work dwork;
-	struct cpu_common_dbs_info *ccdbs;
+	struct cpu_common_dbs_info *shared;
 };
 
 struct od_cpu_dbs_info_s {
@@ -170,7 +170,6 @@ struct cs_cpu_dbs_info_s {
 	struct cpu_dbs_info cdbs;
 	unsigned int down_skip;
 	unsigned int requested_freq;
-	unsigned int enable:1;
 };
 
 /* Per policy Governors sysfs tunables */

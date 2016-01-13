@@ -1,10 +1,11 @@
+#include <linux/ftrace.h>
 #include <linux/percpu.h>
 #include <linux/slab.h>
 #include <asm/cacheflush.h>
-#include <asm/cpu_ops.h>
 #include <asm/debug-monitors.h>
 #include <asm/pgtable.h>
 #include <asm/memory.h>
+#include <asm/mmu_context.h>
 #include <asm/smp_plat.h>
 #include <asm/suspend.h>
 #include <asm/tlbflush.h>
@@ -41,7 +42,7 @@ void notrace __cpu_suspend_save(struct cpu_suspend_ctx *ptr,
  * time the notifier runs debug exceptions might have been enabled already,
  * with HW breakpoints registers content still in an unknown state.
  */
-void (*hw_breakpoint_restore)(void *);
+static void (*hw_breakpoint_restore)(void *);
 void __init cpu_suspend_set_dbg_restorer(void (*hw_bp_restore)(void *))
 {
 	/* Prevent multiple restore hook initializations */
@@ -50,34 +51,14 @@ void __init cpu_suspend_set_dbg_restorer(void (*hw_bp_restore)(void *))
 	hw_breakpoint_restore = hw_bp_restore;
 }
 
-/**
- * cpu_suspend() - function to enter a low-power state
- * @arg: argument to pass to CPU suspend operations
- *
- * Return: 0 on success, -EOPNOTSUPP if CPU suspend hook not initialized, CPU
- * operations back-end error code otherwise.
- */
-int cpu_suspend(unsigned long arg)
-{
-	int cpu = smp_processor_id();
-
-	/*
-	 * If cpu_ops have not been registered or suspend
-	 * has not been initialized, cpu_suspend call fails early.
-	 */
-	if (!cpu_ops[cpu] || !cpu_ops[cpu]->cpu_suspend)
-		return -EOPNOTSUPP;
-	return cpu_ops[cpu]->cpu_suspend(arg);
-}
-
 /*
- * __cpu_suspend
+ * cpu_suspend
  *
  * arg: argument to pass to the finisher function
  * fn: finisher function pointer
  *
  */
-int __cpu_suspend(unsigned long arg, int (*fn)(unsigned long))
+int cpu_suspend(unsigned long arg, int (*fn)(unsigned long))
 {
 	struct mm_struct *mm = current->active_mm;
 	int ret;
@@ -91,6 +72,13 @@ int __cpu_suspend(unsigned long arg, int (*fn)(unsigned long))
 	local_dbg_save(flags);
 
 	/*
+	 * Function graph tracer state gets incosistent when the kernel
+	 * calls functions that never return (aka suspend finishers) hence
+	 * disable graph tracing during their execution.
+	 */
+	pause_graph_tracing();
+
+	/*
 	 * mm context saved on the stack, it will be restored when
 	 * the cpu comes out of reset through the identity mapped
 	 * page tables, so that the thread address space is properly
@@ -98,8 +86,23 @@ int __cpu_suspend(unsigned long arg, int (*fn)(unsigned long))
 	 */
 	ret = __cpu_suspend_enter(arg, fn);
 	if (ret == 0) {
-		cpu_switch_mm(mm->pgd, mm);
-		flush_tlb_all();
+		/*
+		 * We are resuming from reset with TTBR0_EL1 set to the
+		 * idmap to enable the MMU; set the TTBR0 to the reserved
+		 * page tables to prevent speculative TLB allocations, flush
+		 * the local tlb and set the default tcr_el1.t0sz so that
+		 * the TTBR0 address space set-up is properly restored.
+		 * If the current active_mm != &init_mm we entered cpu_suspend
+		 * with mappings in TTBR0 that must be restored, so we switch
+		 * them back to complete the address space configuration
+		 * restoration before returning.
+		 */
+		cpu_set_reserved_ttbr0();
+		local_flush_tlb_all();
+		cpu_set_default_tcr_t0sz();
+
+		if (mm != &init_mm)
+			cpu_switch_mm(mm->pgd, mm);
 
 		/*
 		 * Restore per-cpu offset before any kernel
@@ -116,6 +119,8 @@ int __cpu_suspend(unsigned long arg, int (*fn)(unsigned long))
 			hw_breakpoint_restore(NULL);
 	}
 
+	unpause_graph_tracing();
+
 	/*
 	 * Restore pstate flags. OS lock and mdscr have been already
 	 * restored, so from this point onwards, debugging is fully
@@ -126,8 +131,7 @@ int __cpu_suspend(unsigned long arg, int (*fn)(unsigned long))
 	return ret;
 }
 
-extern struct sleep_save_sp sleep_save_sp;
-extern phys_addr_t sleep_idmap_phys;
+struct sleep_save_sp sleep_save_sp;
 
 static int __init cpu_suspend_init(void)
 {
@@ -141,9 +145,7 @@ static int __init cpu_suspend_init(void)
 
 	sleep_save_sp.save_ptr_stash = ctx_ptr;
 	sleep_save_sp.save_ptr_stash_phys = virt_to_phys(ctx_ptr);
-	sleep_idmap_phys = virt_to_phys(idmap_pg_dir);
 	__flush_dcache_area(&sleep_save_sp, sizeof(struct sleep_save_sp));
-	__flush_dcache_area(&sleep_idmap_phys, sizeof(sleep_idmap_phys));
 
 	return 0;
 }

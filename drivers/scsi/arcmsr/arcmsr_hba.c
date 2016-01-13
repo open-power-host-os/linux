@@ -114,16 +114,11 @@ static void arcmsr_hardware_reset(struct AdapterControlBlock *acb);
 static const char *arcmsr_info(struct Scsi_Host *);
 static irqreturn_t arcmsr_interrupt(struct AdapterControlBlock *acb);
 static void arcmsr_free_irq(struct pci_dev *, struct AdapterControlBlock *);
-static int arcmsr_adjust_disk_queue_depth(struct scsi_device *sdev,
-					  int queue_depth, int reason)
+static int arcmsr_adjust_disk_queue_depth(struct scsi_device *sdev, int queue_depth)
 {
-	if (reason != SCSI_QDEPTH_DEFAULT)
-		return -EOPNOTSUPP;
-
 	if (queue_depth > ARCMSR_MAX_CMD_PERLUN)
 		queue_depth = ARCMSR_MAX_CMD_PERLUN;
-	scsi_adjust_queue_depth(sdev, MSG_ORDERED_TAG, queue_depth);
-	return queue_depth;
+	return scsi_change_queue_depth(sdev, queue_depth);
 }
 
 static struct scsi_host_template arcmsr_scsi_host_template = {
@@ -264,10 +259,7 @@ static bool arcmsr_remap_pciregion(struct AdapterControlBlock *acb)
 		addr = (unsigned long)pci_resource_start(pdev, 0);
 		range = pci_resource_len(pdev, 0);
 		flags = pci_resource_flags(pdev, 0);
-		if (flags & IORESOURCE_CACHEABLE)
-			mem_base0 = ioremap(addr, range);
-		else
-			mem_base0 = ioremap_nocache(addr, range);
+		mem_base0 = ioremap(addr, range);
 		if (!mem_base0) {
 			pr_notice("arcmsr%d: memory mapping region fail\n",
 				acb->host->host_no);
@@ -3269,7 +3261,7 @@ static int arcmsr_iop_confirm(struct AdapterControlBlock *acb)
 		reg->doneq_index = 0;
 		writel(ARCMSR_MESSAGE_SET_POST_WINDOW, reg->drv2iop_doorbell);
 		if (!arcmsr_hbaB_wait_msgint_ready(acb)) {
-			printk(KERN_NOTICE "arcmsr%d:can not set diver mode\n", \
+			printk(KERN_NOTICE "arcmsr%d: cannot set driver mode\n", \
 				acb->host->host_no);
 			return 1;
 		}

@@ -213,7 +213,6 @@ int main(void)
 		offsetof(struct tlb_core_data, esel_max));
 	DEFINE(TCD_ESEL_FIRST,
 		offsetof(struct tlb_core_data, esel_first));
-	DEFINE(TCD_LOCK, offsetof(struct tlb_core_data, lock));
 #endif /* CONFIG_PPC_BOOK3E */
 
 #ifdef CONFIG_PPC_STD_MMU_64
@@ -247,7 +246,7 @@ int main(void)
 #endif
 	DEFINE(PACAHWCPUID, offsetof(struct paca_struct, hw_cpu_id));
 	DEFINE(PACAKEXECSTATE, offsetof(struct paca_struct, kexec_state));
-	DEFINE(PACA_DSCR, offsetof(struct paca_struct, dscr_default));
+	DEFINE(PACA_DSCR_DEFAULT, offsetof(struct paca_struct, dscr_default));
 	DEFINE(PACA_STARTTIME, offsetof(struct paca_struct, starttime));
 	DEFINE(PACA_STARTTIME_USER, offsetof(struct paca_struct, starttime_user));
 	DEFINE(PACA_USER_TIME, offsetof(struct paca_struct, user_time));
@@ -658,8 +657,19 @@ int main(void)
 	HSTATE_FIELD(HSTATE_SAVED_XIRR, saved_xirr);
 	HSTATE_FIELD(HSTATE_HOST_IPI, host_ipi);
 	HSTATE_FIELD(HSTATE_PTID, ptid);
-	HSTATE_FIELD(HSTATE_MMCR, host_mmcr);
-	HSTATE_FIELD(HSTATE_PMC, host_pmc);
+	HSTATE_FIELD(HSTATE_MMCR0, host_mmcr[0]);
+	HSTATE_FIELD(HSTATE_MMCR1, host_mmcr[1]);
+	HSTATE_FIELD(HSTATE_MMCRA, host_mmcr[2]);
+	HSTATE_FIELD(HSTATE_SIAR, host_mmcr[3]);
+	HSTATE_FIELD(HSTATE_SDAR, host_mmcr[4]);
+	HSTATE_FIELD(HSTATE_MMCR2, host_mmcr[5]);
+	HSTATE_FIELD(HSTATE_SIER, host_mmcr[6]);
+	HSTATE_FIELD(HSTATE_PMC1, host_pmc[0]);
+	HSTATE_FIELD(HSTATE_PMC2, host_pmc[1]);
+	HSTATE_FIELD(HSTATE_PMC3, host_pmc[2]);
+	HSTATE_FIELD(HSTATE_PMC4, host_pmc[3]);
+	HSTATE_FIELD(HSTATE_PMC5, host_pmc[4]);
+	HSTATE_FIELD(HSTATE_PMC6, host_pmc[5]);
 	HSTATE_FIELD(HSTATE_PURR, host_purr);
 	HSTATE_FIELD(HSTATE_SPURR, host_spurr);
 	HSTATE_FIELD(HSTATE_DSCR, host_dscr);

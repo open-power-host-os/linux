@@ -346,7 +346,8 @@ static int wait_for_csb(struct nx842_workmem *wmem,
 	}
 
 	/* successful completion */
-	pr_debug_ratelimited("Processed %u bytes in %lu us\n", csb->count,
+	pr_debug_ratelimited("Processed %u bytes in %lu us\n",
+			     be32_to_cpu(csb->count),
 			     (unsigned long)ktime_us_delta(now, start));
 
 	return 0;
@@ -490,7 +491,7 @@ static int nx842_powernv_compress(const unsigned char *in, unsigned int inlen,
 				  void *wmem)
 {
 	return nx842_powernv_function(in, inlen, out, outlenp,
-				      wmem, CCW_FC_842_COMP_NOCRC);
+				      wmem, CCW_FC_842_COMP_CRC);
 }
 
 /**
@@ -518,7 +519,7 @@ static int nx842_powernv_decompress(const unsigned char *in, unsigned int inlen,
 				    void *wmem)
 {
 	return nx842_powernv_function(in, inlen, out, outlenp,
-				      wmem, CCW_FC_842_DECOMP_NOCRC);
+				      wmem, CCW_FC_842_DECOMP_CRC);
 }
 
 static int __init nx842_powernv_probe(struct device_node *dn)

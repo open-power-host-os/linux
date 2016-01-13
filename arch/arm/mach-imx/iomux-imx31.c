@@ -40,13 +40,15 @@ static DEFINE_SPINLOCK(gpio_mux_lock);
 
 #define IOMUX_REG_MASK (IOMUX_PADNUM_MASK & ~0x3)
 
-static unsigned long mxc_pin_alloc_map[NB_PORTS * 32 / BITS_PER_LONG];
+static DECLARE_BITMAP(mxc_pin_alloc_map, NB_PORTS * 32);
 /*
  * set the mode for a IOMUX pin.
  */
-int mxc_iomux_mode(unsigned int pin_mode)
+void mxc_iomux_mode(unsigned int pin_mode)
 {
-	u32 field, l, mode, ret = 0;
+	u32 field;
+	u32 l;
+	u32 mode;
 	void __iomem *reg;
 
 	reg = IOMUXSW_MUX_CTL + (pin_mode & IOMUX_REG_MASK);
@@ -61,8 +63,6 @@ int mxc_iomux_mode(unsigned int pin_mode)
 	__raw_writel(l, reg);
 
 	spin_unlock(&gpio_mux_lock);
-
-	return ret;
 }
 
 /*

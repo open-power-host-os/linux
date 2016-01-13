@@ -155,7 +155,7 @@ static void dbs_freq_increase(struct cpufreq_policy *policy, unsigned int freq)
 static void od_check_cpu(int cpu, unsigned int load)
 {
 	struct od_cpu_dbs_info_s *dbs_info = &per_cpu(od_cpu_dbs_info, cpu);
-	struct cpufreq_policy *policy = dbs_info->cdbs.ccdbs->policy;
+	struct cpufreq_policy *policy = dbs_info->cdbs.shared->policy;
 	struct dbs_data *dbs_data = policy->governor_data;
 	struct od_dbs_tuners *od_tuners = dbs_data->tuners;
 
@@ -194,7 +194,7 @@ static void od_check_cpu(int cpu, unsigned int load)
 static unsigned int od_dbs_timer(struct cpu_dbs_info *cdbs,
 				 struct dbs_data *dbs_data, bool modify_all)
 {
-	struct cpufreq_policy *policy = cdbs->ccdbs->policy;
+	struct cpufreq_policy *policy = cdbs->shared->policy;
 	unsigned int cpu = policy->cpu;
 	struct od_cpu_dbs_info_s *dbs_info = &per_cpu(od_cpu_dbs_info,
 			cpu);
@@ -267,27 +267,19 @@ static void update_sampling_rate(struct dbs_data *dbs_data,
 		dbs_info = &per_cpu(od_cpu_dbs_info, cpu);
 		cpufreq_cpu_put(policy);
 
-		mutex_lock(&dbs_info->cdbs.ccdbs->timer_mutex);
-
-		if (!delayed_work_pending(&dbs_info->cdbs.dwork)) {
-			mutex_unlock(&dbs_info->cdbs.ccdbs->timer_mutex);
+		if (!delayed_work_pending(&dbs_info->cdbs.dwork))
 			continue;
-		}
 
 		next_sampling = jiffies + usecs_to_jiffies(new_rate);
 		appointed_at = dbs_info->cdbs.dwork.timer.expires;
 
 		if (time_before(next_sampling, appointed_at)) {
-
-			mutex_unlock(&dbs_info->cdbs.ccdbs->timer_mutex);
 			cancel_delayed_work_sync(&dbs_info->cdbs.dwork);
-			mutex_lock(&dbs_info->cdbs.ccdbs->timer_mutex);
 
 			gov_queue_work(dbs_data, policy,
 				       usecs_to_jiffies(new_rate), true);
 
 		}
-		mutex_unlock(&dbs_info->cdbs.ccdbs->timer_mutex);
 	}
 }
 
@@ -550,16 +542,16 @@ static void od_set_powersave_bias(unsigned int powersave_bias)
 
 	get_online_cpus();
 	for_each_online_cpu(cpu) {
-		struct cpu_common_dbs_info *ccdbs;
+		struct cpu_common_dbs_info *shared;
 
 		if (cpumask_test_cpu(cpu, &done))
 			continue;
 
-		ccdbs = per_cpu(od_cpu_dbs_info, cpu).cdbs.ccdbs;
-		if (!ccdbs)
+		shared = per_cpu(od_cpu_dbs_info, cpu).cdbs.shared;
+		if (!shared)
 			continue;
 
-		policy = ccdbs->policy;
+		policy = shared->policy;
 		cpumask_or(&done, &done, policy->cpus);
 
 		if (policy->governor != &cpufreq_gov_ondemand)

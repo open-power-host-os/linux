@@ -146,19 +146,20 @@ static void __init pirq_peer_trick(void)
 
 /*
  *  Code for querying and setting of IRQ routes on various interrupt routers.
+ *  PIC Edge/Level Control Registers (ELCR) 0x4d0 & 0x4d1.
  */
 
-void eisa_set_level_irq(unsigned int irq)
+void elcr_set_level_irq(unsigned int irq)
 {
 	unsigned char mask = 1 << (irq & 7);
 	unsigned int port = 0x4d0 + (irq >> 3);
 	unsigned char val;
-	static u16 eisa_irq_mask;
+	static u16 elcr_irq_mask;
 
-	if (irq >= 16 || (1 << irq) & eisa_irq_mask)
+	if (irq >= 16 || (1 << irq) & elcr_irq_mask)
 		return;
 
-	eisa_irq_mask |= (1 << irq);
+	elcr_irq_mask |= (1 << irq);
 	printk(KERN_DEBUG "PCI: setting IRQ %u as level-triggered\n", irq);
 	val = inb(port);
 	if (!(val & mask)) {
@@ -965,11 +966,11 @@ static int pcibios_lookup_irq(struct pci_dev *dev, int assign)
 	} else if (r->get && (irq = r->get(pirq_router_dev, dev, pirq)) && \
 	((!(pci_probe & PCI_USE_PIRQ_MASK)) || ((1 << irq) & mask))) {
 		msg = "found";
-		eisa_set_level_irq(irq);
+		elcr_set_level_irq(irq);
 	} else if (newirq && r->set &&
 		(dev->class >> 8) != PCI_CLASS_DISPLAY_VGA) {
 		if (r->set(pirq_router_dev, dev, pirq, newirq)) {
-			eisa_set_level_irq(newirq);
+			elcr_set_level_irq(newirq);
 			msg = "assigned";
 			irq = newirq;
 		}
@@ -1200,11 +1201,12 @@ static int pirq_enable_irq(struct pci_dev *dev)
 #ifdef CONFIG_X86_IO_APIC
 			struct pci_dev *temp_dev;
 			int irq;
-			struct io_apic_irq_attr irq_attr;
+
+			if (pci_has_managed_irq(dev))
+				return 0;
 
 			irq = IO_APIC_get_PCI_irq_vector(dev->bus->number,
-						PCI_SLOT(dev->devfn),
-						pin - 1, &irq_attr);
+						PCI_SLOT(dev->devfn), pin - 1);
 			/*
 			 * Busses behind bridges are typically not listed in the MP-table.
 			 * In this case we have to look up the IRQ based on the parent bus,
@@ -1218,7 +1220,7 @@ static int pirq_enable_irq(struct pci_dev *dev)
 				pin = pci_swizzle_interrupt_pin(dev, pin);
 				irq = IO_APIC_get_PCI_irq_vector(bridge->bus->number,
 						PCI_SLOT(bridge->devfn),
-						pin - 1, &irq_attr);
+						pin - 1);
 				if (irq >= 0)
 					dev_warn(&dev->dev, "using bridge %s "
 						 "INT %c to get IRQ %d\n",
@@ -1228,7 +1230,7 @@ static int pirq_enable_irq(struct pci_dev *dev)
 			}
 			dev = temp_dev;
 			if (irq >= 0) {
-				dev->irq = irq;
+				pci_set_managed_irq(dev, irq);
 				dev_info(&dev->dev, "PCI->APIC IRQ transform: "
 					 "INT %c -> IRQ %d\n", 'A' + pin - 1, irq);
 				return 0;
@@ -1256,9 +1258,8 @@ static int pirq_enable_irq(struct pci_dev *dev)
 
 static void pirq_disable_irq(struct pci_dev *dev)
 {
-	if (io_apic_assign_pci_irqs && !mp_should_keep_irq(&dev->dev) &&
-	    dev->irq) {
+	if (io_apic_assign_pci_irqs && pci_has_managed_irq(dev)) {
 		mp_unmap_irq(dev->irq);
-		dev->irq = 0;
+		pci_reset_managed_irq(dev);
 	}
 }

@@ -28,57 +28,53 @@
 #include <asm/mce.h>
 #include <asm/machdep.h>
 
-static void _flush_tlb(uint32_t tlb_set, unsigned long inval_selector)
+static void flush_tlb_206(unsigned int num_sets, unsigned int action)
 {
-	unsigned long i, rb;
+	unsigned long rb;
+	unsigned int i;
 
-	rb = inval_selector;
-	for (i = 0; i < tlb_set; i++) {
+	switch (action) {
+	case TLB_INVAL_SCOPE_GLOBAL:
+		rb = TLBIEL_INVAL_SET;
+		break;
+	case TLB_INVAL_SCOPE_LPID:
+		rb = TLBIEL_INVAL_SET_LPID;
+		break;
+	default:
+		BUG();
+		break;
+	}
+
+	asm volatile("ptesync" : : : "memory");
+	for (i = 0; i < num_sets; i++) {
 		asm volatile("tlbiel %0" : : "r" (rb));
 		rb += 1 << TLBIEL_INVAL_SET_SHIFT;
 	}
+	asm volatile("ptesync" : : : "memory");
 }
 
 /*
  * Generic routine to flush TLB on power7. This routine is used as
  * flush_tlb hook in cpu_spec for Power7 processor.
  *
- * action => FLUSH_TLB_ALL:  Invalidate all TLBs.
- *	     FLUSH_TLB_LPID: Invalidate TLB for current LPID.
+ * action => TLB_INVAL_SCOPE_GLOBAL:  Invalidate all TLBs.
+ *	     TLB_INVAL_SCOPE_LPID: Invalidate TLB for current LPID.
  */
 void __flush_tlb_power7(unsigned int action)
 {
-	switch (action) {
-	case FLUSH_TLB_ALL:
-		_flush_tlb(POWER7_TLB_SETS, TLBIEL_INVAL_SET);
-		break;
-	case FLUSH_TLB_LPID:
-		_flush_tlb(POWER7_TLB_SETS, TLBIEL_INVAL_SET_LPID);
-		break;
-	default:
-		break;
-	}
+	flush_tlb_206(POWER7_TLB_SETS, action);
 }
 
 /*
  * Generic routine to flush TLB on power8. This routine is used as
  * flush_tlb hook in cpu_spec for power8 processor.
  *
- * action => FLUSH_TLB_ALL:  Invalidate all TLBs.
- *	     FLUSH_TLB_LPID: Invalidate TLB for current LPID.
+ * action => TLB_INVAL_SCOPE_GLOBAL:  Invalidate all TLBs.
+ *	     TLB_INVAL_SCOPE_LPID: Invalidate TLB for current LPID.
  */
 void __flush_tlb_power8(unsigned int action)
 {
-	switch (action) {
-	case FLUSH_TLB_ALL:
-		_flush_tlb(POWER8_TLB_SETS, TLBIEL_INVAL_SET);
-		break;
-	case FLUSH_TLB_LPID:
-		_flush_tlb(POWER8_TLB_SETS, TLBIEL_INVAL_SET_LPID);
-		break;
-	default:
-		break;
-	}
+	flush_tlb_206(POWER8_TLB_SETS, action);
 }
 
 /* flush SLBs and reload */
@@ -132,7 +128,7 @@ static long mce_handle_derror(uint64_t dsisr, uint64_t slb_error_bits)
 	}
 	if (dsisr & P7_DSISR_MC_TLB_MULTIHIT_MFTLB) {
 		if (cur_cpu_spec && cur_cpu_spec->flush_tlb)
-			cur_cpu_spec->flush_tlb(FLUSH_TLB_ALL);
+			cur_cpu_spec->flush_tlb(TLB_INVAL_SCOPE_GLOBAL);
 		/* reset error bits */
 		dsisr &= ~P7_DSISR_MC_TLB_MULTIHIT_MFTLB;
 	}
@@ -163,7 +159,7 @@ static long mce_handle_common_ierror(uint64_t srr1)
 		break;
 	case P7_SRR1_MC_IFETCH_TLB_MULTIHIT:
 		if (cur_cpu_spec && cur_cpu_spec->flush_tlb) {
-			cur_cpu_spec->flush_tlb(FLUSH_TLB_ALL);
+			cur_cpu_spec->flush_tlb(TLB_INVAL_SCOPE_GLOBAL);
 			handled = 1;
 		}
 		break;

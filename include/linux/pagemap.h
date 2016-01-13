@@ -69,6 +69,13 @@ static inline gfp_t mapping_gfp_mask(struct address_space * mapping)
 	return (__force gfp_t)mapping->flags & __GFP_BITS_MASK;
 }
 
+/* Restricts the given gfp_mask to what the mapping allows. */
+static inline gfp_t mapping_gfp_constraint(struct address_space *mapping,
+		gfp_t gfp_mask)
+{
+	return mapping_gfp_mask(mapping) & gfp_mask;
+}
+
 /*
  * This is non-atomic.  Only to be used before the mapping is activated.
  * Probably needs a barrier...
@@ -251,7 +258,7 @@ pgoff_t page_cache_prev_hole(struct address_space *mapping,
 #define FGP_NOWAIT		0x00000020
 
 struct page *pagecache_get_page(struct address_space *mapping, pgoff_t offset,
-		int fgp_flags, gfp_t cache_gfp_mask, gfp_t radix_gfp_mask);
+		int fgp_flags, gfp_t cache_gfp_mask);
 
 /**
  * find_get_page - find and get a page reference
@@ -266,13 +273,13 @@ struct page *pagecache_get_page(struct address_space *mapping, pgoff_t offset,
 static inline struct page *find_get_page(struct address_space *mapping,
 					pgoff_t offset)
 {
-	return pagecache_get_page(mapping, offset, 0, 0, 0);
+	return pagecache_get_page(mapping, offset, 0, 0);
 }
 
 static inline struct page *find_get_page_flags(struct address_space *mapping,
 					pgoff_t offset, int fgp_flags)
 {
-	return pagecache_get_page(mapping, offset, fgp_flags, 0, 0);
+	return pagecache_get_page(mapping, offset, fgp_flags, 0);
 }
 
 /**
@@ -292,7 +299,7 @@ static inline struct page *find_get_page_flags(struct address_space *mapping,
 static inline struct page *find_lock_page(struct address_space *mapping,
 					pgoff_t offset)
 {
-	return pagecache_get_page(mapping, offset, FGP_LOCK, 0, 0);
+	return pagecache_get_page(mapping, offset, FGP_LOCK, 0);
 }
 
 /**
@@ -319,7 +326,7 @@ static inline struct page *find_or_create_page(struct address_space *mapping,
 {
 	return pagecache_get_page(mapping, offset,
 					FGP_LOCK|FGP_ACCESSED|FGP_CREAT,
-					gfp_mask, gfp_mask & GFP_RECLAIM_MASK);
+					gfp_mask);
 }
 
 /**
@@ -340,8 +347,7 @@ static inline struct page *grab_cache_page_nowait(struct address_space *mapping,
 {
 	return pagecache_get_page(mapping, index,
 			FGP_LOCK|FGP_CREAT|FGP_NOFS|FGP_NOWAIT,
-			mapping_gfp_mask(mapping),
-			GFP_NOFS);
+			mapping_gfp_mask(mapping));
 }
 
 struct page *find_get_entry(struct address_space *mapping, pgoff_t offset);
@@ -652,7 +658,8 @@ int add_to_page_cache_locked(struct page *page, struct address_space *mapping,
 int add_to_page_cache_lru(struct page *page, struct address_space *mapping,
 				pgoff_t index, gfp_t gfp_mask);
 extern void delete_from_page_cache(struct page *page);
-extern void __delete_from_page_cache(struct page *page, void *shadow);
+extern void __delete_from_page_cache(struct page *page, void *shadow,
+				     struct mem_cgroup *memcg);
 int replace_page_cache_page(struct page *old, struct page *new, gfp_t gfp_mask);
 
 /*
@@ -669,6 +676,12 @@ static inline int add_to_page_cache(struct page *page,
 	if (unlikely(error))
 		__clear_page_locked(page);
 	return error;
+}
+
+static inline unsigned long dir_pages(struct inode *inode)
+{
+	return (unsigned long)(inode->i_size + PAGE_CACHE_SIZE - 1) >>
+			       PAGE_CACHE_SHIFT;
 }
 
 #endif /* _LINUX_PAGEMAP_H */

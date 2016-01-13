@@ -207,12 +207,15 @@
 #define PPC_INST_ERATSX_DOT		0x7c000127
 
 /* Misc instructions for BPF compiler */
+#define PPC_INST_LBZ			0x88000000
 #define PPC_INST_LD			0xe8000000
 #define PPC_INST_LHZ			0xa0000000
 #define PPC_INST_LHBRX			0x7c00062c
 #define PPC_INST_LWZ			0x80000000
 #define PPC_INST_STD			0xf8000000
 #define PPC_INST_STDU			0xf8000001
+#define PPC_INST_STW			0x90000000
+#define PPC_INST_STWU			0x94000000
 #define PPC_INST_MFLR			0x7c0802a6
 #define PPC_INST_MTLR			0x7c0803a6
 #define PPC_INST_CMPWI			0x2c000000

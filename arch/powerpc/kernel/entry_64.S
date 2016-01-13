@@ -35,6 +35,7 @@
 #include <asm/ftrace.h>
 #include <asm/hw_irq.h>
 #include <asm/context_tracking.h>
+#include <asm/tm.h>
 
 /*
  * System calls.
@@ -52,6 +53,12 @@ exception_marker:
 
 	.globl system_call_common
 system_call_common:
+#ifdef CONFIG_PPC_TRANSACTIONAL_MEM
+BEGIN_FTR_SECTION
+	extrdi.	r10, r12, 1, (63-MSR_TS_T_LG) /* transaction active? */
+	bne	tabort_syscall
+END_FTR_SECTION_IFSET(CPU_FTR_TM)
+#endif
 	andi.	r10,r12,MSR_PR
 	mr	r10,r1
 	addi	r1,r1,-INT_FRAME_SIZE
@@ -143,7 +150,7 @@ END_FW_FTR_SECTION_IFSET(FW_FEATURE_SPLPAR)
 
 	CURRENT_THREAD_INFO(r11, r1)
 	ld	r10,TI_FLAGS(r11)
-	andi.	r11,r10,_TIF_SYSCALL_T_OR_A
+	andi.	r11,r10,_TIF_SYSCALL_DOTRACE
 	bne	syscall_dotrace		/* does not return */
 	cmpldi	0,r0,NR_syscalls
 	bge-	syscall_enosys
@@ -201,7 +208,7 @@ system_call:			/* label this so stack traces look sane */
 
 	ld	r9,TI_FLAGS(r12)
 	li	r11,-MAX_ERRNO
-	andi.	r0,r9,(_TIF_SYSCALL_T_OR_A|_TIF_SINGLESTEP|_TIF_USER_WORK_MASK|_TIF_PERSYSCALL_MASK)
+	andi.	r0,r9,(_TIF_SYSCALL_DOTRACE|_TIF_SINGLESTEP|_TIF_USER_WORK_MASK|_TIF_PERSYSCALL_MASK)
 	bne-	syscall_exit_work
 	cmpld	r3,r11
 	ld	r5,_CCR(r1)
@@ -306,7 +313,7 @@ syscall_exit_work:
 
 4:	/* Anything else left to do? */
 	SET_DEFAULT_THREAD_PPR(r3, r10)		/* Set thread.ppr = 3 */
-	andi.	r0,r9,(_TIF_SYSCALL_T_OR_A|_TIF_SINGLESTEP)
+	andi.	r0,r9,(_TIF_SYSCALL_DOTRACE|_TIF_SINGLESTEP)
 	beq	ret_from_except_lite
 
 	/* Re-enable interrupts */
@@ -322,6 +329,34 @@ syscall_exit_work:
 	addi	r3,r1,STACK_FRAME_OVERHEAD
 	bl	do_syscall_trace_leave
 	b	ret_from_except
+
+#ifdef CONFIG_PPC_TRANSACTIONAL_MEM
+tabort_syscall:
+	/* Firstly we need to enable TM in the kernel */
+	mfmsr	r10
+	li	r13, 1
+	rldimi	r10, r13, MSR_TM_LG, 63-MSR_TM_LG
+	mtmsrd	r10, 0
+
+	/* tabort, this dooms the transaction, nothing else */
+	li	r13, (TM_CAUSE_SYSCALL|TM_CAUSE_PERSISTENT)
+	TABORT(R13)
+
+	/*
+	 * Return directly to userspace. We have corrupted user register state,
+	 * but userspace will never see that register state. Execution will
+	 * resume after the tbegin of the aborted transaction with the
+	 * checkpointed register state.
+	 */
+	li	r13, MSR_RI
+	andc	r10, r10, r13
+	mtmsrd	r10, 1
+	mtspr	SPRN_SRR0, r11
+	mtspr	SPRN_SRR1, r12
+
+	rfid
+	b	.	/* prevent speculative execution */
+#endif
 
 /* Save non-volatile GPRs, if not already saved. */
 _GLOBAL(save_nvgprs)
@@ -568,7 +603,7 @@ BEGIN_FTR_SECTION
 	ld	r0,THREAD_DSCR(r4)
 	cmpwi	r6,0
 	bne	1f
-	ld	r0,PACA_DSCR(r13)
+	ld	r0,PACA_DSCR_DEFAULT(r13)
 1:
 BEGIN_FTR_SECTION_NESTED(70)
 	mfspr	r8, SPRN_FSCR

@@ -80,7 +80,7 @@ static DECLARE_BITMAP(default_enabled_hcalls, MAX_HCALL_OPCODE/4 + 1);
 
 static int dynamic_mt_modes = 6;
 module_param(dynamic_mt_modes, int, S_IRUGO | S_IWUSR);
-MODULE_PARM_DESC(dynamic_mt_modes, "Set of allowed dynamic micro-threading modes");
+MODULE_PARM_DESC(dynamic_mt_modes, "Set of allowed dynamic micro-threading modes: 0 (= none), 2, 4, or 6 (= 2 or 4)");
 static int target_smt_mode;
 module_param(target_smt_mode, int, S_IRUGO | S_IWUSR);
 MODULE_PARM_DESC(target_smt_mode, "Target threads per core (0 = max)");
@@ -241,16 +241,22 @@ static void kvmppc_core_vcpu_put_hv(struct kvm_vcpu *vcpu)
 
 static void kvmppc_set_msr_hv(struct kvm_vcpu *vcpu, u64 msr)
 {
+	/*
+	 * Check for illegal transactional state bit combination
+	 * and if we find it, force the TS field to a safe state.
+	 */
+	if ((msr & MSR_TS_MASK) == MSR_TS_MASK)
+		msr &= ~MSR_TS_MASK;
 	vcpu->arch.shregs.msr = msr;
 	kvmppc_end_cede(vcpu);
 }
 
-void kvmppc_set_pvr_hv(struct kvm_vcpu *vcpu, u32 pvr)
+static void kvmppc_set_pvr_hv(struct kvm_vcpu *vcpu, u32 pvr)
 {
 	vcpu->arch.pvr = pvr;
 }
 
-int kvmppc_set_arch_compat(struct kvm_vcpu *vcpu, u32 arch_compat)
+static int kvmppc_set_arch_compat(struct kvm_vcpu *vcpu, u32 arch_compat)
 {
 	unsigned long pcr = 0;
 	struct kvmppc_vcore *vc = vcpu->arch.vcore;
@@ -290,7 +296,7 @@ int kvmppc_set_arch_compat(struct kvm_vcpu *vcpu, u32 arch_compat)
 	return 0;
 }
 
-void kvmppc_dump_regs(struct kvm_vcpu *vcpu)
+static void kvmppc_dump_regs(struct kvm_vcpu *vcpu)
 {
 	int r;
 
@@ -323,7 +329,7 @@ void kvmppc_dump_regs(struct kvm_vcpu *vcpu)
 	       vcpu->arch.last_inst);
 }
 
-struct kvm_vcpu *kvmppc_find_vcpu(struct kvm *kvm, int id)
+static struct kvm_vcpu *kvmppc_find_vcpu(struct kvm *kvm, int id)
 {
 	int r;
 	struct kvm_vcpu *v, *ret = NULL;
@@ -1978,11 +1984,9 @@ static void kvmppc_vcore_end_preempt(struct kvmppc_vcore *vc)
 }
 
 /*
- * POWER8 supports 1, 2 or 4 subcores per core, with a total of 8 threads.
+ * This stores information about the virtual cores currently
+ * assigned to a physical core.
  */
-#define MAX_SUBCORES	4
-#define MAX_THREADS	8
-
 struct core_info {
 	int		n_subcores;
 	int		max_subcore_threads;
@@ -1994,7 +1998,7 @@ struct core_info {
 
 /*
  * This mapping means subcores 0 and 1 can use threads 0-3 and 4-7
- * respectively in 2-way split mode.
+ * respectively in 2-way micro-threading (split-core) mode.
  */
 static int subcore_thread_map[MAX_SUBCORES] = { 0, 4, 2, 6 };
 
@@ -2016,7 +2020,7 @@ static void init_core_info(struct core_info *cip, struct kvmppc_vcore *vc)
 static bool subcore_config_ok(int n_subcores, int n_threads)
 {
 	/* Can only dynamically split if unsplit to begin with */
-	if (n_subcores > 1 && threads_per_subcore < MAX_THREADS)
+	if (n_subcores > 1 && threads_per_subcore < MAX_SMT_THREADS)
 		return false;
 	if (n_subcores > MAX_SUBCORES)
 		return false;
@@ -2027,7 +2031,7 @@ static bool subcore_config_ok(int n_subcores, int n_threads)
 			return false;
 	}
 
-	return n_subcores * roundup_pow_of_two(n_threads) <= MAX_THREADS;
+	return n_subcores * roundup_pow_of_two(n_threads) <= MAX_SMT_THREADS;
 }
 
 static void init_master_vcore(struct kvmppc_vcore *vc)
@@ -2412,7 +2416,7 @@ static noinline void kvmppc_run_core(struct kvmppc_vcore *vc)
 	split = core_info.n_subcores;
 	sip = NULL;
 	if (split > 1) {
-		/* threads_per_subcore must be MAX_THREADS (8) here */
+		/* threads_per_subcore must be MAX_SMT_THREADS (8) here */
 		if (split == 2 && (dynamic_mt_modes & 2)) {
 			cmd_bit = HID0_POWER8_1TO2LPAR;
 			stat_bit = HID0_POWER8_2LPARMODE;
@@ -2421,7 +2425,7 @@ static noinline void kvmppc_run_core(struct kvmppc_vcore *vc)
 			cmd_bit = HID0_POWER8_1TO4LPAR;
 			stat_bit = HID0_POWER8_4LPARMODE;
 		}
-		subcore_size = MAX_THREADS / split;
+		subcore_size = MAX_SMT_THREADS / split;
 		sip = &split_info;
 		memset(&split_info, 0, sizeof(split_info));
 		split_info.rpr = mfspr(SPRN_RPR);
@@ -2721,7 +2725,7 @@ static int kvmppc_run_vcpu(struct kvm_run *kvm_run, struct kvm_vcpu *vcpu)
 		vc->runner = vcpu;
 		if (n_ceded == vc->n_runnable) {
 			kvmppc_vcore_blocked(vc);
-		} else if (should_resched()) {
+		} else if (need_resched()) {
 			kvmppc_vcore_preempt(vc);
 			/* Let something else run */
 			cond_resched_lock(&vc->lock);
@@ -2867,6 +2871,7 @@ static int kvm_vm_ioctl_get_smmu_info_hv(struct kvm *kvm,
 static int kvm_vm_ioctl_get_dirty_log_hv(struct kvm *kvm,
 					 struct kvm_dirty_log *log)
 {
+	struct kvm_memslots *slots;
 	struct kvm_memory_slot *memslot;
 	int r;
 	unsigned long n;
@@ -2877,7 +2882,8 @@ static int kvm_vm_ioctl_get_dirty_log_hv(struct kvm *kvm,
 	if (log->slot >= KVM_USER_MEM_SLOTS)
 		goto out;
 
-	memslot = id_to_memslot(kvm->memslots, log->slot);
+	slots = kvm_memslots(kvm);
+	memslot = id_to_memslot(slots, log->slot);
 	r = -ENOENT;
 	if (!memslot->dirty_bitmap)
 		goto out;
@@ -2920,16 +2926,18 @@ static int kvmppc_core_create_memslot_hv(struct kvm_memory_slot *slot,
 
 static int kvmppc_core_prepare_memory_region_hv(struct kvm *kvm,
 					struct kvm_memory_slot *memslot,
-					struct kvm_userspace_memory_region *mem)
+					const struct kvm_userspace_memory_region *mem)
 {
 	return 0;
 }
 
 static void kvmppc_core_commit_memory_region_hv(struct kvm *kvm,
-				struct kvm_userspace_memory_region *mem,
-				const struct kvm_memory_slot *old)
+				const struct kvm_userspace_memory_region *mem,
+				const struct kvm_memory_slot *old,
+				const struct kvm_memory_slot *new)
 {
 	unsigned long npages = mem->memory_size >> PAGE_SHIFT;
+	struct kvm_memslots *slots;
 	struct kvm_memory_slot *memslot;
 
 	if (npages && old->npages) {
@@ -2939,7 +2947,8 @@ static void kvmppc_core_commit_memory_region_hv(struct kvm *kvm,
 		 * since the rmap array starts out as all zeroes,
 		 * i.e. no pages are dirty.
 		 */
-		memslot = id_to_memslot(kvm->memslots, mem->slot);
+		slots = kvm_memslots(kvm);
+		memslot = id_to_memslot(slots, mem->slot);
 		kvmppc_hv_get_dirty_log(kvm, memslot, NULL);
 	}
 }

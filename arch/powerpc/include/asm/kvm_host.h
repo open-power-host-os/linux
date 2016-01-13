@@ -45,6 +45,7 @@
 #ifdef CONFIG_KVM_MMIO
 #define KVM_COALESCED_MMIO_PAGE_OFFSET 1
 #endif
+#define KVM_HALT_POLL_NS_DEFAULT 500000
 
 /* These values are internal and can be increased later */
 #define KVM_NR_IRQCHIPS          1
@@ -109,6 +110,8 @@ struct kvm_vcpu_stat {
 	u32 emulated_inst_exits;
 	u32 dec_exits;
 	u32 ext_intr_exits;
+	u32 halt_successful_poll;
+	u32 halt_attempted_poll;
 	u32 halt_wakeup;
 	u32 dbell_exits;
 	u32 gdbell_exits;
@@ -636,7 +639,7 @@ struct kvm_vcpu_arch {
 	pgd_t *pgdir;
 
 	u8 io_gpr; /* GPR used as IO source/target */
-	u8 mmio_is_bigendian;
+	u8 mmio_host_swabbed;
 	u8 mmio_sign_extend;
 	u8 osi_needed;
 	u8 osi_enabled;
@@ -744,9 +747,11 @@ struct kvm_vcpu_arch {
 static inline void kvm_arch_hardware_disable(void) {}
 static inline void kvm_arch_hardware_unsetup(void) {}
 static inline void kvm_arch_sync_events(struct kvm *kvm) {}
-static inline void kvm_arch_memslots_updated(struct kvm *kvm) {}
+static inline void kvm_arch_memslots_updated(struct kvm *kvm, struct kvm_memslots *slots) {}
 static inline void kvm_arch_flush_shadow_all(struct kvm *kvm) {}
 static inline void kvm_arch_sched_in(struct kvm_vcpu *vcpu, int cpu) {}
 static inline void kvm_arch_exit(void) {}
+static inline void kvm_arch_vcpu_blocking(struct kvm_vcpu *vcpu) {}
+static inline void kvm_arch_vcpu_unblocking(struct kvm_vcpu *vcpu) {}
 
 #endif /* __POWERPC_KVM_HOST_H__ */

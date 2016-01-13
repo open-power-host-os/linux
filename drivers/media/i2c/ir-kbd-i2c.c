@@ -464,8 +464,7 @@ static int ir_remove(struct i2c_client *client)
 	cancel_delayed_work_sync(&ir->work);
 
 	/* unregister device */
-	if (ir->rc)
-		rc_unregister_device(ir->rc);
+	rc_unregister_device(ir->rc);
 
 	/* free memory */
 	return 0;
@@ -479,6 +478,7 @@ static const struct i2c_device_id ir_kbd_id[] = {
 	{ "ir_rx_z8f0811_hdpvr", 0 },
 	{ }
 };
+MODULE_DEVICE_TABLE(i2c, ir_kbd_id);
 
 static struct i2c_driver ir_kbd_driver = {
 	.driver = {

@@ -588,9 +588,8 @@ EXPORT_SYMBOL(pci_setup_cardbus);
    config space writes, so it's quite possible that an I/O window of
    the bridge will have some undesirable address (e.g. 0) after the
    first write. Ditto 64-bit prefetchable MMIO.  */
-static void pci_setup_bridge_io(struct pci_bus *bus)
+static void pci_setup_bridge_io(struct pci_dev *bridge)
 {
-	struct pci_dev *bridge = bus->self;
 	struct resource *res;
 	struct pci_bus_region region;
 	unsigned long io_mask;
@@ -603,7 +602,7 @@ static void pci_setup_bridge_io(struct pci_bus *bus)
 		io_mask = PCI_IO_1K_RANGE_MASK;
 
 	/* Set up the top and bottom of the PCI I/O segment for this bus. */
-	res = bus->resource[0];
+	res = &bridge->resource[PCI_BRIDGE_RESOURCES + 0];
 	pcibios_resource_to_bus(bridge->bus, &region, res);
 	if (res->flags & IORESOURCE_IO) {
 		pci_read_config_word(bridge, PCI_IO_BASE, &l);
@@ -626,15 +625,14 @@ static void pci_setup_bridge_io(struct pci_bus *bus)
 	pci_write_config_dword(bridge, PCI_IO_BASE_UPPER16, io_upper16);
 }
 
-static void pci_setup_bridge_mmio(struct pci_bus *bus)
+static void pci_setup_bridge_mmio(struct pci_dev *bridge)
 {
-	struct pci_dev *bridge = bus->self;
 	struct resource *res;
 	struct pci_bus_region region;
 	u32 l;
 
 	/* Set up the top and bottom of the PCI Memory segment for this bus. */
-	res = bus->resource[1];
+	res = &bridge->resource[PCI_BRIDGE_RESOURCES + 1];
 	pcibios_resource_to_bus(bridge->bus, &region, res);
 	if (res->flags & IORESOURCE_MEM) {
 		l = (region.start >> 16) & 0xfff0;
@@ -646,9 +644,8 @@ static void pci_setup_bridge_mmio(struct pci_bus *bus)
 	pci_write_config_dword(bridge, PCI_MEMORY_BASE, l);
 }
 
-static void pci_setup_bridge_mmio_pref(struct pci_bus *bus)
+static void pci_setup_bridge_mmio_pref(struct pci_dev *bridge)
 {
-	struct pci_dev *bridge = bus->self;
 	struct resource *res;
 	struct pci_bus_region region;
 	u32 l, bu, lu;
@@ -660,7 +657,7 @@ static void pci_setup_bridge_mmio_pref(struct pci_bus *bus)
 
 	/* Set up PREF base/limit. */
 	bu = lu = 0;
-	res = bus->resource[2];
+	res = &bridge->resource[PCI_BRIDGE_RESOURCES + 2];
 	pcibios_resource_to_bus(bridge->bus, &region, res);
 	if (res->flags & IORESOURCE_PREFETCH) {
 		l = (region.start >> 16) & 0xfff0;
@@ -688,13 +685,13 @@ static void __pci_setup_bridge(struct pci_bus *bus, unsigned long type)
 		 &bus->busn_res);
 
 	if (type & IORESOURCE_IO)
-		pci_setup_bridge_io(bus);
+		pci_setup_bridge_io(bridge);
 
 	if (type & IORESOURCE_MEM)
-		pci_setup_bridge_mmio(bus);
+		pci_setup_bridge_mmio(bridge);
 
 	if (type & IORESOURCE_PREFETCH)
-		pci_setup_bridge_mmio_pref(bus);
+		pci_setup_bridge_mmio_pref(bridge);
 
 	pci_write_config_word(bridge, PCI_BRIDGE_CONTROL, bus->bridge_ctl);
 }
@@ -705,6 +702,41 @@ void pci_setup_bridge(struct pci_bus *bus)
 				  IORESOURCE_PREFETCH;
 
 	__pci_setup_bridge(bus, type);
+}
+
+
+int pci_claim_bridge_resource(struct pci_dev *bridge, int i)
+{
+	if (i < PCI_BRIDGE_RESOURCES || i > PCI_BRIDGE_RESOURCE_END)
+		return 0;
+
+	if (pci_claim_resource(bridge, i) == 0)
+		return 0;	/* claimed the window */
+
+	if ((bridge->class >> 8) != PCI_CLASS_BRIDGE_PCI)
+		return 0;
+
+	if (!pci_bus_clip_resource(bridge, i))
+		return -EINVAL;	/* clipping didn't change anything */
+
+	switch (i - PCI_BRIDGE_RESOURCES) {
+	case 0:
+		pci_setup_bridge_io(bridge);
+		break;
+	case 1:
+		pci_setup_bridge_mmio(bridge);
+		break;
+	case 2:
+		pci_setup_bridge_mmio_pref(bridge);
+		break;
+	default:
+		return -EINVAL;
+	}
+
+	if (pci_claim_resource(bridge, i) == 0)
+		return 0;	/* claimed a smaller window */
+
+	return -EINVAL;
 }
 
 /* Check whether the bridge supports optional I/O and
@@ -1005,9 +1037,10 @@ static int pbus_size_mem(struct pci_bus *bus, unsigned long mask,
 			struct resource *r = &dev->resource[i];
 			resource_size_t r_size;
 
-			if (r->parent || ((r->flags & mask) != type &&
-					  (r->flags & mask) != type2 &&
-					  (r->flags & mask) != type3))
+			if (r->parent || (r->flags & IORESOURCE_PCI_FIXED) ||
+			    ((r->flags & mask) != type &&
+			     (r->flags & mask) != type2 &&
+			     (r->flags & mask) != type3))
 				continue;
 			r_size = resource_size(r);
 #ifdef CONFIG_PCI_IOV
@@ -1308,6 +1341,47 @@ void pci_bus_size_bridges(struct pci_bus *bus)
 }
 EXPORT_SYMBOL(pci_bus_size_bridges);
 
+static void assign_fixed_resource_on_bus(struct pci_bus *b, struct resource *r)
+{
+	int i;
+	struct resource *parent_r;
+	unsigned long mask = IORESOURCE_IO | IORESOURCE_MEM |
+			     IORESOURCE_PREFETCH;
+
+	pci_bus_for_each_resource(b, parent_r, i) {
+		if (!parent_r)
+			continue;
+
+		if ((r->flags & mask) == (parent_r->flags & mask) &&
+		    resource_contains(parent_r, r))
+			request_resource(parent_r, r);
+	}
+}
+
+/*
+ * Try to assign any resources marked as IORESOURCE_PCI_FIXED, as they
+ * are skipped by pbus_assign_resources_sorted().
+ */
+static void pdev_assign_fixed_resources(struct pci_dev *dev)
+{
+	int i;
+
+	for (i = 0; i <  PCI_NUM_RESOURCES; i++) {
+		struct pci_bus *b;
+		struct resource *r = &dev->resource[i];
+
+		if (r->parent || !(r->flags & IORESOURCE_PCI_FIXED) ||
+		    !(r->flags & (IORESOURCE_IO | IORESOURCE_MEM)))
+			continue;
+
+		b = dev->bus;
+		while (b && !r->parent) {
+			assign_fixed_resource_on_bus(b, r);
+			b = b->parent;
+		}
+	}
+}
+
 void __pci_bus_assign_resources(const struct pci_bus *bus,
 				struct list_head *realloc_head,
 				struct list_head *fail_head)
@@ -1318,6 +1392,8 @@ void __pci_bus_assign_resources(const struct pci_bus *bus,
 	pbus_assign_resources_sorted(bus, realloc_head, fail_head);
 
 	list_for_each_entry(dev, &bus->devices, bus_list) {
+		pdev_assign_fixed_resources(dev);
+
 		b = dev->subordinate;
 		if (!b)
 			continue;
@@ -1784,3 +1860,4 @@ void pci_assign_unassigned_bus_resources(struct pci_bus *bus)
 	__pci_bus_assign_resources(bus, &add_list, NULL);
 	BUG_ON(!list_empty(&add_list));
 }
+EXPORT_SYMBOL_GPL(pci_assign_unassigned_bus_resources);

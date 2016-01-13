@@ -405,8 +405,9 @@ static long kvmppc_rm_ua_to_hpa(struct kvm_vcpu *vcpu,
 {
 	pte_t *ptep, pte;
 	unsigned shift = 0;
+	bool thp;
 
-	ptep = __find_linux_pte_or_hugepte(vcpu->arch.pgdir, ua, &shift);
+	ptep = __find_linux_pte_or_hugepte(vcpu->arch.pgdir, ua, &thp, &shift);
 	if (!ptep || !pte_present(*ptep))
 		return -ENXIO;
 	pte = *ptep;
@@ -415,7 +416,7 @@ static long kvmppc_rm_ua_to_hpa(struct kvm_vcpu *vcpu,
 		shift = PAGE_SHIFT;
 
 	/* Avoid handling anything potentially complicated in realmode */
-	if (shift > PAGE_SHIFT)
+	if (shift > PAGE_SHIFT || thp)
 		return -EAGAIN;
 
 	if (!pte_young(pte))

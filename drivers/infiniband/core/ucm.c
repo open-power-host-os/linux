@@ -109,7 +109,7 @@ enum {
 #define IB_UCM_BASE_DEV MKDEV(IB_UCM_MAJOR, IB_UCM_BASE_MINOR)
 
 static void ib_ucm_add_one(struct ib_device *device);
-static void ib_ucm_remove_one(struct ib_device *device);
+static void ib_ucm_remove_one(struct ib_device *device, void *client_data);
 
 static struct ib_client ucm_client = {
 	.name   = "ucm",
@@ -658,8 +658,7 @@ static ssize_t ib_ucm_listen(struct ib_ucm_file *file,
 	if (result)
 		goto out;
 
-	result = ib_cm_listen(ctx->cm_id, cmd.service_id, cmd.service_mask,
-			      NULL);
+	result = ib_cm_listen(ctx->cm_id, cmd.service_id, cmd.service_mask);
 out:
 	ib_ucm_ctx_put(ctx);
 	return result;
@@ -1253,8 +1252,7 @@ static void ib_ucm_add_one(struct ib_device *device)
 	dev_t base;
 	struct ib_ucm_device *ucm_dev;
 
-	if (!device->alloc_ucontext ||
-	    rdma_node_get_transport(device->node_type) != RDMA_TRANSPORT_IB)
+	if (!device->alloc_ucontext || !rdma_cap_ib_cm(device, 1))
 		return;
 
 	ucm_dev = kzalloc(sizeof *ucm_dev, GFP_KERNEL);
@@ -1311,9 +1309,9 @@ err:
 	return;
 }
 
-static void ib_ucm_remove_one(struct ib_device *device)
+static void ib_ucm_remove_one(struct ib_device *device, void *client_data)
 {
-	struct ib_ucm_device *ucm_dev = ib_get_client_data(device, &ucm_client);
+	struct ib_ucm_device *ucm_dev = client_data;
 
 	if (!ucm_dev)
 		return;

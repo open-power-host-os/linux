@@ -67,6 +67,7 @@ struct scsi_disk {
 	atomic_t	openers;
 	sector_t	capacity;	/* size in 512-byte sectors */
 	u32		max_xfer_blocks;
+	u32		opt_xfer_blocks;
 	u32		max_ws_blocks;
 	u32		max_unmap_blocks;
 	u32		unmap_granularity;
@@ -103,9 +104,9 @@ static inline struct scsi_disk *scsi_disk(struct gendisk *disk)
 
 #define sd_printk(prefix, sdsk, fmt, a...)				\
         (sdsk)->disk ?							\
-	sdev_printk(prefix, (sdsk)->device, "[%s] " fmt,		\
-		    (sdsk)->disk->disk_name, ##a) :			\
-	sdev_printk(prefix, (sdsk)->device, fmt, ##a)
+	      sdev_prefix_printk(prefix, (sdsk)->device,		\
+				 (sdsk)->disk->disk_name, fmt, ##a) :	\
+	      sdev_printk(prefix, (sdsk)->device, fmt, ##a)
 
 #define sd_first_printk(prefix, sdsk, fmt, a...)			\
 	do {								\

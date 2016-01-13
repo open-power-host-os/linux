@@ -51,6 +51,7 @@
 #include <asm/mmzone.h>
 #include <asm/plpar_wrappers.h>
 
+#include "pseries.h"
 
 static struct iommu_table_group *iommu_pseries_alloc_group(int node)
 {
@@ -92,7 +93,9 @@ static void iommu_pseries_free_group(struct iommu_table_group *table_group,
 		const char *node_name)
 {
 	struct iommu_table *tbl;
+#ifdef CONFIG_IOMMU_API
 	struct iommu_table_group_link *tgl;
+#endif
 
 	if (!table_group)
 		return;
@@ -529,7 +532,6 @@ static int tce_setrange_multi_pSeriesLP_walk(unsigned long start_pfn,
 	return tce_setrange_multi_pSeriesLP(start_pfn, num_pfn, arg);
 }
 
-#ifdef CONFIG_PCI
 static void iommu_table_setparms(struct pci_controller *phb,
 				 struct device_node *dn,
 				 struct iommu_table *tbl)
@@ -1280,11 +1282,10 @@ static int dma_set_mask_pSeriesLP(struct device *dev, u64 dma_mask)
 		}
 	}
 
-	/* fall back on iommu ops, restore table pointer with ops */
+	/* fall back on iommu ops */
 	if (!ddw_enabled && get_dma_ops(dev) != &dma_iommu_ops) {
 		dev_info(dev, "Restoring 32-bit DMA via iommu\n");
 		set_dma_ops(dev, &dma_iommu_ops);
-		pci_dma_dev_setup_pSeriesLP(pdev);
 	}
 
 check_mask:
@@ -1319,15 +1320,6 @@ static u64 dma_get_required_mask_pSeriesLP(struct device *dev)
 
 	return dma_iommu_ops.get_required_mask(dev);
 }
-
-#else  /* CONFIG_PCI */
-#define pci_dma_bus_setup_pSeries	NULL
-#define pci_dma_dev_setup_pSeries	NULL
-#define pci_dma_bus_setup_pSeriesLP	NULL
-#define pci_dma_dev_setup_pSeriesLP	NULL
-#define dma_set_mask_pSeriesLP		NULL
-#define dma_get_required_mask_pSeriesLP	NULL
-#endif /* !CONFIG_PCI */
 
 static int iommu_mem_notifier(struct notifier_block *nb, unsigned long action,
 		void *data)
@@ -1369,10 +1361,11 @@ static struct notifier_block iommu_mem_nb = {
 	.notifier_call = iommu_mem_notifier,
 };
 
-static int iommu_reconfig_notifier(struct notifier_block *nb, unsigned long action, void *node)
+static int iommu_reconfig_notifier(struct notifier_block *nb, unsigned long action, void *data)
 {
 	int err = NOTIFY_OK;
-	struct device_node *np = node;
+	struct of_reconfig_data *rd = data;
+	struct device_node *np = rd->dn;
 	struct pci_dn *pci = PCI_DN(np);
 	struct direct_window *window;
 
@@ -1418,13 +1411,13 @@ void iommu_init_early_pSeries(void)
 		return;
 
 	if (firmware_has_feature(FW_FEATURE_LPAR)) {
-		ppc_md.pci_dma_bus_setup = pci_dma_bus_setup_pSeriesLP;
-		ppc_md.pci_dma_dev_setup = pci_dma_dev_setup_pSeriesLP;
+		pseries_pci_controller_ops.dma_bus_setup = pci_dma_bus_setup_pSeriesLP;
+		pseries_pci_controller_ops.dma_dev_setup = pci_dma_dev_setup_pSeriesLP;
 		ppc_md.dma_set_mask = dma_set_mask_pSeriesLP;
 		ppc_md.dma_get_required_mask = dma_get_required_mask_pSeriesLP;
 	} else {
-		ppc_md.pci_dma_bus_setup = pci_dma_bus_setup_pSeries;
-		ppc_md.pci_dma_dev_setup = pci_dma_dev_setup_pSeries;
+		pseries_pci_controller_ops.dma_bus_setup = pci_dma_bus_setup_pSeries;
+		pseries_pci_controller_ops.dma_dev_setup = pci_dma_dev_setup_pSeries;
 	}
 
 
@@ -1446,3 +1439,5 @@ static int __init disable_multitce(char *str)
 }
 
 __setup("multitce=", disable_multitce);
+
+machine_subsys_initcall_sync(pseries, tce_iommu_bus_notifier_init);

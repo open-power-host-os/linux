@@ -61,8 +61,13 @@ struct machdep_calls {
 					       unsigned long addr,
 					       unsigned char *hpte_slot_array,
 					       int psize, int ssize, int local);
-	/* special for kexec, to be called in real mode, linear mapping is
-	 * destroyed as well */
+	/*
+	 * Special for kexec.
+	 * To be called in real mode with interrupts disabled. No locks are
+	 * taken as such, concurrent access on pre POWER5 hardware could result
+	 * in a deadlock.
+	 * The linear mapping is destroyed as well.
+	 */
 	void		(*hpte_clear_all)(void);
 
 	void __iomem *	(*ioremap)(phys_addr_t addr, unsigned long size,
@@ -77,9 +82,6 @@ struct machdep_calls {
 	unsigned long	(*memory_block_size)(void);
 #endif
 #endif /* CONFIG_PPC64 */
-
-	void		(*pci_dma_dev_setup)(struct pci_dev *dev);
-	void		(*pci_dma_bus_setup)(struct pci_bus *bus);
 
 	/* Platform set_dma_mask and dma_get_required_mask overrides */
 	int		(*dma_set_mask)(struct device *dev, u64 dma_mask);
@@ -100,21 +102,14 @@ struct machdep_calls {
 	unsigned int	(*get_irq)(void);
 
 	/* PCI stuff */
-	/* Called after scanning the bus, before allocating resources */
+	/* Called after allocating resources */
 	void		(*pcibios_fixup)(void);
-	int		(*pci_probe_mode)(struct pci_bus *);
 	void		(*pci_irq_fixup)(struct pci_dev *dev);
 	int		(*pcibios_root_bridge_prepare)(struct pci_host_bridge
 				*bridge);
 
 	/* To setup PHBs when using automatic OF platform driver for PCI */
 	int		(*pci_setup_phb)(struct pci_controller *host);
-
-#ifdef CONFIG_PCI_MSI
-	int		(*setup_msi_irqs)(struct pci_dev *dev,
-					  int nvec, int type);
-	void		(*teardown_msi_irqs)(struct pci_dev *dev);
-#endif
 
 	void		(*restart)(char *cmd);
 	void		(*halt)(void);
@@ -212,18 +207,8 @@ struct machdep_calls {
 	/* Called for each PCI bus in the system when it's probed */
 	void (*pcibios_fixup_bus)(struct pci_bus *);
 
-	/* Called when pci_enable_device() is called. Returns 0 to
-	 * allow assignment/enabling of the device. */
-	int  (*pcibios_enable_device_hook)(struct pci_dev *);
-
 	/* Called after scan and before resource survey */
 	void (*pcibios_fixup_phb)(struct pci_controller *hose);
-
-	/* Called during PCI resource reassignment */
-	resource_size_t (*pcibios_window_alignment)(struct pci_bus *, unsigned long type);
-
-	/* Reset the secondary bus of bridge */
-	void  (*pcibios_reset_secondary_bus)(struct pci_dev *dev);
 
 #ifdef CONFIG_PCI_IOV
 	void (*pcibios_fixup_sriov)(struct pci_dev *pdev);
@@ -269,7 +254,7 @@ struct machdep_calls {
 #endif
 
 #ifdef CONFIG_ARCH_RANDOM
-	int (*get_random_long)(unsigned long *v);
+	int (*get_random_seed)(unsigned long *v);
 #endif
 };
 

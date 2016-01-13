@@ -15,19 +15,13 @@ static inline int arch_get_random_int(unsigned int *v)
 	return 0;
 }
 
-static inline int arch_has_random(void)
-{
-	return !!ppc_md.get_random_long;
-}
-
 static inline int arch_get_random_seed_long(unsigned long *v)
 {
-	if (ppc_md.get_random_long)
-		return ppc_md.get_random_long(v);
+	if (ppc_md.get_random_seed)
+		return ppc_md.get_random_seed(v);
 
 	return 0;
 }
-
 static inline int arch_get_random_seed_int(unsigned int *v)
 {
 	unsigned long val;
@@ -40,11 +34,15 @@ static inline int arch_get_random_seed_int(unsigned int *v)
 	return rc;
 }
 
-static inline int arch_has_random_seed(void)
+static inline int arch_has_random(void)
 {
-	return !!ppc_md.get_random_long;
+	return 0;
 }
 
+static inline int arch_has_random_seed(void)
+{
+	return !!ppc_md.get_random_seed;
+}
 #endif /* CONFIG_ARCH_RANDOM */
 
 #ifdef CONFIG_PPC_POWERNV

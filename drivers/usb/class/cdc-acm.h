@@ -19,7 +19,7 @@
  */
 
 #define ACM_TTY_MAJOR		166
-#define ACM_TTY_MINORS		32
+#define ACM_TTY_MINORS		256
 
 /*
  * Requests.
@@ -130,7 +130,7 @@ struct acm {
 #define NO_UNION_NORMAL			BIT(0)
 #define SINGLE_RX_URB			BIT(1)
 #define NO_CAP_LINE			BIT(2)
-#define NOT_A_MODEM			BIT(3)
 #define NO_DATA_INTERFACE		BIT(4)
 #define IGNORE_DEVICE			BIT(5)
 #define QUIRK_CONTROL_LINE_STATE	BIT(6)
+#define CLEAR_HALT_CONDITIONS		BIT(7)

@@ -428,10 +428,10 @@ static void iommu_free(struct iommu_table *tbl, dma_addr_t dma_addr,
 		tbl->it_ops->flush(tbl);
 }
 
-int iommu_map_sg(struct device *dev, struct iommu_table *tbl,
-		 struct scatterlist *sglist, int nelems,
-		 unsigned long mask, enum dma_data_direction direction,
-		 struct dma_attrs *attrs)
+int ppc_iommu_map_sg(struct device *dev, struct iommu_table *tbl,
+		     struct scatterlist *sglist, int nelems,
+		     unsigned long mask, enum dma_data_direction direction,
+		     struct dma_attrs *attrs)
 {
 	dma_addr_t dma_next = 0, dma_addr;
 	struct scatterlist *s, *outs, *segstart;
@@ -539,7 +539,7 @@ int iommu_map_sg(struct device *dev, struct iommu_table *tbl,
 
 	DBG("mapped %d elements:\n", outcount);
 
-	/* For the sake of iommu_unmap_sg, we clear out the length in the
+	/* For the sake of ppc_iommu_unmap_sg, we clear out the length in the
 	 * next entry of the sglist if we didn't fill the list completely
 	 */
 	if (outcount < incount) {
@@ -572,9 +572,9 @@ int iommu_map_sg(struct device *dev, struct iommu_table *tbl,
 }
 
 
-void iommu_unmap_sg(struct iommu_table *tbl, struct scatterlist *sglist,
-		int nelems, enum dma_data_direction direction,
-		struct dma_attrs *attrs)
+void ppc_iommu_unmap_sg(struct iommu_table *tbl, struct scatterlist *sglist,
+			int nelems, enum dma_data_direction direction,
+			struct dma_attrs *attrs)
 {
 	struct scatterlist *sg;
 
@@ -1103,7 +1103,7 @@ int iommu_add_device(struct device *dev)
 	}
 
 	tbl = get_iommu_table_base(dev);
-	if (!tbl || list_empty(&tbl->it_group_list)) {
+	if (!tbl) {
 		pr_debug("%s: Skipping device %s with no tbl\n",
 			 __func__, dev_name(dev));
 		return 0;
@@ -1111,6 +1111,11 @@ int iommu_add_device(struct device *dev)
 
 	tgl = list_first_entry_or_null(&tbl->it_group_list,
 			struct iommu_table_group_link, next);
+	if (!tgl) {
+		pr_debug("%s: Skipping device %s with no group\n",
+			 __func__, dev_name(dev));
+		return 0;
+	}
 	pr_debug("%s: Adding %s to iommu group %d\n",
 		 __func__, dev_name(dev),
 		 iommu_group_id(tgl->table_group->group));
@@ -1143,4 +1148,30 @@ void iommu_del_device(struct device *dev)
 }
 EXPORT_SYMBOL_GPL(iommu_del_device);
 
+static int tce_iommu_bus_notifier(struct notifier_block *nb,
+                unsigned long action, void *data)
+{
+        struct device *dev = data;
+
+        switch (action) {
+        case BUS_NOTIFY_ADD_DEVICE:
+                return iommu_add_device(dev);
+        case BUS_NOTIFY_DEL_DEVICE:
+                if (dev->iommu_group)
+                        iommu_del_device(dev);
+                return 0;
+        default:
+                return 0;
+        }
+}
+
+static struct notifier_block tce_iommu_bus_nb = {
+        .notifier_call = tce_iommu_bus_notifier,
+};
+
+int __init tce_iommu_bus_notifier_init(void)
+{
+        bus_register_notifier(&pci_bus_type, &tce_iommu_bus_nb);
+        return 0;
+}
 #endif /* CONFIG_IOMMU_API */

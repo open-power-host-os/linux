@@ -258,10 +258,7 @@ static int soc_compr_free_fe(struct snd_compr_stream *cstream)
 	list_for_each_entry(dpcm, &fe->dpcm[stream].be_clients, list_be)
 		dpcm->state = SND_SOC_DPCM_LINK_STATE_FREE;
 
-	if (stream == SNDRV_PCM_STREAM_PLAYBACK)
-		dpcm_dapm_stream_event(fe, stream, SND_SOC_DAPM_STREAM_STOP);
-	else
-		dpcm_dapm_stream_event(fe, stream, SND_SOC_DAPM_STREAM_STOP);
+	dpcm_dapm_stream_event(fe, stream, SND_SOC_DAPM_STREAM_STOP);
 
 	fe->dpcm[stream].state = SND_SOC_DPCM_STATE_CLOSE;
 	fe->dpcm[stream].runtime_update = SND_SOC_DPCM_UPDATE_NO;
@@ -456,11 +453,7 @@ static int soc_compr_set_params_fe(struct snd_compr_stream *cstream,
 	if (ret < 0)
 		goto out;
 
-	if (stream == SNDRV_PCM_STREAM_PLAYBACK)
-		dpcm_dapm_stream_event(fe, stream, SND_SOC_DAPM_STREAM_START);
-	else
-		dpcm_dapm_stream_event(fe, stream, SND_SOC_DAPM_STREAM_START);
-
+	dpcm_dapm_stream_event(fe, stream, SND_SOC_DAPM_STREAM_START);
 	fe->dpcm[stream].state = SND_SOC_DPCM_STATE_PREPARE;
 
 out:
@@ -619,8 +612,15 @@ static struct snd_compr_ops soc_compr_dyn_ops = {
 	.get_codec_caps = soc_compr_get_codec_caps
 };
 
-/* create a new compress */
-int soc_new_compress(struct snd_soc_pcm_runtime *rtd, int num)
+/**
+ * snd_soc_new_compress - create a new compress.
+ *
+ * @rtd: The runtime for which we will create compress
+ * @num: the device index number (zero based - shared with normal PCMs)
+ *
+ * Return: 0 for success, else error.
+ */
+int snd_soc_new_compress(struct snd_soc_pcm_runtime *rtd, int num)
 {
 	struct snd_soc_codec *codec = rtd->codec;
 	struct snd_soc_platform *platform = rtd->platform;
@@ -666,7 +666,8 @@ int soc_new_compress(struct snd_soc_pcm_runtime *rtd, int num)
 			rtd->dai_link->stream_name);
 
 		ret = snd_pcm_new_internal(rtd->card->snd_card, new_name, num,
-				1, 0, &be_pcm);
+				rtd->dai_link->dpcm_playback,
+				rtd->dai_link->dpcm_capture, &be_pcm);
 		if (ret < 0) {
 			dev_err(rtd->card->dev, "ASoC: can't create compressed for %s\n",
 				rtd->dai_link->name);
@@ -675,8 +676,10 @@ int soc_new_compress(struct snd_soc_pcm_runtime *rtd, int num)
 
 		rtd->pcm = be_pcm;
 		rtd->fe_compr = 1;
-		be_pcm->streams[SNDRV_PCM_STREAM_PLAYBACK].substream->private_data = rtd;
-		be_pcm->streams[SNDRV_PCM_STREAM_CAPTURE].substream->private_data = rtd;
+		if (rtd->dai_link->dpcm_playback)
+			be_pcm->streams[SNDRV_PCM_STREAM_PLAYBACK].substream->private_data = rtd;
+		else if (rtd->dai_link->dpcm_capture)
+			be_pcm->streams[SNDRV_PCM_STREAM_CAPTURE].substream->private_data = rtd;
 		memcpy(compr->ops, &soc_compr_dyn_ops, sizeof(soc_compr_dyn_ops));
 	} else
 		memcpy(compr->ops, &soc_compr_ops, sizeof(soc_compr_ops));
@@ -707,3 +710,4 @@ compr_err:
 	kfree(compr);
 	return ret;
 }
+EXPORT_SYMBOL_GPL(snd_soc_new_compress);

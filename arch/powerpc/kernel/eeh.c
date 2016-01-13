@@ -104,6 +104,13 @@
 int eeh_subsystem_flags;
 EXPORT_SYMBOL(eeh_subsystem_flags);
 
+/*
+ * EEH allowed maximal frozen times. If one particular PE's
+ * frozen count in last hour exceeds this limit, the PE will
+ * be forced to be offline permanently.
+ */
+int eeh_max_freezes = 5;
+
 /* Platform dependent EEH operations */
 struct eeh_ops *eeh_ops = NULL;
 
@@ -136,8 +143,6 @@ struct eeh_stats {
 };
 
 static struct eeh_stats eeh_stats;
-
-#define IS_BRIDGE(class_code) (((class_code)<<16) == PCI_BASE_CLASS_BRIDGE)
 
 static int __init eeh_setup(char *str)
 {
@@ -346,7 +351,8 @@ static inline unsigned long eeh_token_to_phys(unsigned long token)
 	 * worried about _PAGE_SPLITTING/collapse. Also we will not hit
 	 * page table free, because of init_mm.
 	 */
-	ptep = __find_linux_pte_or_hugepte(init_mm.pgd, token, &hugepage_shift);
+	ptep = __find_linux_pte_or_hugepte(init_mm.pgd, token,
+					   NULL, &hugepage_shift);
 	if (!ptep)
 		return token;
 	WARN_ON(hugepage_shift);
@@ -625,7 +631,7 @@ int eeh_pci_enable(struct eeh_pe *pe, int function)
 	 */
 	switch (function) {
 	case EEH_OPT_THAW_MMIO:
-		active_flag = EEH_STATE_MMIO_ACTIVE;
+		active_flag = EEH_STATE_MMIO_ACTIVE | EEH_STATE_MMIO_ENABLED;
 		break;
 	case EEH_OPT_THAW_DMA:
 		active_flag = EEH_STATE_DMA_ACTIVE;
@@ -1069,7 +1075,7 @@ void eeh_add_device_early(struct pci_dn *pdn)
 	struct pci_controller *phb;
 	struct eeh_dev *edev = pdn_to_eeh_dev(pdn);
 
-	if (!edev)
+	if (!edev || !eeh_enabled())
 		return;
 
 	if (!eeh_has_flag(EEH_PROBE_MODE_DEVTREE))
@@ -1154,6 +1160,9 @@ void eeh_add_device_late(struct pci_dev *dev)
 		edev->pdev = NULL;
 		dev->dev.archdata.edev = NULL;
 	}
+
+	if (eeh_has_flag(EEH_PROBE_MODE_DEV))
+		eeh_ops->probe(pdn, NULL);
 
 	edev->pdev = dev;
 	dev->dev.archdata.edev = edev;
@@ -1417,8 +1426,7 @@ void eeh_dev_release(struct pci_dev *pdev)
 		goto out;
 
 	/* Decrease PE's pass through count */
-	atomic_dec(&edev->pe->pass_dev_cnt);
-	WARN_ON(atomic_read(&edev->pe->pass_dev_cnt) < 0);
+	WARN_ON(atomic_dec_if_positive(&edev->pe->pass_dev_cnt) < 0);
 	eeh_pe_change_owner(edev->pe);
 out:
 	mutex_unlock(&eeh_dev_mutex);
@@ -1762,8 +1770,22 @@ static int eeh_enable_dbgfs_get(void *data, u64 *val)
 	return 0;
 }
 
+static int eeh_freeze_dbgfs_set(void *data, u64 val)
+{
+	eeh_max_freezes = val;
+	return 0;
+}
+
+static int eeh_freeze_dbgfs_get(void *data, u64 *val)
+{
+	*val = eeh_max_freezes;
+	return 0;
+}
+
 DEFINE_SIMPLE_ATTRIBUTE(eeh_enable_dbgfs_ops, eeh_enable_dbgfs_get,
 			eeh_enable_dbgfs_set, "0x%llx\n");
+DEFINE_SIMPLE_ATTRIBUTE(eeh_freeze_dbgfs_ops, eeh_freeze_dbgfs_get,
+			eeh_freeze_dbgfs_set, "0x%llx\n");
 #endif
 
 static int __init eeh_init_proc(void)
@@ -1774,6 +1796,9 @@ static int __init eeh_init_proc(void)
 		debugfs_create_file("eeh_enable", 0600,
                                     powerpc_debugfs_root, NULL,
                                     &eeh_enable_dbgfs_ops);
+		debugfs_create_file("eeh_max_freezes", 0600,
+				    powerpc_debugfs_root, NULL,
+				    &eeh_freeze_dbgfs_ops);
 #endif
 	}
 

@@ -15,6 +15,7 @@
 
 #include <linux/netdevice.h>
 #include <uapi/linux/if_bridge.h>
+#include <linux/bitops.h>
 
 struct br_ip {
 	union {
@@ -31,6 +32,25 @@ struct br_ip_list {
 	struct list_head list;
 	struct br_ip addr;
 };
+
+#define BR_HAIRPIN_MODE		BIT(0)
+#define BR_BPDU_GUARD		BIT(1)
+#define BR_ROOT_BLOCK		BIT(2)
+#define BR_MULTICAST_FAST_LEAVE	BIT(3)
+#define BR_ADMIN_COST		BIT(4)
+#define BR_LEARNING		BIT(5)
+#define BR_FLOOD		BIT(6)
+#define BR_AUTO_MASK		(BR_FLOOD | BR_LEARNING)
+#define BR_PROMISC		BIT(7)
+#define BR_PROXYARP		BIT(8)
+#define BR_LEARNING_SYNC	BIT(9)
+#define BR_PROXYARP_WIFI	BIT(10)
+
+/* values as per ieee8021QBridgeFdbAgingTime */
+#define BR_MIN_AGEING_TIME	(10 * HZ)
+#define BR_MAX_AGEING_TIME	(1000000 * HZ)
+
+#define BR_DEFAULT_AGEING_TIME	(300 * HZ)
 
 extern void brioctl_set(int (*ioctl_hook)(struct net *, unsigned int, void __user *));
 

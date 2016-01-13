@@ -28,7 +28,7 @@
 #define AT91_AIC_IRQ_MIN_PRIORITY	0
 #define AT91_AIC_IRQ_MAX_PRIORITY	7
 
-#define AT91_AIC_SRCTYPE		GENMASK(7, 6)
+#define AT91_AIC_SRCTYPE		GENMASK(6, 5)
 #define AT91_AIC_SRCTYPE_LOW		(0 << 5)
 #define AT91_AIC_SRCTYPE_FALLING	(1 << 5)
 #define AT91_AIC_SRCTYPE_HIGH		(2 << 5)
@@ -74,7 +74,7 @@ int aic_common_set_type(struct irq_data *d, unsigned type, unsigned *val)
 		return -EINVAL;
 	}
 
-	*val &= AT91_AIC_SRCTYPE;
+	*val &= ~AT91_AIC_SRCTYPE;
 	*val |= aic_type;
 
 	return 0;
@@ -114,7 +114,7 @@ int aic_common_irq_domain_xlate(struct irq_domain *d,
 
 static void __init aic_common_ext_irq_of_init(struct irq_domain *domain)
 {
-	struct device_node *node = domain->of_node;
+	struct device_node *node = irq_domain_get_of_node(domain);
 	struct irq_chip_generic *gc;
 	struct aic_chip_data *aic;
 	struct property *prop;
@@ -165,6 +165,32 @@ void __init aic_common_rtc_irq_fixup(struct device_node *root)
 	writel(AT91_RTC_IRQ_MASK, regs + AT91_RTC_IDR);
 
 	iounmap(regs);
+}
+
+#define AT91_RTT_MR		0x00			/* Real-time Mode Register */
+#define AT91_RTT_ALMIEN		(1 << 16)		/* Alarm Interrupt Enable */
+#define AT91_RTT_RTTINCIEN	(1 << 17)		/* Real Time Timer Increment Interrupt Enable */
+
+void __init aic_common_rtt_irq_fixup(struct device_node *root)
+{
+	struct device_node *np;
+	void __iomem *regs;
+
+	/*
+	 * The at91sam9263 SoC has 2 instances of the RTT block, hence we
+	 * iterate over the DT to find each occurrence.
+	 */
+	for_each_compatible_node(np, NULL, "atmel,at91sam9260-rtt") {
+		regs = of_iomap(np, 0);
+		if (!regs)
+			continue;
+
+		writel(readl(regs + AT91_RTT_MR) &
+		       ~(AT91_RTT_ALMIEN | AT91_RTT_RTTINCIEN),
+		       regs + AT91_RTT_MR);
+
+		iounmap(regs);
+	}
 }
 
 void __init aic_common_irq_fixup(const struct of_device_id *matches)

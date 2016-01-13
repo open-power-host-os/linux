@@ -155,7 +155,8 @@ static int ohci_urb_enqueue (
 	int		retval = 0;
 
 	/* every endpoint has a ed, locate and maybe (re)initialize it */
-	if (! (ed = ed_get (ohci, urb->ep, urb->dev, pipe, urb->interval)))
+	ed = ed_get(ohci, urb->ep, urb->dev, pipe, urb->interval);
+	if (! ed)
 		return -ENOMEM;
 
 	/* for the private part of the URB we need the number of TDs (size) */
@@ -1247,11 +1248,6 @@ MODULE_LICENSE ("GPL");
 #ifdef CONFIG_MACH_JZ4740
 #include "ohci-jz4740.c"
 #define PLATFORM_DRIVER	ohci_hcd_jz4740_driver
-#endif
-
-#ifdef CONFIG_USB_OCTEON_OHCI
-#include "ohci-octeon.c"
-#define PLATFORM_DRIVER		ohci_octeon_driver
 #endif
 
 #ifdef CONFIG_TILE_USB

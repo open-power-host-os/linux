@@ -55,8 +55,6 @@ static void ics_rm_check_resend(struct kvmppc_xics *xics,
 	arch_spin_unlock(&ics->lock);
 }
 
-/* -- ICP routines -- */
-
 /*
  * We start the search from our current CPU Id in the core map
  * and go in a circle until we get back to our ID looking for a
@@ -77,7 +75,7 @@ static inline int grab_next_hostcore(int start,
 	union kvmppc_rm_state old, new;
 
 	for (core = start + 1; core < max; core++)  {
-		old = new = ACCESS_ONCE(rm_core[core].rm_state);
+		old = new = READ_ONCE(rm_core[core].rm_state);
 
 		if (!old.in_host || old.rm_action)
 			continue;
@@ -114,6 +112,8 @@ static inline int find_available_hostcore(int action)
 
 	return core;
 }
+
+/* -- ICP routines -- */
 
 static void icp_rm_set_vcpu_irq(struct kvm_vcpu *vcpu,
 				struct kvm_vcpu *this_vcpu)
@@ -238,7 +238,7 @@ static bool icp_rm_try_to_deliver(struct kvmppc_icp *icp, u32 irq, u8 priority,
 	bool success;
 
 	do {
-		old_state = new_state = ACCESS_ONCE(icp->state);
+		old_state = new_state = READ_ONCE(icp->state);
 
 		*reject = 0;
 
@@ -423,7 +423,7 @@ static void icp_rm_down_cppr(struct kvmppc_xics *xics, struct kvmppc_icp *icp,
 	 * in virtual mode.
 	 */
 	do {
-		old_state = new_state = ACCESS_ONCE(icp->state);
+		old_state = new_state = READ_ONCE(icp->state);
 
 		/* Down_CPPR */
 		new_state.cppr = new_cppr;
@@ -482,7 +482,7 @@ unsigned long kvmppc_rm_h_xirr(struct kvm_vcpu *vcpu)
 	 * pending priority
 	 */
 	do {
-		old_state = new_state = ACCESS_ONCE(icp->state);
+		old_state = new_state = READ_ONCE(icp->state);
 
 		xirr = old_state.xisr | (((u32)old_state.cppr) << 24);
 		if (!old_state.xisr)
@@ -548,7 +548,7 @@ int kvmppc_rm_h_ipi(struct kvm_vcpu *vcpu, unsigned long server,
 	 * whenever the MFRR is made less favored.
 	 */
 	do {
-		old_state = new_state = ACCESS_ONCE(icp->state);
+		old_state = new_state = READ_ONCE(icp->state);
 
 		/* Set_MFRR */
 		new_state.mfrr = mfrr;
@@ -623,7 +623,7 @@ int kvmppc_rm_h_cppr(struct kvm_vcpu *vcpu, unsigned long cppr)
 	icp_rm_clr_vcpu_irq(icp->vcpu);
 
 	do {
-		old_state = new_state = ACCESS_ONCE(icp->state);
+		old_state = new_state = READ_ONCE(icp->state);
 
 		reject = 0;
 		new_state.cppr = cppr;

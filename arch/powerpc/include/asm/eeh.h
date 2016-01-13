@@ -81,6 +81,7 @@ struct pci_dn;
 
 #define EEH_PE_KEEP		(1 << 8)	/* Keep PE on hotplug	*/
 #define EEH_PE_CFG_RESTRICTED	(1 << 9)	/* Block config on error */
+#define EEH_PE_REMOVED		(1 << 10)	/* Removed permanently	*/
 
 struct eeh_pe {
 	int type;			/* PE type: PHB/Bus/Device	*/
@@ -223,6 +224,7 @@ struct eeh_ops {
 };
 
 extern int eeh_subsystem_flags;
+extern int eeh_max_freezes;
 extern struct eeh_ops *eeh_ops;
 extern raw_spinlock_t confirm_error_lock;
 
@@ -259,12 +261,6 @@ static inline void eeh_serialize_unlock(unsigned long flags)
 {
 	raw_spin_unlock_irqrestore(&confirm_error_lock, flags);
 }
-
-/*
- * Max number of EEH freezes allowed before we consider the device
- * to be permanently disabled.
- */
-#define EEH_MAX_ALLOWED_FREEZES 5
 
 typedef void *(*eeh_traverse_func)(void *data, void *flag);
 void eeh_set_pe_aux_size(int size);

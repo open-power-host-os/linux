@@ -84,35 +84,35 @@ END_FTR_SECTION_IFCLR(CPU_FTR_ARCH_207S)
 	cmpwi	r4, 0
 	beq	23f			/* skip if not */
 BEGIN_FTR_SECTION
-	ld	r3, HSTATE_MMCR(r13)
+	ld	r3, HSTATE_MMCR0(r13)
 	andi.	r4, r3, MMCR0_PMAO_SYNC | MMCR0_PMAO
 	cmpwi	r4, MMCR0_PMAO
 	beql	kvmppc_fix_pmao
 END_FTR_SECTION_IFSET(CPU_FTR_PMAO_BUG)
-	lwz	r3, HSTATE_PMC(r13)
-	lwz	r4, HSTATE_PMC + 4(r13)
-	lwz	r5, HSTATE_PMC + 8(r13)
-	lwz	r6, HSTATE_PMC + 12(r13)
-	lwz	r8, HSTATE_PMC + 16(r13)
-	lwz	r9, HSTATE_PMC + 20(r13)
+	lwz	r3, HSTATE_PMC1(r13)
+	lwz	r4, HSTATE_PMC2(r13)
+	lwz	r5, HSTATE_PMC3(r13)
+	lwz	r6, HSTATE_PMC4(r13)
+	lwz	r8, HSTATE_PMC5(r13)
+	lwz	r9, HSTATE_PMC6(r13)
 	mtspr	SPRN_PMC1, r3
 	mtspr	SPRN_PMC2, r4
 	mtspr	SPRN_PMC3, r5
 	mtspr	SPRN_PMC4, r6
 	mtspr	SPRN_PMC5, r8
 	mtspr	SPRN_PMC6, r9
-	ld	r3, HSTATE_MMCR(r13)
-	ld	r4, HSTATE_MMCR + 8(r13)
-	ld	r5, HSTATE_MMCR + 16(r13)
-	ld	r6, HSTATE_MMCR + 24(r13)
-	ld	r7, HSTATE_MMCR + 32(r13)
+	ld	r3, HSTATE_MMCR0(r13)
+	ld	r4, HSTATE_MMCR1(r13)
+	ld	r5, HSTATE_MMCRA(r13)
+	ld	r6, HSTATE_SIAR(r13)
+	ld	r7, HSTATE_SDAR(r13)
 	mtspr	SPRN_MMCR1, r4
 	mtspr	SPRN_MMCRA, r5
 	mtspr	SPRN_SIAR, r6
 	mtspr	SPRN_SDAR, r7
 BEGIN_FTR_SECTION
-	ld	r8, HSTATE_MMCR + 40(r13)
-	ld	r9, HSTATE_MMCR + 48(r13)
+	ld	r8, HSTATE_MMCR2(r13)
+	ld	r9, HSTATE_SIER(r13)
 	mtspr	SPRN_MMCR2, r8
 	mtspr	SPRN_SIER, r9
 END_FTR_SECTION_IFSET(CPU_FTR_ARCH_207S)
@@ -151,8 +151,8 @@ END_FTR_SECTION_IFSET(CPU_FTR_ARCH_207S)
 	cmpwi	cr1, r12, BOOK3S_INTERRUPT_MACHINE_CHECK
 	cmpwi	r12, BOOK3S_INTERRUPT_EXTERNAL
 	beq	11f
-	cmpwi 	r12, BOOK3S_INTERRUPT_H_DOORBELL
-	beq 	15f
+	cmpwi	r12, BOOK3S_INTERRUPT_H_DOORBELL
+	beq 	15f	/* Invoke the H_DOORBELL handler */
 	cmpwi	cr2, r12, BOOK3S_INTERRUPT_HMI
 	beq	cr2, 14f			/* HMI check */
 
@@ -359,7 +359,7 @@ kvm_start_guest:
 kvm_secondary_got_guest:
 
 	/* Set HSTATE_DSCR(r13) to something sensible */
-	ld	r6, PACA_DSCR(r13)
+	ld	r6, PACA_DSCR_DEFAULT(r13)
 	std	r6, HSTATE_DSCR(r13)
 
 	/* On thread 0 of a subcore, set HDEC to max */
@@ -471,6 +471,11 @@ kvm_unsplit_nap:
 	li	r3, 0			/* NULL argument */
 	bl	hmi_exception_realmode
 55:
+	/*
+	 * Ensure that secondary doesn't nap when it has
+	 * its vcore pointer set.
+	 */
+	sync		/* matches smp_mb() before setting split_info.do_nap */
 	ld	r0, HSTATE_KVM_VCORE(r13)
 	cmpdi	r0, 0
 	bne	kvm_no_guest
@@ -2742,7 +2747,13 @@ kvmppc_fix_pmao:
  * r3 = pointer to time accumulation struct, r4 = vcpu
  */
 kvmhv_start_timing:
-	mftb	r5
+	ld	r5, HSTATE_KVM_VCORE(r13)
+	lbz	r6, VCORE_IN_GUEST(r5)
+	cmpwi	r6, 0
+	beq	5f				/* if in guest, need to */
+	ld	r6, VCORE_TB_OFFSET(r5)		/* subtract timebase offset */
+5:	mftb	r5
+	subf	r5, r6, r5
 	std	r3, VCPU_CUR_ACTIVITY(r4)
 	std	r5, VCPU_ACTIVITY_START(r4)
 	blr
@@ -2752,10 +2763,16 @@ kvmhv_start_timing:
  * r3 = pointer to new time accumulation struct, r4 = vcpu
  */
 kvmhv_accumulate_time:
-	ld	r5, VCPU_CUR_ACTIVITY(r4)
+	ld	r5, HSTATE_KVM_VCORE(r13)
+	lbz	r8, VCORE_IN_GUEST(r5)
+	cmpwi	r8, 0
+	beq	4f				/* if in guest, need to */
+	ld	r8, VCORE_TB_OFFSET(r5)		/* subtract timebase offset */
+4:	ld	r5, VCPU_CUR_ACTIVITY(r4)
 	ld	r6, VCPU_ACTIVITY_START(r4)
 	std	r3, VCPU_CUR_ACTIVITY(r4)
 	mftb	r7
+	subf	r7, r8, r7
 	std	r7, VCPU_ACTIVITY_START(r4)
 	cmpdi	r5, 0
 	beqlr

@@ -342,7 +342,8 @@ static struct kvmppc_irq_map *get_irqmap(struct kvmppc_passthru_map *pmap,
 long kvmppc_read_intr(struct kvm_vcpu *vcpu, int path)
 {
 	unsigned long xics_phys;
-	u32 h_xirr, xirr;
+	u32 h_xirr;
+	__be32 xirr;
 	u32 xisr;
 	struct kvmppc_passthru_map *pmap;
 	struct kvmppc_irq_map *irq_map;
@@ -366,12 +367,8 @@ long kvmppc_read_intr(struct kvm_vcpu *vcpu, int path)
 	 * XIRR register, while h_xirr is the host endian version.
 	 */
 	xirr = _lwzcix(xics_phys + XICS_XIRR);
-#ifdef __LITTLE_ENDIAN__
-	st_le32(&local_paca->kvm_hstate.saved_xirr, xirr);
-	h_xirr = local_paca->kvm_hstate.saved_xirr;
-#else
-	h_xirr = xirr;
-#endif
+	h_xirr = be32_to_cpu(xirr);
+	local_paca->kvm_hstate.saved_xirr = h_xirr;
 	xisr = h_xirr & 0xffffff;
 	/*
 	 * Ensure that the store/load complete to guarantee all side

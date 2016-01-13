@@ -27,6 +27,38 @@ void arch__elf_sym_adjust(GElf_Sym *sym)
 #endif
 #endif
 
+#if !defined(_CALL_ELF) || _CALL_ELF != 2
+int arch__choose_best_symbol(struct symbol *syma,
+			     struct symbol *symb __maybe_unused)
+{
+	char *sym = syma->name;
+
+	/* Skip over any initial dot */
+	if (*sym == '.')
+		sym++;
+
+	/* Avoid "SyS" kernel syscall aliases */
+	if (strlen(sym) >= 3 && !strncmp(sym, "SyS", 3))
+		return SYMBOL_B;
+	if (strlen(sym) >= 10 && !strncmp(sym, "compat_SyS", 10))
+		return SYMBOL_B;
+
+	return SYMBOL_A;
+}
+
+/* Allow matching against dot variants */
+int arch__compare_symbol_names(const char *namea, const char *nameb)
+{
+	/* Skip over initial dot */
+	if (*namea == '.')
+		namea++;
+	if (*nameb == '.')
+		nameb++;
+
+	return strcmp(namea, nameb);
+}
+#endif
+
 #if defined(_CALL_ELF) && _CALL_ELF == 2
 bool arch__prefers_symtab(void)
 {

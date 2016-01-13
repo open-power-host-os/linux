@@ -127,7 +127,7 @@ static int read_user_stack_slow(void __user *ptr, void *buf, int nb)
 		return -EFAULT;
 
 	local_irq_save(flags);
-	ptep = find_linux_pte_or_hugepte(pgdir, addr, &shift);
+	ptep = find_linux_pte_or_hugepte(pgdir, addr, NULL, &shift);
 	if (!ptep)
 		goto err_out;
 	if (!shift)
@@ -136,7 +136,7 @@ static int read_user_stack_slow(void __user *ptr, void *buf, int nb)
 	/* align address to page boundary */
 	offset = addr & ((1UL << shift) - 1);
 
-	pte = ACCESS_ONCE(*ptep);
+	pte = READ_ONCE(*ptep);
 	if (!pte_present(pte) || !(pte_val(pte) & _PAGE_USER))
 		goto err_out;
 	pfn = pte_pfn(pte);

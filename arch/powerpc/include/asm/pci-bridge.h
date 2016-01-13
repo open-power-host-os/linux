@@ -15,6 +15,39 @@
 struct device_node;
 
 /*
+ * PCI controller operations
+ */
+struct pci_controller_ops {
+	void		(*dma_dev_setup)(struct pci_dev *dev);
+	void		(*dma_bus_setup)(struct pci_bus *bus);
+
+	int		(*probe_mode)(struct pci_bus *);
+
+	/* Called when pci_enable_device() is called. Returns true to
+	 * allow assignment/enabling of the device. */
+	bool		(*enable_device_hook)(struct pci_dev *);
+
+	void		(*disable_device)(struct pci_dev *);
+
+	void		(*release_device)(struct pci_dev *);
+
+	/* Called during PCI resource reassignment */
+	resource_size_t (*window_alignment)(struct pci_bus *, unsigned long type);
+	void		(*reset_secondary_bus)(struct pci_dev *dev);
+
+#ifdef CONFIG_PCI_MSI
+	int		(*setup_msi_irqs)(struct pci_dev *dev,
+					  int nvec, int type);
+	void		(*teardown_msi_irqs)(struct pci_dev *dev);
+#endif
+
+	int             (*dma_set_mask)(struct pci_dev *dev, u64 dma_mask);
+	u64		(*dma_get_required_mask)(struct pci_dev *dev);
+
+	void		(*shutdown)(struct pci_controller *);
+};
+
+/*
  * Structure of a PCI controller (host bridge)
  */
 struct pci_controller {
@@ -46,6 +79,7 @@ struct pci_controller {
 	resource_size_t	isa_mem_phys;
 	resource_size_t	isa_mem_size;
 
+	struct pci_controller_ops controller_ops;
 	struct pci_ops *ops;
 	unsigned int __iomem *cfg_addr;
 	void __iomem *cfg_data;
@@ -119,6 +153,10 @@ extern void setup_indirect_pci(struct pci_controller* hose,
 
 extern int indirect_read_config(struct pci_bus *bus, unsigned int devfn,
 				int offset, int len, u32 *val);
+
+extern int __indirect_read_config(struct pci_controller *hose,
+				  unsigned char bus_number, unsigned int devfn,
+				  int offset, int len, u32 *val);
 
 extern int indirect_write_config(struct pci_bus *bus, unsigned int devfn,
 				 int offset, int len, u32 val);
