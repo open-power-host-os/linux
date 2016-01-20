@@ -52,7 +52,6 @@ long kvmppc_alloc_hpt(struct kvm *kvm, u32 *htab_orderp)
 {
 	unsigned long hpt = 0;
 	struct revmap_entry *rev;
-	struct page *page = NULL;
 	long order = KVM_DEFAULT_HPT_ORDER;
 
 	if (htab_orderp) {
@@ -61,21 +60,27 @@ long kvmppc_alloc_hpt(struct kvm *kvm, u32 *htab_orderp)
 			order = PPC_MIN_HPT_ORDER;
 	}
 
-	kvm->arch.hpt_cma_alloc = 0;
-	page = kvm_alloc_hpt(1ul << (order - PAGE_SHIFT));
-	if (page) {
-		hpt = (unsigned long)pfn_to_kaddr(page_to_pfn(page));
+	kvm->arch.hpt_cma_alloc = kvm->arch.hpt_resv_alloc = 0;
+	hpt = kvmhv_alloc_resv_hpt(order);
+	if (hpt) {
+		kvm->arch.hpt_resv_alloc = 1;
 		memset((void *)hpt, 0, (1ul << order));
-		kvm->arch.hpt_cma_alloc = 1;
+	} else {
+		hpt = kvmhv_alloc_cma_hpt(order);
+		if (hpt) {
+			kvm->arch.hpt_cma_alloc = 1;
+			memset((void *)hpt, 0, (1ul << order));
+		}
 	}
 
 	/* Lastly try successively smaller sizes from the page allocator */
 	/* Only do this if userspace didn't specify a size via ioctl */
-	while (!hpt && order > PPC_MIN_HPT_ORDER && !htab_orderp) {
+	while (!hpt && order > PPC_MIN_HPT_ORDER) {
 		hpt = __get_free_pages(GFP_KERNEL|__GFP_ZERO|__GFP_REPEAT|
 				       __GFP_NOWARN, order - PAGE_SHIFT);
-		if (!hpt)
-			--order;
+		if (hpt || !htab_orderp)
+			break;
+		--order;
 	}
 
 	if (!hpt)
@@ -105,8 +110,10 @@ long kvmppc_alloc_hpt(struct kvm *kvm, u32 *htab_orderp)
 	return 0;
 
  out_freehpt:
-	if (kvm->arch.hpt_cma_alloc)
-		kvm_release_hpt(page, 1 << (order - PAGE_SHIFT));
+	if (kvm->arch.hpt_resv_alloc)
+		kvmhv_release_resv_hpt(hpt, order);
+	else if (kvm->arch.hpt_cma_alloc)
+		kvmhv_release_cma_hpt(hpt, order);
 	else
 		free_pages(hpt, order - PAGE_SHIFT);
 	return -ENOMEM;
@@ -152,9 +159,10 @@ void kvmppc_free_hpt(struct kvm *kvm)
 {
 	kvmppc_free_lpid(kvm->arch.lpid);
 	vfree(kvm->arch.revmap);
-	if (kvm->arch.hpt_cma_alloc)
-		kvm_release_hpt(virt_to_page(kvm->arch.hpt_virt),
-				1 << (kvm->arch.hpt_order - PAGE_SHIFT));
+	if (kvm->arch.hpt_resv_alloc)
+		kvmhv_release_resv_hpt(kvm->arch.hpt_virt, kvm->arch.hpt_order);
+	else if (kvm->arch.hpt_cma_alloc)
+		kvmhv_release_cma_hpt(kvm->arch.hpt_virt, kvm->arch.hpt_order);
 	else
 		free_pages(kvm->arch.hpt_virt,
 			   kvm->arch.hpt_order - PAGE_SHIFT);

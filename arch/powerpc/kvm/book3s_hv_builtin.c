@@ -27,18 +27,113 @@
 #include <asm/cputhreads.h>
 #include <asm/io.h>
 
-#define KVM_CMA_CHUNK_ORDER	18
-
 /*
  * Hash page table alignment on newer cpus(CPU_FTR_ARCH_206)
- * should be power of 2.
+ * only needs to be 256kB.
  */
-#define HPT_ALIGN_PAGES		((1 << 18) >> PAGE_SHIFT) /* 256k */
+#define HPT_ALIGN_ORDER		18		/* 256k */
+#define HPT_ALIGN_PAGES		((1 << HPT_ALIGN_ORDER) >> PAGE_SHIFT)
+
+#define KVM_RESV_CHUNK_ORDER	HPT_ALIGN_ORDER
+
 /*
- * By default we reserve 3% of memory for hash pagetable allocation.
+ * By default we reserve 2% of memory exclusively for guest HPT
+ * allocations, plus another 3% in the CMA zone which can be used
+ * either for HPTs or for movable page allocations.
  * Each guest's HPT will be sized at between 1/128 and 1/64 of its
- * memory, i.e. up to 1.56%, and allowing for about a 2x memory
- * overcommit factor gets us to about 3%.
+ * memory, i.e. up to 1.56%, and allowing for about a 3x memory
+ * overcommit factor gets us to about 5%.
+ */
+static unsigned long kvm_hpt_resv_ratio = 2;
+
+static int __init early_parse_kvm_hpt_resv(char *p)
+{
+	pr_debug("%s(%s)\n", __func__, p);
+	if (!p)
+		return -EINVAL;
+	return kstrtoul(p, 0, &kvm_hpt_resv_ratio);
+}
+early_param("kvm_hpt_resv_ratio", early_parse_kvm_hpt_resv);
+
+static unsigned long kvm_resv_addr;
+static unsigned long *kvm_resv_bitmap;
+static unsigned long kvm_resv_chunks;
+static DEFINE_MUTEX(kvm_resv_lock);
+
+void kvm_resv_hpt_init(void)
+{
+	unsigned long align = 1ul << KVM_RESV_CHUNK_ORDER;
+	unsigned long size, bm_size;
+	unsigned long addr, bm;
+	unsigned long *bmp;
+
+	if (!cpu_has_feature(CPU_FTR_HVMODE))
+		return;
+
+	size = memblock_phys_mem_size() * kvm_hpt_resv_ratio / 100;
+	size = ALIGN(size, align);
+	if (!size)
+		return;
+
+	pr_info("KVM: Allocating %lu MiB for hashed page tables\n",
+		size >> 20);
+
+	addr = __memblock_alloc_base(size, align, MEMBLOCK_ALLOC_ACCESSIBLE);
+	if (!addr) {
+		pr_err("KVM: Allocation of reserved memory for HPTs failed\n");
+		return;
+	}
+	pr_info("KVM: %lu MiB reserved for HPTs at %lx\n", size >> 20, addr);
+
+	bm_size = BITS_TO_LONGS(size >> KVM_RESV_CHUNK_ORDER) * sizeof(long);
+	bm = __memblock_alloc_base(bm_size, sizeof(long),
+				   MEMBLOCK_ALLOC_ACCESSIBLE);
+	if (!bm) {
+		pr_err("KVM: Allocation of reserved memory bitmap failed\n");
+		return;
+	}
+	bmp = __va(bm);
+	memset(bmp, 0, bm_size);
+
+	kvm_resv_addr = (unsigned long) __va(addr);
+	kvm_resv_chunks = size >> KVM_RESV_CHUNK_ORDER;
+	kvm_resv_bitmap = bmp;
+}
+
+unsigned long kvmhv_alloc_resv_hpt(u32 order)
+{
+	unsigned long nr_chunks = 1ul << (order - KVM_RESV_CHUNK_ORDER);
+	unsigned long chunk;
+
+	mutex_lock(&kvm_resv_lock);
+	chunk = bitmap_find_next_zero_area(kvm_resv_bitmap, kvm_resv_chunks,
+					   0, nr_chunks, 0);
+	if (chunk < kvm_resv_chunks)
+		bitmap_set(kvm_resv_bitmap, chunk, nr_chunks);
+	mutex_unlock(&kvm_resv_lock);
+
+	if (chunk < kvm_resv_chunks)
+		return kvm_resv_addr + (chunk << KVM_RESV_CHUNK_ORDER);
+	return 0;
+}
+EXPORT_SYMBOL_GPL(kvmhv_alloc_resv_hpt);
+
+void kvmhv_release_resv_hpt(unsigned long addr, u32 order)
+{
+	unsigned long nr_chunks = 1ul << (order - KVM_RESV_CHUNK_ORDER);
+	unsigned long chunk = (addr - kvm_resv_addr) >> KVM_RESV_CHUNK_ORDER;
+
+	mutex_lock(&kvm_resv_lock);
+	if (chunk + nr_chunks <= kvm_resv_chunks)
+		bitmap_clear(kvm_resv_bitmap, chunk, nr_chunks);
+	mutex_unlock(&kvm_resv_lock);
+}
+EXPORT_SYMBOL_GPL(kvmhv_release_resv_hpt);
+
+#define KVM_CMA_CHUNK_ORDER	HPT_ALIGN_ORDER
+
+/*
+ * By default we reserve 3% of memory for the CMA zone.
  */
 static unsigned long kvm_cma_resv_ratio = 3;
 
@@ -53,19 +148,27 @@ static int __init early_parse_kvm_cma_resv(char *p)
 }
 early_param("kvm_cma_resv_ratio", early_parse_kvm_cma_resv);
 
-struct page *kvm_alloc_hpt(unsigned long nr_pages)
+unsigned long kvmhv_alloc_cma_hpt(u32 order)
 {
-	VM_BUG_ON(order_base_2(nr_pages) < KVM_CMA_CHUNK_ORDER - PAGE_SHIFT);
+	unsigned long nr_pages = 1ul << (order - PAGE_SHIFT);
+	struct page *page;
 
-	return cma_alloc(kvm_cma, nr_pages, order_base_2(HPT_ALIGN_PAGES));
+	VM_BUG_ON(order < KVM_CMA_CHUNK_ORDER);
+	page = cma_alloc(kvm_cma, nr_pages, HPT_ALIGN_ORDER - PAGE_SHIFT);
+	if (page)
+		return (unsigned long)pfn_to_kaddr(page_to_pfn(page));
+	return 0;
 }
-EXPORT_SYMBOL_GPL(kvm_alloc_hpt);
+EXPORT_SYMBOL_GPL(kvmhv_alloc_cma_hpt);
 
-void kvm_release_hpt(struct page *page, unsigned long nr_pages)
+void kvmhv_release_cma_hpt(unsigned long hpt, u32 order)
 {
+	unsigned long nr_pages = 1ul << (order - PAGE_SHIFT);
+	struct page *page = virt_to_page(hpt);
+
 	cma_release(kvm_cma, page, nr_pages);
 }
-EXPORT_SYMBOL_GPL(kvm_release_hpt);
+EXPORT_SYMBOL_GPL(kvmhv_release_cma_hpt);
 
 /**
  * kvm_cma_reserve() - reserve area for kvm hash pagetable
@@ -78,23 +181,16 @@ EXPORT_SYMBOL_GPL(kvm_release_hpt);
 void __init kvm_cma_reserve(void)
 {
 	unsigned long align_size;
-	struct memblock_region *reg;
-	phys_addr_t selected_size = 0;
+	phys_addr_t selected_size;
 
 	/*
 	 * We need CMA reservation only when we are in HV mode
 	 */
 	if (!cpu_has_feature(CPU_FTR_HVMODE))
 		return;
-	/*
-	 * We cannot use memblock_phys_mem_size() here, because
-	 * memblock_analyze() has not been called yet.
-	 */
-	for_each_memblock(memory, reg)
-		selected_size += memblock_region_memory_end_pfn(reg) -
-				 memblock_region_memory_base_pfn(reg);
 
-	selected_size = (selected_size * kvm_cma_resv_ratio / 100) << PAGE_SHIFT;
+	selected_size = memblock_phys_mem_size() * kvm_cma_resv_ratio / 100;
+	selected_size = ALIGN(selected_size, 1ull << KVM_CMA_CHUNK_ORDER);
 	if (selected_size) {
 		pr_debug("%s: reserving %ld MiB for global area\n", __func__,
 			 (unsigned long)selected_size / SZ_1M);

@@ -252,6 +252,7 @@ struct kvm_arch {
 	unsigned long hpt_mask;
 	atomic_t hpte_mod_interest;
 	cpumask_t need_tlb_flush;
+	int hpt_resv_alloc;
 	int hpt_cma_alloc;
 	struct dentry *debugfs_dir;
 	struct dentry *htab_dentry;

@@ -192,10 +192,10 @@ extern long kvmppc_h_stuff_tce(struct kvm_vcpu *vcpu,
 		unsigned long tce_value, unsigned long npages);
 extern long kvmppc_h_get_tce(struct kvm_vcpu *vcpu, unsigned long liobn,
 			     unsigned long ioba);
-extern struct kvm_rma_info *kvm_alloc_rma(void);
-extern void kvm_release_rma(struct kvm_rma_info *ri);
-extern struct page *kvm_alloc_hpt(unsigned long nr_pages);
-extern void kvm_release_hpt(struct page *page, unsigned long nr_pages);
+extern unsigned long kvmhv_alloc_resv_hpt(u32 order);
+extern void kvmhv_release_resv_hpt(unsigned long hpt, u32 order);
+extern unsigned long kvmhv_alloc_cma_hpt(u32 order);
+extern void kvmhv_release_cma_hpt(unsigned long hpt, u32 order);
 extern int kvmppc_core_init_vm(struct kvm *kvm);
 extern void kvmppc_core_destroy_vm(struct kvm *kvm);
 extern void kvmppc_core_free_memslot(struct kvm *kvm,
@@ -410,6 +410,8 @@ struct openpic;
 
 #ifdef CONFIG_KVM_BOOK3S_HV_POSSIBLE
 extern void kvm_cma_reserve(void) __init;
+extern void kvm_resv_hpt_init(void);
+
 static inline void kvmppc_set_xics_phys(int cpu, unsigned long addr)
 {
 	paca[cpu].kvm_hstate.xics_phys = addr;
@@ -440,6 +442,9 @@ extern bool kvm_hv_mode_active(void);
 
 #else
 static inline void __init kvm_cma_reserve(void)
+{}
+
+static inline void kvm_resv_hpt_init(void)
 {}
 
 static inline void kvmppc_set_xics_phys(int cpu, unsigned long addr)
