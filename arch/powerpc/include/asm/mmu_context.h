@@ -19,6 +19,7 @@ extern void destroy_context(struct mm_struct *mm);
 #ifdef CONFIG_SPAPR_TCE_IOMMU
 struct mm_iommu_table_group_mem_t;
 
+extern int isolate_lru_page(struct page *page);	/* internal.h */
 extern bool mm_iommu_preregistered(mm_context_t *mm);
 extern long mm_iommu_get(unsigned long ua, unsigned long entries,
 		struct mm_iommu_table_group_mem_t **pmem);
