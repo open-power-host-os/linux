@@ -3508,6 +3508,8 @@ static const struct pci_dev_reset_methods pci_dev_reset_methods[] = {
 		reset_fundamental },
 	{ PCI_VENDOR_ID_TI, PCI_ANY_ID,
 		reset_fundamental },
+	{ PCI_VENDOR_ID_EMULEX, PCI_DEVICE_ID_EMULEX_SAT,
+		reset_fundamental },
 
 	{ PCI_VENDOR_ID_CHELSIO, PCI_ANY_ID,
 		reset_chelsio_generic_dev },
