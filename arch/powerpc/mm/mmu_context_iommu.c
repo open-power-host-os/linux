@@ -233,7 +233,7 @@ struct mm_iommu_table_group_mem_t *mm_iommu_lookup_rm(mm_context_t *mm,
 {
 	struct mm_iommu_table_group_mem_t *mem, *ret = NULL;
 
-	list_for_each_entry_rcu_notrace(mem, &mm->iommu_group_mem_list, next) {
+	list_for_each_entry_lockless(mem, &mm->iommu_group_mem_list, next) {
 		if ((mem->ua <= ua) &&
 				(ua + size <= mem->ua +
 				 (mem->entries << PAGE_SHIFT))) {
@@ -309,7 +309,7 @@ long mm_iommu_rm_ua_to_hpa(struct mm_iommu_table_group_mem_t *mem,
 	if (entry >= mem->entries)
 		return -EFAULT;
 
-	ra = real_vmalloc_addr(va);
+	ra = (void *) vmalloc_to_phys(va);
 	if (!ra)
 		return -EFAULT;
 

@@ -831,8 +831,8 @@ struct kvm_ppc_smmu_info {
 #define KVM_CAP_GUEST_DEBUG_HW_WPS 120
 #define KVM_CAP_SPLIT_IRQCHIP 121
 #define KVM_CAP_IOEVENTFD_ANY_LENGTH 122
-#define KVM_CAP_SPAPR_TCE_VFIO 123
-#define KVM_CAP_SPAPR_TCE_64 124
+#define KVM_CAP_SPAPR_TCE_64 125
+#define KVM_CAP_SPAPR_TCE_VFIO 126
 
 #ifdef KVM_CAP_IRQ_ROUTING
 
@@ -1042,6 +1042,7 @@ struct kvm_vfio_spapr_tce_liobn {
 	__u32	argsz;
 	__s32	fd;
 	__u32	liobn;
+	__u8	pad[4];
 	__u64	start_addr;
 };
 

@@ -190,7 +190,7 @@ struct kvmppc_spapr_tce_table {
 	struct rcu_head rcu;
 	u32 page_shift;
 	u64 offset;		/* in pages */
-	u64 size;		/* in pages */
+	u64 size;		/* window size in pages */
 	struct list_head groups;
 	struct page *pages[0];
 };

@@ -3029,7 +3029,7 @@ Returns: 0 on success, -1 on error
 
 Queues an SMI on the thread's vcpu.
 
-4.95 KVM_CAP_PPC_MULTITCE
+4.97 KVM_CAP_PPC_MULTITCE
 
 Capability: KVM_CAP_PPC_MULTITCE
 Architectures: ppc
@@ -3054,7 +3054,7 @@ an implementation for these despite the in kernel acceleration.
 
 This capability is always enabled.
 
-4.96 KVM_CREATE_SPAPR_TCE_64
+4.98 KVM_CREATE_SPAPR_TCE_64
 
 Capability: KVM_CAP_SPAPR_TCE_64
 Architectures: powerpc
@@ -3071,9 +3071,9 @@ This capability uses extended struct in ioctl interface:
 struct kvm_create_spapr_tce_64 {
 	__u64 liobn;
 	__u32 page_shift;
+	__u32 flags;
 	__u64 offset;	/* in pages */
 	__u64 size; 	/* in pages */
-	__u32 flags;
 };
 
 The aim of extension is to support an additional bigger DMA window with

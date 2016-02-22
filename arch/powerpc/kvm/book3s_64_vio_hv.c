@@ -56,7 +56,7 @@ struct kvmppc_spapr_tce_table *kvmppc_find_table(struct kvm_vcpu *vcpu,
 	struct kvm *kvm = vcpu->kvm;
 	struct kvmppc_spapr_tce_table *stt;
 
-	list_for_each_entry_rcu_notrace(stt, &kvm->arch.spapr_tce_tables, list)
+	list_for_each_entry_lockless(stt, &kvm->arch.spapr_tce_tables, list)
 		if (stt->liobn == liobn)
 			return stt;
 
@@ -73,11 +73,12 @@ EXPORT_SYMBOL_GPL(kvmppc_find_table);
 long kvmppc_ioba_validate(struct kvmppc_spapr_tce_table *stt,
 		unsigned long ioba, unsigned long npages)
 {
-	unsigned long mask = (1 << stt->page_shift) - 1;
+	unsigned long mask = (1ULL << stt->page_shift) - 1;
 	unsigned long idx = ioba >> stt->page_shift;
 
 	if ((ioba & mask) || (idx < stt->offset) ||
-			(stt->offset + stt->size + npages <= idx))
+			(idx - stt->offset + npages > stt->size) ||
+			(idx + npages < idx))
 		return H_PARAMETER;
 
 	return H_SUCCESS;
@@ -97,8 +98,8 @@ EXPORT_SYMBOL_GPL(kvmppc_ioba_validate);
  */
 long kvmppc_tce_validate(struct kvmppc_spapr_tce_table *stt, unsigned long tce)
 {
-	unsigned long mask = ((1 << stt->page_shift) - 1) &
-			~(TCE_PCI_WRITE | TCE_PCI_READ);
+	unsigned long page_mask = ~((1ULL << stt->page_shift) - 1);
+	unsigned long mask = ~(page_mask | TCE_PCI_WRITE | TCE_PCI_READ);
 
 	if (tce & mask)
 		return H_PARAMETER;
@@ -111,12 +112,12 @@ EXPORT_SYMBOL_GPL(kvmppc_tce_validate);
  *
  * It is safe to use page_address() in real mode on ppc64 because
  * page_address() is always defined as lowmem_page_address()
- * which returns __va(PFN_PHYS(page_to_pfn(page))) which is arithmetial
+ * which returns __va(PFN_PHYS(page_to_pfn(page))) which is arithmetic
  * operation and does not access page struct.
  *
  * Theoretically page_address() could be defined different
  * but either WANT_PAGE_VIRTUAL or HASHED_PAGE_VIRTUAL
- * should be enabled.
+ * would have to be enabled.
  * WANT_PAGE_VIRTUAL is never enabled on ppc32/ppc64,
  * HASHED_PAGE_VIRTUAL could be enabled for ppc32 only and only
  * if CONFIG_HIGHMEM is defined. As CONFIG_SPARSEMEM_VMEMMAP
@@ -172,8 +173,7 @@ long kvmppc_gpa_to_ua(struct kvm *kvm, unsigned long gpa,
 
 #ifdef CONFIG_KVM_BOOK3S_HV_POSSIBLE
 	if (prmap)
-		*prmap = real_vmalloc_addr(&memslot->arch.rmap[
-				gfn - memslot->base_gfn]);
+		*prmap = &memslot->arch.rmap[gfn - memslot->base_gfn];
 #endif
 
 	return 0;
@@ -223,7 +223,7 @@ static long kvmppc_rm_tce_iommu_mapped_dec(struct kvm_vcpu *vcpu,
 	if (!pua)
 		return H_SUCCESS;
 
-	pua = real_vmalloc_addr(pua);
+	pua = (void *) vmalloc_to_phys(pua);
 	if (!pua)
 		return H_SUCCESS;
 
@@ -272,7 +272,7 @@ long kvmppc_rm_tce_iommu_map(struct kvm_vcpu *vcpu, struct iommu_table *tbl,
 	if (mm_iommu_rm_ua_to_hpa(mem, ua, &hpa))
 		return H_HARDWARE;
 
-	pua = real_vmalloc_addr(pua);
+	pua = (void *) vmalloc_to_phys(pua);
 	if (!pua)
 		return H_HARDWARE;
 
@@ -339,7 +339,7 @@ static long kvmppc_rm_h_put_tce_indirect_iommu(struct kvm_vcpu *vcpu,
 
 		ret = kvmppc_rm_tce_iommu_map(vcpu, tbl, entry + i, gpa,
 				iommu_tce_direction(tce));
-		if (ret)
+		if (ret != H_SUCCESS)
 			return ret;
 	}
 
@@ -367,7 +367,7 @@ long kvmppc_rm_h_put_tce(struct kvm_vcpu *vcpu, unsigned long liobn,
 		unsigned long ioba, unsigned long tce)
 {
 	struct kvmppc_spapr_tce_table *stt = kvmppc_find_table(vcpu, liobn);
-	long ret = H_TOO_HARD;
+	long ret;
 	struct kvmppc_spapr_tce_group *kg;
 	struct iommu_table *tbltmp = NULL;
 
@@ -378,26 +378,26 @@ long kvmppc_rm_h_put_tce(struct kvm_vcpu *vcpu, unsigned long liobn,
 		return H_TOO_HARD;
 
 	ret = kvmppc_ioba_validate(stt, ioba, 1);
-	if (ret)
+	if (ret != H_SUCCESS)
 		return ret;
 
 	ret = kvmppc_tce_validate(stt, tce);
-	if (ret)
+	if (ret != H_SUCCESS)
 		return ret;
 
-	list_for_each_entry_rcu_notrace(kg, &stt->groups, next) {
+	list_for_each_entry_lockless(kg, &stt->groups, next) {
 		if (kg->tbl == tbltmp)
 			continue;
 		tbltmp = kg->tbl;
 		ret = kvmppc_rm_h_put_tce_iommu(vcpu, kg->tbl,
 				liobn, ioba, tce);
-		if (ret)
+		if (ret != H_SUCCESS)
 			return ret;
 	}
 
 	kvmppc_tce_put(stt, ioba >> stt->page_shift, tce);
 
-	return ret;
+	return H_SUCCESS;
 }
 
 static long kvmppc_rm_ua_to_hpa(struct kvm_vcpu *vcpu,
@@ -422,7 +422,7 @@ static long kvmppc_rm_ua_to_hpa(struct kvm_vcpu *vcpu,
 	if (!pte_young(pte))
 		return -EAGAIN;
 
-	*phpa = (pte_pfn(pte) << PAGE_SHIFT) | (ua & ((1 << shift) - 1)) |
+	*phpa = (pte_pfn(pte) << PAGE_SHIFT) | (ua & ((1ULL << shift) - 1)) |
 			(ua & ~PAGE_MASK);
 
 	return 0;
@@ -454,7 +454,7 @@ long kvmppc_rm_h_put_tce_indirect(struct kvm_vcpu *vcpu,
 		return H_PARAMETER;
 
 	ret = kvmppc_ioba_validate(stt, ioba, npages);
-	if (ret)
+	if (ret != H_SUCCESS)
 		return ret;
 
 	if (kvmppc_preregistered(vcpu)) {
@@ -473,14 +473,13 @@ long kvmppc_rm_h_put_tce_indirect(struct kvm_vcpu *vcpu,
 		if (!mem || mm_iommu_rm_ua_to_hpa(mem, ua, &tces))
 			return H_TOO_HARD;
 
-
-		list_for_each_entry_rcu_notrace(kg, &stt->groups, next) {
+		list_for_each_entry_lockless(kg, &stt->groups, next) {
 			if (kg->tbl == tbltmp)
 				continue;
 			tbltmp = kg->tbl;
 			ret = kvmppc_rm_h_put_tce_indirect_iommu(vcpu,
 					kg->tbl, ioba, (u64 *)tces, npages);
-			if (ret)
+			if (ret != H_SUCCESS)
 				return ret;
 		}
 	} else {
@@ -492,6 +491,16 @@ long kvmppc_rm_h_put_tce_indirect(struct kvm_vcpu *vcpu,
 		if (kvmppc_gpa_to_ua(vcpu->kvm, tce_list, &ua, &rmap))
 			return H_TOO_HARD;
 
+		rmap = (void *) vmalloc_to_phys(rmap);
+
+		/*
+		 * Synchronize with the MMU notifier callbacks in
+		 * book3s_64_mmu_hv.c (kvm_unmap_hva_hv etc.).
+		 * While we have the rmap lock, code running on other CPUs
+		 * cannot finish unmapping the host real page that backs
+		 * this guest real page, so we are OK to access the host
+		 * real page.
+		 */
 		lock_rmap(rmap);
 		if (kvmppc_rm_ua_to_hpa(vcpu, ua, &tces)) {
 			ret = H_TOO_HARD;
@@ -503,7 +512,7 @@ long kvmppc_rm_h_put_tce_indirect(struct kvm_vcpu *vcpu,
 		unsigned long tce = be64_to_cpu(((u64 *)tces)[i]);
 
 		ret = kvmppc_tce_validate(stt, tce);
-		if (ret)
+		if (ret != H_SUCCESS)
 			goto unlock_exit;
 
 		kvmppc_tce_put(stt, entry + i, tce);
@@ -521,8 +530,8 @@ long kvmppc_rm_h_stuff_tce(struct kvm_vcpu *vcpu,
 		unsigned long tce_value, unsigned long npages)
 {
 	struct kvmppc_spapr_tce_table *stt;
-	struct kvmppc_spapr_tce_group *kg;
 	long i, ret;
+	struct kvmppc_spapr_tce_group *kg;
 	struct iommu_table *tbltmp = NULL;
 
 	stt = kvmppc_find_table(vcpu, liobn);
@@ -530,25 +539,24 @@ long kvmppc_rm_h_stuff_tce(struct kvm_vcpu *vcpu,
 		return H_TOO_HARD;
 
 	ret = kvmppc_ioba_validate(stt, ioba, npages);
-	if (ret)
+	if (ret != H_SUCCESS)
 		return ret;
 
-	ret = kvmppc_tce_validate(stt, tce_value);
-	if (ret || (tce_value & (TCE_PCI_WRITE | TCE_PCI_READ)))
+	/* Check permission bits only to allow userspace poison TCE for debug */
+	if (tce_value & (TCE_PCI_WRITE | TCE_PCI_READ))
 		return H_PARAMETER;
 
-
-	list_for_each_entry_rcu_notrace(kg, &stt->groups, next) {
+	list_for_each_entry_lockless(kg, &stt->groups, next) {
 		if (kg->tbl == tbltmp)
 			continue;
 		tbltmp = kg->tbl;
 		ret = kvmppc_rm_h_stuff_tce_iommu(vcpu, kg->tbl,
 				liobn, ioba, tce_value, npages);
-		if (ret)
+		if (ret != H_SUCCESS)
 			return ret;
 	}
 
-	for (i = 0; i < npages; ++i, ioba += (1 << stt->page_shift))
+	for (i = 0; i < npages; ++i, ioba += (1ULL << stt->page_shift))
 		kvmppc_tce_put(stt, ioba >> stt->page_shift, tce_value);
 
 	return H_SUCCESS;
@@ -558,23 +566,25 @@ long kvmppc_h_get_tce(struct kvm_vcpu *vcpu, unsigned long liobn,
 		      unsigned long ioba)
 {
 	struct kvmppc_spapr_tce_table *stt = kvmppc_find_table(vcpu, liobn);
-	long ret = H_TOO_HARD;
+	long ret;
+	unsigned long idx;
+	struct page *page;
+	u64 *tbl;
 
+	if (!stt)
+		return H_TOO_HARD;
 
-	if (stt) {
-		ret = kvmppc_ioba_validate(stt, ioba, 1);
-		if (!ret) {
-			unsigned long idx = (ioba >> stt->page_shift) -
-				stt->offset;
-			struct page *page = stt->pages[idx / TCES_PER_PAGE];
-			u64 *tbl = (u64 *)page_address(page);
+	ret = kvmppc_ioba_validate(stt, ioba, 1);
+	if (ret != H_SUCCESS)
+		return ret;
 
-			vcpu->arch.gpr[4] = tbl[idx % TCES_PER_PAGE];
-		}
-	}
+	idx = (ioba >> stt->page_shift) - stt->offset;
+	page = stt->pages[idx / TCES_PER_PAGE];
+	tbl = (u64 *)page_address(page);
 
+	vcpu->arch.gpr[4] = tbl[idx % TCES_PER_PAGE];
 
-	return ret;
+	return H_SUCCESS;
 }
 EXPORT_SYMBOL_GPL(kvmppc_h_get_tce);
 
