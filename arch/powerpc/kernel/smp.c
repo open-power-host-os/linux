@@ -53,9 +53,6 @@
 #include <asm/vdso.h>
 #include <asm/debug.h>
 #include <asm/kexec.h>
-#ifdef CONFIG_KVM_XICS
-#include <asm/xics.h>
-#endif
 
 #ifdef DEBUG
 #include <asm/udbg.h>
@@ -221,7 +218,7 @@ void smp_muxed_ipi_set_data(int cpu, unsigned long data)
 	info->data = data;
 }
 
-void smp_muxed_ipi_message_pass(int cpu, int msg)
+void smp_muxed_ipi_set_message(int cpu, int msg)
 {
 	struct cpu_messages *info = &per_cpu(ipi_message, cpu);
 	char *message = (char *)&info->messages;
@@ -231,39 +228,19 @@ void smp_muxed_ipi_message_pass(int cpu, int msg)
 	 */
 	smp_mb();
 	message[msg] = 1;
+}
+
+void smp_muxed_ipi_message_pass(int cpu, int msg)
+{
+	struct cpu_messages *info = &per_cpu(ipi_message, cpu);
+
+	smp_muxed_ipi_set_message(cpu, msg);
 	/*
 	 * cause_ipi functions are required to include a full barrier
 	 * before doing whatever causes the IPI.
 	 */
 	smp_ops->cause_ipi(cpu, info->data);
 }
-
-#if defined(CONFIG_KVM_XICS) && defined(CONFIG_KVM_BOOK3S_HV_POSSIBLE)
-/*
- * Message passing code for real mode callers. It does not use the
- * smp_ops->cause_ipi function to cause an IPI, because those functions
- * access the MFFR through an ioremapped address.
- */
-void smp_muxed_ipi_rm_message_pass(int cpu, int msg)
-{
-	struct cpu_messages *info = &per_cpu(ipi_message, cpu);
-	char *message = (char *)&info->messages;
-	unsigned long xics_phys;
-
-	/*
-	 * Order previous accesses before accesses in the IPI handler.
-	 */
-	smp_mb();
-	message[msg] = 1;
-
-	/*
-	 * cause_ipi functions are required to include a full barrier
-	 * before doing whatever causes the IPI.
-	 */
-	xics_phys = paca[cpu].kvm_hstate.xics_phys;
-	out_rm8((u8 *)(xics_phys + XICS_MFRR), IPI_PRIORITY);
-}
-#endif
 
 #ifdef __BIG_ENDIAN__
 #define IPI_MESSAGE(A) (1uL << ((BITS_PER_LONG - 8) - 8 * (A)))

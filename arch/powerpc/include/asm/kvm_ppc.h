@@ -492,6 +492,7 @@ extern int kvmppc_xics_set_icp(struct kvm_vcpu *vcpu, u64 icpval);
 extern int kvmppc_xics_connect_vcpu(struct kvm_device *dev,
 			struct kvm_vcpu *vcpu, u32 cpu);
 extern void kvmppc_xics_ipi_action(void);
+extern int h_ipi_redirect;
 extern void kvmppc_xics_set_passthru(struct kvm *kvm, unsigned long irq);
 extern void kvmppc_xics_clr_passthru(struct kvm *kvm, unsigned long irq);
 
@@ -520,6 +521,7 @@ static inline int kvmppc_xics_hcall(struct kvm_vcpu *vcpu, u32 cmd)
 /*
  * Host-side operations we want to set up while running in real
  * mode in the guest operating on the xics.
+ * Currently only VCPU wakeup is supported.
  */
 
 union kvmppc_rm_state {

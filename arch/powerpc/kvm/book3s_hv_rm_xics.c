@@ -55,6 +55,22 @@ static void ics_rm_check_resend(struct kvmppc_xics *xics,
 	arch_spin_unlock(&ics->lock);
 }
 
+/* -- ICP routines -- */
+
+#ifdef CONFIG_SMP
+static inline void icp_send_hcore_msg(int hcore, struct kvm_vcpu *vcpu)
+{
+	int hcpu;
+
+	hcpu = hcore << threads_shift;
+	kvmppc_host_rm_ops_hv->rm_core[hcore].rm_data = vcpu;
+	smp_muxed_ipi_set_message(hcpu, PPC_MSG_RM_HOST_ACTION);
+	icp_native_cause_ipi_rm(hcpu);
+}
+#else
+static inline void icp_send_hcore_msg(int hcore, struct kvm_vcpu *vcpu) { }
+#endif
+
 /*
  * We start the search from our current CPU Id in the core map
  * and go in a circle until we get back to our ID looking for a
@@ -113,14 +129,12 @@ static inline int find_available_hostcore(int action)
 	return core;
 }
 
-/* -- ICP routines -- */
-
 static void icp_rm_set_vcpu_irq(struct kvm_vcpu *vcpu,
 				struct kvm_vcpu *this_vcpu)
 {
 	struct kvmppc_icp *this_icp = this_vcpu->arch.icp;
 	int cpu;
-	int hcore, hcpu;
+	int hcore;
 
 	/* Mark the target VCPU as having an interrupt pending */
 	vcpu->stat.queue_intr++;
@@ -143,10 +157,7 @@ static void icp_rm_set_vcpu_irq(struct kvm_vcpu *vcpu,
 		if (kvmppc_host_rm_ops_hv && h_ipi_redirect)
 			hcore = find_available_hostcore(XICS_RM_KICK_VCPU);
 		if (hcore != -1) {
-			hcpu = hcore << threads_shift;
-			kvmppc_host_rm_ops_hv->rm_core[hcore].rm_data = vcpu;
-			smp_muxed_ipi_rm_message_pass(hcpu,
-						PPC_MSG_RM_HOST_ACTION);
+			icp_send_hcore_msg(hcore, vcpu);
 		} else {
 			this_icp->rm_action |= XICS_RM_KICK_VCPU;
 			this_icp->rm_kick_target = vcpu;
