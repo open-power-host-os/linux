@@ -85,6 +85,7 @@ static int target_smt_mode;
 module_param(target_smt_mode, int, S_IRUGO | S_IWUSR);
 MODULE_PARM_DESC(target_smt_mode, "Target threads per core (0 = max)");
 
+#ifdef CONFIG_KVM_XICS
 static struct kernel_param_ops module_param_ops = {
 	.set = param_set_int,
 	.get = param_get_int,
@@ -97,6 +98,7 @@ MODULE_PARM_DESC(kvm_irq_bypass, "Bypass passthrough interrupt optimization");
 module_param_cb(h_ipi_redirect, &module_param_ops, &h_ipi_redirect,
 							S_IRUGO | S_IWUSR);
 MODULE_PARM_DESC(h_ipi_redirect, "Redirect H_IPI wakeup to a free host core");
+#endif
 
 static void kvmppc_end_cede(struct kvm_vcpu *vcpu);
 static int kvmppc_hv_setup_htab_rma(struct kvm_vcpu *vcpu);
@@ -2314,7 +2316,8 @@ static void post_guest_process(struct kvmppc_vcore *vc, bool is_master,
 
 /*
  * Clear core from the list of active host cores as we are about to
- * enter the guest.
+ * enter the guest. Only do this if it is the primary thread of the
+ * core (not if a subcore) that is entering the guest.
  */
 static inline void kvmppc_clear_host_core(int cpu)
 {
@@ -2333,6 +2336,8 @@ static inline void kvmppc_clear_host_core(int cpu)
 
 /*
  * Advertise this core as an active host core since we exited the guest
+ * Only need to do this if it is the primary thread of the core that is
+ * exiting.
  */
 static inline void kvmppc_set_host_core(int cpu)
 {
