@@ -113,7 +113,7 @@ resource_size_t pci_iov_resource_size(struct pci_dev *dev, int resno)
 	return dev->sriov->barsz[resno - PCI_IOV_RESOURCES];
 }
 
-int pci_iov_virtfn_add(struct pci_dev *dev, int id, int reset)
+static int virtfn_add(struct pci_dev *dev, int id, int reset)
 {
 	int i;
 	int rc = -ENOMEM;
@@ -188,7 +188,7 @@ failed:
 	return rc;
 }
 
-void pci_iov_virtfn_remove(struct pci_dev *dev, int id, int reset)
+static void virtfn_remove(struct pci_dev *dev, int id, int reset)
 {
 	char buf[VIRTFN_ID_LEN];
 	struct pci_dev *virtfn;
@@ -321,7 +321,7 @@ static int sriov_enable(struct pci_dev *dev, int nr_virtfn)
 	}
 
 	for (i = 0; i < initial; i++) {
-		rc = pci_iov_virtfn_add(dev, i, 0);
+		rc = virtfn_add(dev, i, 0);
 		if (rc)
 			goto failed;
 	}
@@ -333,7 +333,7 @@ static int sriov_enable(struct pci_dev *dev, int nr_virtfn)
 
 failed:
 	while (i--)
-		pci_iov_virtfn_remove(dev, i, 0);
+		virtfn_remove(dev, i, 0);
 
 	pcibios_sriov_disable(dev);
 err_pcibios:
@@ -359,7 +359,7 @@ static void sriov_disable(struct pci_dev *dev)
 		return;
 
 	for (i = 0; i < iov->num_VFs; i++)
-		pci_iov_virtfn_remove(dev, i, 0);
+		virtfn_remove(dev, i, 0);
 
 	pcibios_sriov_disable(dev);
 

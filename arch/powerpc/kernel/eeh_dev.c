@@ -67,7 +67,6 @@ void *eeh_dev_init(struct pci_dn *pdn, void *data)
 	edev->pdn = pdn;
 	edev->phb = phb;
 	INIT_LIST_HEAD(&edev->list);
-	INIT_LIST_HEAD(&edev->rmv_list);
 
 	return NULL;
 }
