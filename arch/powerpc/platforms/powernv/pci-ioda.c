@@ -2776,7 +2776,7 @@ static void pnv_pci_ioda_fixup_iov_resources(struct pci_dev *pdev)
 			dev_warn(&pdev->dev, "Don't support SR-IOV with"
 					" non M64 VF BAR%d: %pR. \n",
 				 i, res);
-			return;
+			goto truncate_iov;
 		}
 
 		total_vf_bar_sz += pci_iov_resource_size(pdev,
@@ -2809,14 +2809,30 @@ static void pnv_pci_ioda_fixup_iov_resources(struct pci_dev *pdev)
 		if (!res->flags || res->parent)
 			continue;
 
-		dev_dbg(&pdev->dev, " Fixing VF BAR%d: %pR to\n", i, res);
 		size = pci_iov_resource_size(pdev, i + PCI_IOV_RESOURCES);
+		/*
+		 * On PHB3, the minimum size alignment of M64 BAR in single
+		 * mode is 32MB.
+		 */
+		if (pdn->m64_single_mode && (size < SZ_32M))
+			goto truncate_iov;
+		dev_dbg(&pdev->dev, " Fixing VF BAR%d: %pR to\n", i, res);
 		res->end = res->start + size * mul - 1;
 		dev_dbg(&pdev->dev, "                       %pR\n", res);
 		dev_info(&pdev->dev, "VF BAR%d: %pR (expanded to %d VFs for PE alignment)",
 			 i, res, mul);
 	}
 	pdn->vfs_expanded = mul;
+
+	return;
+
+truncate_iov:
+	/* To save MMIO space, IOV BAR is truncated. */
+	for (i = 0; i < PCI_SRIOV_NUM_BARS; i++) {
+		res = &pdev->resource[i + PCI_IOV_RESOURCES];
+		res->flags = 0;
+		res->end = res->start - 1;
+	}
 }
 #endif /* CONFIG_PCI_IOV */
 
@@ -3018,21 +3034,18 @@ static resource_size_t pnv_pci_iov_resource_alignment(struct pci_dev *pdev,
 	 * PF and VF. Based on this, the minimum alignment of an IOV BAR is
 	 * m64_segsize.
 	 *
-	 * This function returns the total IOV BAR size if expanded or just the
-	 * individual size if not, when M64 BAR is in Shared PE mode.
+	 * This function returns the total IOV BAR size if M64 BAR is in
+	 * Shared PE mode or just VF BAR size if not.
 	 * If the M64 BAR is in Single PE mode, return the VF BAR size or
 	 * M64 segment size if IOV BAR size is less.
 	 */
 	align = pci_iov_resource_size(pdev, resno);
-	if (pdn->vfs_expanded) {
-		if (pdn->m64_single_mode)
-			return max(align,
-				(resource_size_t)phb->ioda.m64_segsize);
-		else
-			return pdn->vfs_expanded * align;
-	}
+	if (!pdn->vfs_expanded)
+		return align;
+	if (pdn->m64_single_mode)
+		return max(align, (resource_size_t)phb->ioda.m64_segsize);
 
-	return align;
+	return pdn->vfs_expanded * align;
 }
 #endif /* CONFIG_PCI_IOV */
 
