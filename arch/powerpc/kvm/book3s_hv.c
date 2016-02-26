@@ -3435,6 +3435,7 @@ static int kvmppc_set_passthru_irq(struct kvm *kvm, int host_irq, int guest_gsi)
 	struct irq_desc *desc;
 	struct kvmppc_irq_map *irq_map;
 	struct kvmppc_passthru_irqmap *pimap;
+	struct irq_chip *chip;
 	int i;
 
 	if (!kvm_irq_bypass)
@@ -3459,8 +3460,9 @@ static int kvmppc_set_passthru_irq(struct kvm *kvm, int host_irq, int guest_gsi)
 	/*
 	 * For now, we support only a single IRQ chip
 	 */
-	if (irq_data_get_irq_chip(&desc->irq_data) != pimap->irq_chip) {
-		pr_warn("kvmppc_set_passthru_irq: Could not assign IRQ map for (%d,%d)\n",
+	chip = irq_data_get_irq_chip(&desc->irq_data);
+	if (!chip || (strcmp(chip->name, pimap->irq_chip->name) != 0)) {
+		pr_warn("kvmppc_set_passthru_irq_hv: Could not assign IRQ map for (%d,%d)\n",
 			host_irq, guest_gsi);
 		mutex_unlock(&kvm->lock);
 		return -ENOENT;
