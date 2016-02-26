@@ -696,6 +696,7 @@ static struct kvmppc_irq_map *get_irqmap_gsi(
 unsigned long irq_map_err;
 
 /*
+ * Count affinity for passthrough IRQs.
  * Change affinity to CPU running the target VCPU.
  */
 static void ics_set_affinity_passthru(struct ics_irq_state *state,
@@ -708,16 +709,22 @@ static void ics_set_affinity_passthru(struct ics_irq_state *state,
 	s16 intr_cpu;
 	u32 pcpu;
 
+	vcpu->stat.pthru_all++;
+
 	intr_cpu = state->intr_cpu;
 
 	if  (intr_cpu == -1)
 		return;
+
+	vcpu->stat.pthru_host++;
 
 	state->intr_cpu = -1;
 
 	pcpu = cpu_first_thread_sibling(raw_smp_processor_id());
 	if (intr_cpu == pcpu)
 		return;
+
+	vcpu->stat.pthru_bad_aff++;
 
 	pimap = kvmppc_get_passthru_irqmap(vcpu);
 	if (likely(pimap)) {

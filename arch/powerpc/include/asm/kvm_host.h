@@ -125,6 +125,9 @@ struct kvm_vcpu_stat {
 	u32 ld_slow;
 	u32 st_slow;
 #endif
+	u32 pthru_all;
+	u32 pthru_host;
+	u32 pthru_bad_aff;
 };
 
 enum kvm_exit_types {
