@@ -291,8 +291,16 @@ void kvmhv_commence_exit(int trap)
 struct kvmppc_host_rm_ops *kvmppc_host_rm_ops_hv;
 EXPORT_SYMBOL_GPL(kvmppc_host_rm_ops_hv);
 
-static struct kvmppc_irq_map *get_irqmap(struct kvmppc_passthru_irqmap *pimap,
-					 u32 xisr)
+/*
+ * This returns the v_hwirq -> r_hwirq mapping, if any,
+ * when the r_hwirq is passed in as input
+ * There is also the similar get_irqmap_gsi() routine
+ * defined elsewhere, which returns the mapping when passed
+ * the v_hwirq as input.
+ */
+static struct kvmppc_irq_map *get_irqmap_xisr(
+					struct kvmppc_passthru_irqmap *pimap,
+					u32 xisr)
 {
 	int i;
 
@@ -428,7 +436,7 @@ long kvmppc_read_intr(struct kvm_vcpu *vcpu, int path)
 	 */
 	pimap = kvmppc_get_passthru_irqmap(vcpu);
 	if (pimap) {
-		irq_map = get_irqmap(pimap, xisr);
+		irq_map = get_irqmap_xisr(pimap, xisr);
 		if (irq_map) {
 			r = kvmppc_deliver_irq_passthru(vcpu, xirr,
 								irq_map, pimap);

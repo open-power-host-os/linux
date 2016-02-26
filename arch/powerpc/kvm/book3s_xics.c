@@ -93,11 +93,18 @@ static int ics_deliver_irq(struct kvmppc_xics *xics, u32 irq, u32 level)
 	 * will redirect this directly to the guest where possible.
 	 * Currently, we will cache a passthrough IRQ the first time
 	 * we  inject it into the guest.
+	 * Update ICS state only if we successfully mapped the IRQ.
+	 * We check and update ICS fields locklessly:
+	 *	- pcached and mapped fields (in kvmppc_cache_passthru_irq)
+	 *	  are only set once per IRQ.
+	 *	- intr_cpu is only used as a hint
 	 */
 	if (state->pmapped && !state->pcached) {
 		if (kvmppc_cache_passthru_irq(xics->kvm, irq) == 0)
 			state->pcached = 1;
 	}
+	if (state->pcached)
+		state->intr_cpu = raw_smp_processor_id();
 
 	/*
 	 * We set state->asserted locklessly. This should be fine as

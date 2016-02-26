@@ -41,8 +41,9 @@ struct ics_irq_state {
 	u8  masked_pending;
 	u8  asserted; /* Only for LSI */
 	u8  exists;
-	u8  pmapped;
+	u8  pmapped;  /* Next 3 only for MSI */
 	u8  pcached;
+	s16 intr_cpu;      /* interrupt received on CPU */
 };
 
 /* Atomic ICP state, updated with a single compare & swap */
