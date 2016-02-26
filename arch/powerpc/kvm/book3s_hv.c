@@ -3269,7 +3269,7 @@ static void kvmppc_core_destroy_vm_hv(struct kvm *kvm)
 
 	kvmppc_free_hpt(kvm);
 
-	kvmppc_free_pmap(kvm);
+	kvmppc_free_pimap(kvm);
 }
 
 /* We don't need to emulate any privileged instructions or dcbz */
@@ -3301,83 +3301,84 @@ static int kvmppc_core_check_processor_compat_hv(void)
 
 #ifdef CONFIG_KVM_XICS
 
-void kvmppc_free_pmap(struct kvm *kvm)
+void kvmppc_free_pimap(struct kvm *kvm)
 {
-	kfree(kvm->arch.pmap);
+	kfree(kvm->arch.pimap);
 }
 
-static struct kvmppc_passthru_map* kvmppc_alloc_pmap(struct irq_desc *desc)
+static struct kvmppc_passthru_irqmap *kvmppc_alloc_pimap(struct irq_desc *desc)
 {
-	struct kvmppc_passthru_map *pmap;
+	struct kvmppc_passthru_irqmap *pimap;
 
-	pmap = kzalloc(sizeof(struct kvmppc_passthru_map), GFP_KERNEL);
-	if (pmap != NULL)
-		pmap->irq_chip = irq_data_get_irq_chip(&desc->irq_data);
+	pimap = kzalloc(sizeof(struct kvmppc_passthru_irqmap), GFP_KERNEL);
+	if (pimap != NULL)
+		pimap->irq_chip = irq_data_get_irq_chip(&desc->irq_data);
 
-	return pmap;
+	return pimap;
 }
 
 /*
- * Map a passthrough IRQ
+ * Cache a passthrough IRQ
  * This is accomplished by copying the IRQ details from the
- * all_irq array to the map_irq_array
+ * mapped array to the cached array.
  *
  * Return:
  *	0:  if this was accomplished successfully
- *	1:  if the map could not be done
+ *	1:  if the caching could not be done
  */
-static int kvmppc_map_passthru_irq_hv(struct kvm *kvm, int irq)
+static int kvmppc_cache_passthru_irq_hv(struct kvm *kvm, int irq)
 {
-	struct kvmppc_passthru_map *pmap;
-	int map_idx, all_idx;
+	struct kvmppc_passthru_irqmap *pimap;
+	int cidx, midx;
 
 	if (!kvm_irq_bypass)
 		return 1;
 
 	mutex_lock(&kvm->lock);
 
-	if (kvm->arch.pmap == NULL)
+	if (kvm->arch.pimap == NULL)
 		goto err_out;
 
-	pmap = kvm->arch.pmap;
+	pimap = kvm->arch.pimap;
 
 	/* Look for first empty slot */
-	for (map_idx = 0; map_idx < KVMPPC_PIRQ_MAPS; map_idx++)
-		if (pmap->irq_map[map_idx].r_hwirq == 0)
+	for (cidx = 0; cidx < KVMPPC_PIRQ_CACHED; cidx++)
+		if (pimap->cached[cidx].r_hwirq == 0)
 			break;
 
-	/* Out of empty slots */
-	if (map_idx == KVMPPC_PIRQ_MAPS)
+	/* Out of empty cache slots */
+	if (cidx == KVMPPC_PIRQ_CACHED)
 		goto err_out;
 
-	/* Find entry in the irq_all map */
-	for (all_idx = 0; all_idx < pmap->n_all_irq; all_idx++) {
-		if (irq == pmap->irq_all[all_idx].v_hwirq)
+	/* Find entry in the mapped array */
+	for (midx = 0; midx < pimap->n_mapped; midx++) {
+		if (irq == pimap->mapped[midx].v_hwirq)
 			break;
 	}
 
 	/* IRQ not found */
-	if (all_idx == pmap->n_all_irq)
+	if (midx == pimap->n_mapped)
 		goto err_out;
 
-	if (pmap->irq_all[all_idx].r_hwirq == 0)
-		/* Someone beat us to mapping the IRQ */
+	if (pimap->mapped[midx].r_hwirq == 0)
+		/* Someone beat us to caching the IRQ */
 		goto err_out;
 
-	pmap->irq_map[map_idx].v_hwirq = pmap->irq_all[all_idx].v_hwirq;
+	pimap->cached[cidx].v_hwirq = pimap->mapped[midx].v_hwirq;
+	pimap->cached[cidx].desc = pimap->mapped[midx].desc;
 
 	/*
-	 * Order the above store before the next to serialize with
+	 * Order the above two stores before the next to serialize with
 	 * the KVM real mode handler.
 	 */
 	smp_wmb();
-	pmap->irq_map[map_idx].r_hwirq = pmap->irq_all[all_idx].r_hwirq;
+	pimap->cached[cidx].r_hwirq = pimap->mapped[midx].r_hwirq;
 
-	if (map_idx >= pmap->n_map_irq)
-		pmap->n_map_irq = map_idx + 1;
+	if (cidx >= pimap->n_cached)
+		pimap->n_cached = cidx + 1;
 
-	/* r_hwirq == 0 in irq_all to indicate a mapped IRQ */
-	pmap->irq_all[all_idx].r_hwirq = 0;
+	/* r_hwirq == 0 in mapped array to indicate a cached IRQ */
+	pimap->mapped[midx].r_hwirq = 0;
 
 	mutex_unlock(&kvm->lock);
 	return 0;
@@ -3388,35 +3389,36 @@ err_out:
 }
 
 /* Called with kvm->lock already acquired */
-static void unmap_passthru_irq(struct kvmppc_passthru_map *pmap, int irq)
+static void _uncache_passthru_irq(struct kvmppc_passthru_irqmap *pimap, int irq)
 {
 	int i;
 
-	for (i = 0; i < pmap->n_map_irq; i++) {
-		if (irq == pmap->irq_map[i].v_hwirq) {
+	for (i = 0; i < pimap->n_cached; i++) {
+		if (irq == pimap->cached[i].v_hwirq) {
 
 			/*
-			 * Zero out the IRQ being unmapped.
+			 * Zero out the IRQ being uncached.
 			 * No barriers needed since the IRQ must
-			 * be disabled/unmasked before it is unmapped,
+			 * be disabled/unmasked before it is uncached,
 			 * so real mode code cannot possibly be
 			 * searching for this IRQ in the map.
 			 */
-			pmap->irq_map[i].r_hwirq = 0;
-			pmap->irq_map[i].v_hwirq = 0;
+			pimap->cached[i].r_hwirq = 0;
+			pimap->cached[i].v_hwirq = 0;
+			pimap->cached[i].desc = NULL;
 
 			/*
-			 * Only need to decrement maximum mapped count if
-			 * this is the highest entry being unmapped.
+			 * Only need to decrement maximum cached count if
+			 * this is the highest entry being uncached.
 			 */
-			if (i + 1 == pmap->n_map_irq)
-				pmap->n_map_irq--;
+			if (i + 1 == pimap->n_cached)
+				pimap->n_cached--;
 			/*
 			 * Ensure that all readers have exited any
 			 * critical sections in real mode KVM and
 			 * come back to the host at least once. This
 			 * guarantees that they cannot see any stale
-			 * values for the HW IRQ being unmapped. This
+			 * values for the HW IRQ being uncached. This
 			 * is required to handle Hot plug re-adding
 			 * this function/device and passing through
 			 * the HW IRQ with a different guest GSI.
@@ -3431,8 +3433,8 @@ static void unmap_passthru_irq(struct kvmppc_passthru_map *pmap, int irq)
 static int kvmppc_set_passthru_irq(struct kvm *kvm, int host_irq, int guest_gsi)
 {
 	struct irq_desc *desc;
-	struct kvmppc_irq_map *irq_all;
-	struct kvmppc_passthru_map *pmap;
+	struct kvmppc_irq_map *irq_map;
+	struct kvmppc_passthru_irqmap *pimap;
 	int i;
 
 	if (!kvm_irq_bypass)
@@ -3444,49 +3446,50 @@ static int kvmppc_set_passthru_irq(struct kvm *kvm, int host_irq, int guest_gsi)
 
 	mutex_lock(&kvm->lock);
 
-	if (kvm->arch.pmap == NULL) {
+	if (kvm->arch.pimap == NULL) {
 		/* First call, allocate structure to hold IRQ map */
-		pmap = kvmppc_alloc_pmap(desc);
-		if (pmap == NULL) {
+		pimap = kvmppc_alloc_pimap(desc);
+		if (pimap == NULL) {
 			mutex_unlock(&kvm->lock);
 			return -ENOMEM;
 		}
 	} else
-		pmap = kvm->arch.pmap;
+		pimap = kvm->arch.pimap;
 
 	/*
 	 * For now, we support only a single IRQ chip
 	 */
-	if (irq_data_get_irq_chip(&desc->irq_data) != pmap->irq_chip) {
+	if (irq_data_get_irq_chip(&desc->irq_data) != pimap->irq_chip) {
 		pr_warn("kvmppc_set_passthru_irq: Could not assign IRQ map for (%d,%d)\n",
 			host_irq, guest_gsi);
 		mutex_unlock(&kvm->lock);
 		return -ENOENT;
 	}
 
-	if (pmap->n_all_irq == KVMPPC_PIRQ_ALL) {
+	if (pimap->n_mapped == KVMPPC_PIRQ_MAPPED) {
 		mutex_unlock(&kvm->lock);
 		return -EAGAIN;
 	}
 
-	for (i = 0; i < pmap->n_all_irq; i++) {
-		if (guest_gsi == pmap->irq_all[i].v_hwirq) {
+	for (i = 0; i < pimap->n_mapped; i++) {
+		if (guest_gsi == pimap->mapped[i].v_hwirq) {
 			mutex_unlock(&kvm->lock);
 			return -EINVAL;
 		}
 	}
 
-	irq_all = &pmap->irq_all[pmap->n_all_irq];
+	irq_map = &pimap->mapped[pimap->n_mapped];
 
-	irq_all->v_hwirq = guest_gsi;
-	irq_all->r_hwirq = desc->irq_data.hwirq;
+	irq_map->v_hwirq = guest_gsi;
+	irq_map->r_hwirq = desc->irq_data.hwirq;
+	irq_map->desc = desc;
 
-	pmap->n_all_irq++;
+	pimap->n_mapped++;
 
-	kvmppc_xics_set_passthru(kvm, guest_gsi);
+	kvmppc_xics_set_mapped(kvm, guest_gsi);
 
-	if (!kvm->arch.pmap)
-		kvm->arch.pmap = pmap;
+	if (!kvm->arch.pimap)
+		kvm->arch.pimap = pimap;
 
 	mutex_unlock(&kvm->lock);
 
@@ -3496,7 +3499,7 @@ static int kvmppc_set_passthru_irq(struct kvm *kvm, int host_irq, int guest_gsi)
 static int kvmppc_clr_passthru_irq(struct kvm *kvm, int host_irq, int guest_gsi)
 {
 	struct irq_desc *desc;
-	struct kvmppc_passthru_map *pmap;
+	struct kvmppc_passthru_irqmap *pimap;
 	int i;
 
 	if (!kvm_irq_bypass)
@@ -3508,40 +3511,41 @@ static int kvmppc_clr_passthru_irq(struct kvm *kvm, int host_irq, int guest_gsi)
 
 	mutex_lock(&kvm->lock);
 
-	if (kvm->arch.pmap == NULL) {
+	if (kvm->arch.pimap == NULL) {
 		mutex_unlock(&kvm->lock);
 		return 0;
 	}
-	pmap = kvm->arch.pmap;
+	pimap = kvm->arch.pimap;
 
-	WARN_ON(pmap->n_all_irq < 1);
+	WARN_ON(pimap->n_mapped < 1);
 
-	for (i = 0; i < pmap->n_all_irq; i++) {
-		if (guest_gsi == pmap->irq_all[i].v_hwirq)
+	for (i = 0; i < pimap->n_mapped; i++) {
+		if (guest_gsi == pimap->mapped[i].v_hwirq)
 			break;
 	}
 
-	if (i == pmap->n_all_irq) {
+	if (i == pimap->n_mapped) {
 		mutex_unlock(&kvm->lock);
 		return -ENODEV;
 	}
 
 	/*
-	 * If this is a mapped IRQ, remove it from the mapped array also
+	 * If this is a cached IRQ, remove it from the cached array also
+	 * mapped.r_hwirq is set to zero when we cache an entry.
 	 */
-	if (!pmap->irq_all[i].r_hwirq)
-		unmap_passthru_irq(pmap, guest_gsi);
+	if (!pimap->mapped[i].r_hwirq)
+		_uncache_passthru_irq(pimap, guest_gsi);
 
 	/*
-	 * Replace irq_all entry to be cleared with highest entry (unless
+	 * Replace mapped entry to be cleared with highest entry (unless
 	 * this is already the highest) so as to not leave any holes in
-	 * the array of irq_all.
+	 * the array of mapped.
 	 */
-	pmap->n_all_irq--;
-	if (i != pmap->n_all_irq)
-		pmap->irq_all[i] = pmap->irq_all[pmap->n_all_irq];
+	pimap->n_mapped--;
+	if (i != pimap->n_mapped)
+		pimap->mapped[i] = pimap->mapped[pimap->n_mapped];
 
-	kvmppc_xics_clr_passthru(kvm, guest_gsi);
+	kvmppc_xics_clr_mapped(kvm, guest_gsi);
 
 	/*
 	 * We don't free this structure even when the count goes to
@@ -3552,8 +3556,8 @@ static int kvmppc_clr_passthru_irq(struct kvm *kvm, int host_irq, int guest_gsi)
 	return 0;
 }
 
-int kvmppc_irq_bypass_add_producer_hv(struct irq_bypass_consumer *cons,
-				      struct irq_bypass_producer *prod)
+static int kvmppc_irq_bypass_add_producer_hv(struct irq_bypass_consumer *cons,
+					     struct irq_bypass_producer *prod)
 {
 	int ret = 0;
 	struct kvm_kernel_irqfd *irqfd =
@@ -3569,8 +3573,8 @@ int kvmppc_irq_bypass_add_producer_hv(struct irq_bypass_consumer *cons,
 	return ret;
 }
 
-void kvmppc_irq_bypass_del_producer_hv(struct irq_bypass_consumer *cons,
-				      struct irq_bypass_producer *prod)
+static void kvmppc_irq_bypass_del_producer_hv(struct irq_bypass_consumer *cons,
+					      struct irq_bypass_producer *prod)
 {
 	int ret;
 	struct kvm_kernel_irqfd *irqfd =
@@ -3712,7 +3716,7 @@ static struct kvmppc_ops kvm_ops_hv = {
 #ifdef CONFIG_KVM_XICS
 	.irq_bypass_add_producer = kvmppc_irq_bypass_add_producer_hv,
 	.irq_bypass_del_producer = kvmppc_irq_bypass_del_producer_hv,
-	.map_passthru_irq = kvmppc_map_passthru_irq_hv,
+	.cache_passthru_irq = kvmppc_cache_passthru_irq_hv,
 #endif
 };
 

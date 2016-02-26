@@ -35,6 +35,7 @@
 #include <linux/sched.h>
 #include <linux/vmalloc.h>
 #include <linux/highmem.h>
+#include <linux/irqbypass.h>
 #include <linux/kvm_irqfd.h>
 
 #include "book3s.h"
@@ -961,19 +962,12 @@ void kvm_arch_irq_bypass_del_producer(struct irq_bypass_consumer *cons,
 		kvm->arch.kvm_ops->irq_bypass_del_producer(cons, prod);
 }
 
-void kvm_arch_irq_bypass_stop(struct irq_bypass_consumer *cons)
-{
-}
-void kvm_arch_irq_bypass_start(struct irq_bypass_consumer *cons)
-{
-}
-
-int kvmppc_map_passthru_irq(struct kvm *kvm, int irq)
+int kvmppc_cache_passthru_irq(struct kvm *kvm, int irq)
 {
 	int r = 0;
 
-	if (kvm->arch.kvm_ops->map_passthru_irq)
-		r = kvm->arch.kvm_ops->map_passthru_irq(kvm, irq);
+	if (kvm->arch.kvm_ops->cache_passthru_irq)
+		r = kvm->arch.kvm_ops->cache_passthru_irq(kvm, irq);
 
 	return r;
 }

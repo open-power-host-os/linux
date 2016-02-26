@@ -1284,17 +1284,7 @@ END_FTR_SECTION_IFSET(CPU_FTR_HAS_PPR)
 
 	/*
 	 * Restore the active volatile registers after returning from
-	 * C function.
-	 *
-	 * We only need to restore CTR and XER if we are returning to
-	 * the guest to deliver this interrupt (for example if this is
-	 * an IPI or a passthrough) since deliver_guest_interrupt
-	 * will not restore them.
-	 *
-	 * Also, if this is a PCI passthrough interrupt that is being
-	 * delivered directly to the guest, we also need to restore
-	 * SRR0 and SRR1 since we make an OPAL call to EOI the interrupt
-	 * which scratches them.
+	 * a C function.
 	 */
 	ld	r9, HSTATE_KVM_VCPU(r13)
 	ld	r10, VCPU_PC(r9)
@@ -1302,31 +1292,59 @@ END_FTR_SECTION_IFSET(CPU_FTR_HAS_PPR)
 	li	r12, BOOK3S_INTERRUPT_EXTERNAL
 
 	/*
-	 * Return to guest for r3 <= 0
-	 * Exit to host for r3 > 0
+	 * kvmppc_read_intr return codes:
+	 *
+	 * Exit to host (r3 > 0)
+	 *   1 An interrupt is pending that needs to be handled by the host
+	 *     Exit guest and return to host by branching to guest_exit_cont
+	 *
+	 *   2 Passthrough that needs completion in the host
+	 *     Exit guest and return to host by branching to guest_exit_cont
+	 *     However, we also set r12 to BOOK3S_INTERRUPT_HV_RM_HARD
+	 *     to indicate to the host to complete handling the interrupt
+	 *
+	 * Before returning to guest, we check if any CPU is heading out
+	 * to the host and if so, we head out also. If no CPUs are heading
+	 * check return values <= 0.
+	 *
+	 * If returning to the guest, we need to restore CTR and XER
+	 * since these are volatile registers, and deliver_guest_interrupt
+	 * does not restore them.
+	 *
+	 * Return to guest (r3 <= 0)
+	 *  0 No external interrupt is pending
+	 * -1 A guest wakeup IPI (which has now been cleared)
+	 *    In either case, we return to guest to deliver any pending
+	 *    guest interrupts.
+	 *
+	 * -2 A PCI passthrough external interrupt was handled
+	 *    (interrupt was delivered directly to guest)
+	 *    Return to guest to deliver any pending guest interrupts.
+	 *    However, we also need to restore SRR0 and SRR1 since we have
+	 *    made an OPAL call to EOI the interrupt which scratches them.
 	 */
+
 	cmpdi	r3, 1
 	ble	1f
-	/*
-	 * Return code of 2 means PCI passthrough interrupt, but we
-	 * need to return back to host to complete handling the
-	 * interrupt.
-	 */
+
+	/* Return code = 2 */
 	li	r12, BOOK3S_INTERRUPT_HV_RM_HARD
 	stw	r12, VCPU_TRAP(r9)
 	b	guest_exit_cont
 
 1:
+	/* Return code <= 1 */
 	cmpdi	r3, 0
 	bgt	guest_exit_cont
 
-	/* Check if any CPU is heading out to the host, if so head out too */
+	/* Return code <= 0 */
 4:	ld	r5, HSTATE_KVM_VCORE(r13)
 	lwz	r0, VCORE_ENTRY_EXIT(r5)
 	cmpwi	r0, 0x100
 	mr	r4, r9
 	bge	guest_exit_cont
 
+	/* Return code <= 0, return to guest */
 	cmpdi	r3, -2
 	ld	r6, VCPU_CTR(r4)
 	ld	r7, VCPU_XER(r4)
@@ -1334,6 +1352,7 @@ END_FTR_SECTION_IFSET(CPU_FTR_HAS_PPR)
 	mtxer	r7
 	bne	deliver_guest_interrupt
 
+	/* Return code = -2 */
 	ld	r6, VCPU_SRR0(r4)
 	ld	r7, VCPU_SRR1(r4)
 	mtsrr0	r6
@@ -2501,7 +2520,7 @@ kvm_end_cede:
 	li	r0,0
 	stb	r0,HSTATE_NAPPING(r13)
 
-	/* See if the wake reason means we need to exit */
+	/* See if the wake reason saved in r3 means we need to exit */
 	stw	r12, VCPU_TRAP(r4)
 	mr	r9, r4
 	cmpdi	r3, 0

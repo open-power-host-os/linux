@@ -291,17 +291,17 @@ void kvmhv_commence_exit(int trap)
 struct kvmppc_host_rm_ops *kvmppc_host_rm_ops_hv;
 EXPORT_SYMBOL_GPL(kvmppc_host_rm_ops_hv);
 
-static struct kvmppc_irq_map *get_irqmap(struct kvmppc_passthru_map *pmap,
+static struct kvmppc_irq_map *get_irqmap(struct kvmppc_passthru_irqmap *pimap,
 					 u32 xisr)
 {
 	int i;
 
 	/*
-	 * We can access this array unsafely because if there
+	 * We can access the cached array unsafely because if there
 	 * is a pending IRQ, its mapping cannot be removed
 	 * and replaced with a new mapping (that corresponds to a
 	 * different device) while we are accessing it. After
-	 * unmappping, we do a kick_all_cpus_sync which guarantees
+	 * uncaching, we do a kick_all_cpus_sync which guarantees
 	 * that we don't see a stale value in here.
 	 *
 	 * Since we don't take a lock, we might skip over or read
@@ -310,20 +310,21 @@ static struct kvmppc_irq_map *get_irqmap(struct kvmppc_passthru_map *pmap,
 	 * our hwirq, but we can never get a bad mapping. Missing
 	 * an entry is not fatal, in this case, we simply fall back
 	 * on the default interrupt handling mechanism - that is,
-	 * this interrupt goes through VFIO.
+	 * this interrupt goes through VFIO. Currently, we only
+	 * search in the cache for a mapping.
 	 *
 	 * We have also carefully ordered the stores in the writer
 	 * and the loads here in the reader, so that if we find a matching
-	 * hwirq here, the associated GSI field is valid.
+	 * hwirq here, the associated GSI and irq_desc fields are valid.
 	 */
-	for (i = 0; i < pmap->n_map_irq; i++)  {
-		if (xisr == pmap->irq_map[i].r_hwirq) {
+	for (i = 0; i < pimap->n_cached; i++)  {
+		if (xisr == pimap->cached[i].r_hwirq) {
 			/*
 			 * Order subsequent reads in the caller to serialize
 			 * with the writer.
 			 */
 			smp_rmb();
-			return &pmap->irq_map[i];
+			return &pimap->cached[i];
 		}
 	}
 	return NULL;
@@ -345,7 +346,7 @@ long kvmppc_read_intr(struct kvm_vcpu *vcpu, int path)
 	u32 h_xirr;
 	__be32 xirr;
 	u32 xisr;
-	struct kvmppc_passthru_map *pmap;
+	struct kvmppc_passthru_irqmap *pimap;
 	struct kvmppc_irq_map *irq_map;
 	int r;
 	u8 host_ipi;
@@ -410,6 +411,7 @@ long kvmppc_read_intr(struct kvm_vcpu *vcpu, int path)
 		}
 
 		/* OK, it's an IPI for us */
+		local_paca->kvm_hstate.saved_xirr = 0;
 		return -1;
 	}
 
@@ -424,12 +426,12 @@ long kvmppc_read_intr(struct kvm_vcpu *vcpu, int path)
 	 * saved a copy of the XIRR in the PACA, it will be picked up by
 	 * the host ICP driver
 	 */
-	pmap = kvmppc_get_passthru_map(vcpu);
-	if (pmap) {
-		irq_map = get_irqmap(pmap, xisr);
+	pimap = kvmppc_get_passthru_irqmap(vcpu);
+	if (pimap) {
+		irq_map = get_irqmap(pimap, xisr);
 		if (irq_map) {
 			r = kvmppc_deliver_irq_passthru(vcpu, xirr,
-								irq_map, pmap);
+								irq_map, pimap);
 			return r;
 		}
 	}

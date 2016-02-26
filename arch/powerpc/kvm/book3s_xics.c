@@ -88,17 +88,15 @@ static int ics_deliver_irq(struct kvmppc_xics *xics, u32 irq, u32 level)
 		return -EINVAL;
 
 	/*
-	 * If this is a passed through IRQ, add this to the IRQ
-	 * map so that real mode KVM will redirect this
-	 * Currently, we will map a passthrough IRQ the first time
+	 * If this is a mapped passthrough IRQ that is not cached,
+	 * add this to the IRQ cached map so that real mode KVM
+	 * will redirect this directly to the guest where possible.
+	 * Currently, we will cache a passthrough IRQ the first time
 	 * we  inject it into the guest.
-	 * Update ICS state only if we successfully mapped the IRQ.
 	 */
-	if (state->passthru) {
-		if (kvmppc_map_passthru_irq(xics->kvm, irq) == 0) {
-			state->passthru = 0;
-			state->mapped = 1;
-		}
+	if (state->pmapped && !state->pcached) {
+		if (kvmppc_cache_passthru_irq(xics->kvm, irq) == 0)
+			state->pcached = 1;
 	}
 
 	/*
@@ -908,17 +906,17 @@ EXPORT_SYMBOL_GPL(kvmppc_xics_hcall);
 /* -- Initialisation code etc. -- */
 
 static void xics_debugfs_irqmap(struct seq_file *m,
-				struct kvmppc_passthru_map *pmap)
+				struct kvmppc_passthru_irqmap *pimap)
 {
 	int i;
 
-	if (!pmap)
+	if (!pimap)
 		return;
-	seq_printf(m, "========\nPMAP state: %d maps\n===========\n",
-				pmap->n_map_irq);
-	for (i = 0; i < pmap->n_map_irq; i++)  {
+	seq_printf(m, "========\nPIRQMAP Cache: %d maps\n===========\n",
+				pimap->n_cached);
+	for (i = 0; i < pimap->n_cached; i++)  {
 		seq_printf(m, "r_hwirq=%x, v_hwirq=%x\n",
-			pmap->irq_map[i].r_hwirq, pmap->irq_map[i].v_hwirq);
+			pimap->cached[i].r_hwirq, pimap->cached[i].v_hwirq);
 	}
 }
 
@@ -943,7 +941,7 @@ static int xics_debug_show(struct seq_file *m, void *private)
 	t_check_resend = 0;
 	t_reject = 0;
 
-	xics_debugfs_irqmap(m, kvm->arch.pmap);
+	xics_debugfs_irqmap(m, kvm->arch.pimap);
 
 	seq_printf(m, "=========\nICP state\n=========\n");
 
@@ -1444,7 +1442,7 @@ int kvm_irq_map_chip_pin(struct kvm *kvm, unsigned irqchip, unsigned pin)
 	return pin;
 }
 
-void kvmppc_xics_set_passthru(struct kvm *kvm, unsigned long irq)
+void kvmppc_xics_set_mapped(struct kvm *kvm, unsigned long irq)
 {
 	struct kvmppc_xics *xics = kvm->arch.xics;
 	struct kvmppc_ics *ics;
@@ -1454,11 +1452,11 @@ void kvmppc_xics_set_passthru(struct kvm *kvm, unsigned long irq)
 	if (!ics)
 		return;
 
-	ics->irq_state[idx].passthru = 1;
+	ics->irq_state[idx].pmapped = 1;
 }
-EXPORT_SYMBOL_GPL(kvmppc_xics_set_passthru);
+EXPORT_SYMBOL_GPL(kvmppc_xics_set_mapped);
 
-void kvmppc_xics_clr_passthru(struct kvm *kvm, unsigned long irq)
+void kvmppc_xics_clr_mapped(struct kvm *kvm, unsigned long irq)
 {
 	struct kvmppc_xics *xics = kvm->arch.xics;
 	struct kvmppc_ics *ics;
@@ -1468,7 +1466,7 @@ void kvmppc_xics_clr_passthru(struct kvm *kvm, unsigned long irq)
 	if (!ics)
 		return;
 
-	ics->irq_state[idx].passthru = 0;
-	ics->irq_state[idx].mapped = 0;
+	ics->irq_state[idx].pmapped = 0;
+	ics->irq_state[idx].pcached = 0;
 }
-EXPORT_SYMBOL_GPL(kvmppc_xics_clr_passthru);
+EXPORT_SYMBOL_GPL(kvmppc_xics_clr_mapped);

@@ -60,7 +60,7 @@ extern int kvm_unmap_hva_range(struct kvm *kvm,
 extern int kvm_age_hva(struct kvm *kvm, unsigned long start, unsigned long end);
 extern int kvm_test_age_hva(struct kvm *kvm, unsigned long hva);
 extern void kvm_set_spte_hva(struct kvm *kvm, unsigned long hva, pte_t pte);
-extern int kvmppc_map_passthru_irq(struct kvm *kvm, int guest_gsi);
+extern int kvmppc_cache_passthru_irq(struct kvm *kvm, int guest_gsi);
 
 static inline void kvm_arch_mmu_notifier_invalidate_page(struct kvm *kvm,
 							 unsigned long address)
@@ -199,7 +199,7 @@ struct kvmppc_spapr_tce_table {
 struct kvmppc_xics;
 struct kvmppc_icp;
 
-struct kvmppc_passthru_map;
+struct kvmppc_passthru_irqmap;
 
 /*
  * The reverse mapping array has one entry for each HPTE,
@@ -271,7 +271,7 @@ struct kvm_arch {
 #endif
 #ifdef CONFIG_KVM_XICS
 	struct kvmppc_xics *xics;
-	struct kvmppc_passthru_map *pmap;
+	struct kvmppc_passthru_irqmap *pimap;
 #endif
 	struct kvmppc_ops *kvm_ops;
 #ifdef CONFIG_KVM_BOOK3S_HV_POSSIBLE
@@ -406,16 +406,17 @@ struct kvmhv_tb_accumulator {
 struct kvmppc_irq_map {
 	u32	r_hwirq;
 	u32	v_hwirq;
+	struct irq_desc *desc;
 };
 
-#define	KVMPPC_PIRQ_MAPS	16
-#define	KVMPPC_PIRQ_ALL		1024
-struct kvmppc_passthru_map {
-	int n_map_irq;
-	int n_all_irq;
+#define	KVMPPC_PIRQ_CACHED	16
+#define	KVMPPC_PIRQ_MAPPED	1024
+struct kvmppc_passthru_irqmap {
+	int n_cached;
+	int n_mapped;
 	struct irq_chip *irq_chip;
-	struct kvmppc_irq_map irq_map[KVMPPC_PIRQ_MAPS];
-	struct kvmppc_irq_map irq_all[KVMPPC_PIRQ_ALL];
+	struct kvmppc_irq_map cached[KVMPPC_PIRQ_CACHED];
+	struct kvmppc_irq_map mapped[KVMPPC_PIRQ_MAPPED];
 };
 #endif
 

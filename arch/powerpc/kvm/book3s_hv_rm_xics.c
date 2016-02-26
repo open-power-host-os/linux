@@ -737,7 +737,7 @@ static void icp_eoi(struct irq_chip *c, u32 hwirq, u32 xirr)
 long kvmppc_deliver_irq_passthru(struct kvm_vcpu *vcpu,
 				 u32 xirr,
 				 struct kvmppc_irq_map *irq_map,
-				 struct kvmppc_passthru_map *pmap)
+				 struct kvmppc_passthru_irqmap *pimap)
 {
 	struct kvmppc_xics *xics;
 	struct kvmppc_icp *icp;
@@ -750,7 +750,7 @@ long kvmppc_deliver_irq_passthru(struct kvm_vcpu *vcpu,
 	icp_rm_deliver_irq(xics, icp, irq);
 
 	/* EOI the interrupt */
-	icp_eoi(pmap->irq_chip, irq_map->r_hwirq, xirr);
+	icp_eoi(pimap->irq_chip, irq_map->r_hwirq, xirr);
 
 	if (check_too_hard(xics, icp) == H_TOO_HARD)
 		return 2;
