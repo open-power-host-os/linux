@@ -77,7 +77,8 @@ long kvmppc_ioba_validate(struct kvmppc_spapr_tce_table *stt,
 	unsigned long idx = ioba >> stt->page_shift;
 
 	if ((ioba & mask) || (idx < stt->offset) ||
-			(stt->offset + stt->size + npages <= idx))
+			(idx - stt->offset + npages > stt->size) ||
+			(idx + npages < idx))
 		return H_PARAMETER;
 
 	return H_SUCCESS;
