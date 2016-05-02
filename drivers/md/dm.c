@@ -2766,7 +2766,10 @@ int dm_suspend(struct mapped_device *md, unsigned suspend_flags)
 	if (noflush)
 		set_bit(DMF_NOFLUSH_SUSPENDING, &md->flags);
 
-	/* This does not get reverted if there's an error later. */
+	/*
+	 * This gets reverted if there's an error later and the targets
+	 * provide the .presuspend_undo hook.
+	 */
 	dm_table_presuspend_targets(map);
 
 	/*
@@ -2777,8 +2780,10 @@ int dm_suspend(struct mapped_device *md, unsigned suspend_flags)
 	 */
 	if (!noflush && do_lockfs) {
 		r = lock_fs(md);
-		if (r)
+		if (r) {
+			dm_table_presuspend_undo_targets(map);
 			goto out_unlock;
+		}
 	}
 
 	/*
@@ -2824,6 +2829,7 @@ int dm_suspend(struct mapped_device *md, unsigned suspend_flags)
 			start_queue(md->queue);
 
 		unlock_fs(md);
+		dm_table_presuspend_undo_targets(map);
 		goto out_unlock; /* pushback list is already flushed, so skip flush */
 	}
 
