@@ -4399,7 +4399,7 @@ lpfc_fcp_cpu_map_store(struct device *dev, struct device_attribute *attr,
 #	2 - Affintize HBA vectors with respect to the entire driver
 #	    (round robin thru all CPUs across all HBAs)
 */
-static int lpfc_fcp_cpu_map = LPFC_DRIVER_CPU_MAP;
+static int lpfc_fcp_cpu_map = LPFC_MIN_CPU_MAP;
 module_param(lpfc_fcp_cpu_map, int, S_IRUGO|S_IWUSR);
 MODULE_PARM_DESC(lpfc_fcp_cpu_map,
 		 "Defines how to map CPUs to IRQ vectors per HBA");
