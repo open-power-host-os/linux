@@ -1499,13 +1499,11 @@ static void udf_fill_inode(struct inode *inode, struct buffer_head *bh)
 	 * Sanity check length of allocation descriptors and extended attrs to
 	 * avoid integer overflows
 	 */
-	if (iinfo->i_lenEAttr > inode->i_sb->s_blocksize ||
-	    iinfo->i_lenAlloc > inode->i_sb->s_blocksize)
-		goto out;
+	if (iinfo->i_lenEAttr > inode->i_sb->s_blocksize || iinfo->i_lenAlloc > inode->i_sb->s_blocksize)
+		return;
 	/* Now do exact checks */
-	if (udf_file_entry_alloc_offset(inode) + iinfo->i_lenAlloc >
-	    inode->i_sb->s_blocksize)
-		goto out;
+	if (udf_file_entry_alloc_offset(inode) + iinfo->i_lenAlloc > inode->i_sb->s_blocksize)
+		return;
 	/* Sanity checks for files in ICB so that we don't get confused later */
 	if (iinfo->i_alloc_type == ICBTAG_FLAG_AD_IN_ICB) {
 		/*
@@ -2071,14 +2069,29 @@ void udf_write_aext(struct inode *inode, struct extent_position *epos,
 		epos->offset += adsize;
 }
 
+/*
+ * Only 1 indirect extent in a row really makes sense but allow upto 16 in case
+ * someone does some weird stuff.
+ */
+#define UDF_MAX_INDIR_EXTS 16
+
 int8_t udf_next_aext(struct inode *inode, struct extent_position *epos,
 		     struct kernel_lb_addr *eloc, uint32_t *elen, int inc)
 {
 	int8_t etype;
+	unsigned int indirections = 0;
 
 	while ((etype = udf_current_aext(inode, epos, eloc, elen, inc)) ==
 	       (EXT_NEXT_EXTENT_ALLOCDECS >> 30)) {
 		int block;
+
+		if (++indirections > UDF_MAX_INDIR_EXTS) {
+			udf_err(inode->i_sb,
+				"too many indirect extents in inode %lu\n",
+				inode->i_ino);
+			return -1;
+		}
+
 		epos->block = *eloc;
 		epos->offset = sizeof(struct allocExtDesc);
 		brelse(epos->bh);
