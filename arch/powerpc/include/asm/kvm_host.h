@@ -275,6 +275,7 @@ struct kvm_arch {
 #ifdef CONFIG_KVM_XICS
 	struct kvmppc_xics *xics;
 	struct kvmppc_passthru_irqmap *pimap;
+	spinlock_t pimap_lock;
 #endif
 	struct kvmppc_ops *kvm_ops;
 #ifdef CONFIG_KVM_BOOK3S_HV_POSSIBLE

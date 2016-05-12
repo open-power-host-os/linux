@@ -3330,11 +3330,12 @@ static int kvmppc_cache_passthru_irq_hv(struct kvm *kvm, int irq)
 {
 	struct kvmppc_passthru_irqmap *pimap;
 	int cidx, midx;
+	unsigned long flags;
 
 	if (!kvm_irq_bypass)
 		return 1;
 
-	mutex_lock(&kvm->lock);
+	spin_lock_irqsave(&kvm->arch.pimap_lock, flags);
 
 	if (kvm->arch.pimap == NULL)
 		goto err_out;
@@ -3380,19 +3381,22 @@ static int kvmppc_cache_passthru_irq_hv(struct kvm *kvm, int irq)
 	/* r_hwirq == 0 in mapped array to indicate a cached IRQ */
 	pimap->mapped[midx].r_hwirq = 0;
 
-	mutex_unlock(&kvm->lock);
+	spin_unlock_irqrestore(&kvm->arch.pimap_lock, flags);
 	return 0;
 
 err_out:
-	mutex_unlock(&kvm->lock);
+	spin_unlock_irqrestore(&kvm->arch.pimap_lock, flags);
 	return 1;
 }
 
 /* Called with kvm->lock already acquired */
-static void _uncache_passthru_irq(struct kvmppc_passthru_irqmap *pimap, int irq)
+static void _uncache_passthru_irq(struct kvm *kvm,
+				  struct kvmppc_passthru_irqmap *pimap, int irq)
 {
 	int i;
+	unsigned long flags;
 
+	spin_lock_irqsave(&kvm->arch.pimap_lock, flags);
 	for (i = 0; i < pimap->n_cached; i++) {
 		if (irq == pimap->cached[i].v_hwirq) {
 
@@ -3413,6 +3417,7 @@ static void _uncache_passthru_irq(struct kvmppc_passthru_irqmap *pimap, int irq)
 			 */
 			if (i + 1 == pimap->n_cached)
 				pimap->n_cached--;
+			spin_unlock_irqrestore(&kvm->arch.pimap_lock, flags);
 			/*
 			 * Ensure that all readers have exited any
 			 * critical sections in real mode KVM and
@@ -3427,7 +3432,7 @@ static void _uncache_passthru_irq(struct kvmppc_passthru_irqmap *pimap, int irq)
 			return;
 		}
 	}
-
+	spin_unlock_irqrestore(&kvm->arch.pimap_lock, flags);
 }
 
 static int kvmppc_set_passthru_irq(struct kvm *kvm, int host_irq, int guest_gsi)
@@ -3437,6 +3442,7 @@ static int kvmppc_set_passthru_irq(struct kvm *kvm, int host_irq, int guest_gsi)
 	struct kvmppc_passthru_irqmap *pimap;
 	struct irq_chip *chip;
 	int i;
+	unsigned long flags;
 
 	if (!kvm_irq_bypass)
 		return 0;
@@ -3454,6 +3460,7 @@ static int kvmppc_set_passthru_irq(struct kvm *kvm, int host_irq, int guest_gsi)
 			mutex_unlock(&kvm->lock);
 			return -ENOMEM;
 		}
+		spin_lock_init(&kvm->arch.pimap_lock);
 	} else
 		pimap = kvm->arch.pimap;
 
@@ -3482,11 +3489,13 @@ static int kvmppc_set_passthru_irq(struct kvm *kvm, int host_irq, int guest_gsi)
 
 	irq_map = &pimap->mapped[pimap->n_mapped];
 
+	spin_lock_irqsave(&kvm->arch.pimap_lock, flags);
 	irq_map->v_hwirq = guest_gsi;
 	irq_map->r_hwirq = desc->irq_data.hwirq;
 	irq_map->desc = desc;
 
 	pimap->n_mapped++;
+	spin_unlock_irqrestore(&kvm->arch.pimap_lock, flags);
 
 	kvmppc_xics_set_mapped(kvm, guest_gsi);
 
@@ -3536,7 +3545,7 @@ static int kvmppc_clr_passthru_irq(struct kvm *kvm, int host_irq, int guest_gsi)
 	 * mapped.r_hwirq is set to zero when we cache an entry.
 	 */
 	if (!pimap->mapped[i].r_hwirq)
-		_uncache_passthru_irq(pimap, guest_gsi);
+		_uncache_passthru_irq(kvm, pimap, guest_gsi);
 
 	/*
 	 * Replace mapped entry to be cleared with highest entry (unless
