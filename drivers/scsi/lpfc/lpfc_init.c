@@ -8687,6 +8687,7 @@ lpfc_sli4_set_affinity(struct lpfc_hba *phba, int vectors)
 {
 	int i, idx, saved_chann, used_chann, cpu, phys_id;
 	int max_phys_id, min_phys_id;
+	int max_core_id, min_core_id, core_id, last_core_id;
 	int num_io_channel, first_cpu, chan;
 	struct lpfc_vector_map_info *cpup;
 #ifdef CONFIG_X86
@@ -8706,6 +8707,9 @@ lpfc_sli4_set_affinity(struct lpfc_hba *phba, int vectors)
 	max_phys_id = 0;
 	min_phys_id = INT_MAX;
 	phys_id = 0;
+	max_core_id = 0;
+	min_core_id = INT_MAX;
+	core_id = 0;
 	num_io_channel = 0;
 	first_cpu = LPFC_VECTOR_MAP_EMPTY;
 
@@ -8733,6 +8737,12 @@ lpfc_sli4_set_affinity(struct lpfc_hba *phba, int vectors)
 			max_phys_id = cpup->phys_id;
 		if (cpup->phys_id < min_phys_id)
 			min_phys_id = cpup->phys_id;
+
+		if (cpup->core_id > max_core_id)
+			max_core_id = cpup->core_id;
+		if (cpup->core_id < min_core_id)
+			min_core_id = cpup->core_id;
+
 		cpup++;
 	}
 
@@ -8804,6 +8814,46 @@ found:
 	}
 
 	/*
+	 * With lpfc_fcp_io_sched_per_core, associate IO channels with CPUs
+	 * based only on the core numbers instead of individual CPU numbers,
+	 * and ignore/overwrite already assigned values (from MSI-x vectors).
+	 */
+	if (phba->cfg_fcp_io_sched_per_core) {
+
+		/* The IO channel used by a core */
+		chan = -1;
+
+		/* For each core, assign its CPUs the same IO channel */
+		last_core_id = max_core_id;
+		for (core_id = min_core_id; core_id <= max_core_id; core_id++) {
+
+			cpup = phba->sli4_hba.cpu_map;
+			for (cpu = 0; cpu < phba->sli4_hba.num_present_cpu; cpu++, cpup++) {
+
+				if (cpup->core_id != core_id)
+					continue;
+
+				/* Round-robin on different cores */
+				if (core_id != last_core_id) {
+					last_core_id = core_id;
+					chan = (chan + 1) % phba->cfg_fcp_io_channel;
+				}
+
+				cpup->channel_id = chan;
+
+				/* Don't count CPUs w/ IRQ affinity hint (already counted) */
+				if (cpup->irq == LPFC_VECTOR_MAP_EMPTY)
+					num_io_channel++;
+
+				lpfc_printf_log(phba, KERN_INFO, LOG_INIT,
+						"3336 Set IO_CHANN CPU %d channel %d coreid %d\n",
+						cpu, cpup->channel_id, cpup->core_id);
+			}
+		}
+		goto out_fcp_io_sched_per_core;
+	}
+
+	/*
 	 * Finally fill in the IO channel for any remaining CPUs.
 	 * At this point, all IO channels have been assigned to a specific
 	 * MSIx vector, mapped to a specific CPU.
@@ -8872,6 +8922,7 @@ out:
 		}
 	}
 
+out_fcp_io_sched_per_core:
 	if (phba->sli4_hba.num_online_cpu != phba->sli4_hba.num_present_cpu) {
 		cpup = phba->sli4_hba.cpu_map;
 		for (idx = 0; idx < phba->sli4_hba.num_present_cpu; idx++) {

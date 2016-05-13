@@ -4525,6 +4525,13 @@ LPFC_ATTR_RW(fcp_io_sched, 0, 0, 1, "Determine scheduling algorithm for "
 		"issuing commands [0] - Round Robin, [1] - Current CPU");
 
 /*
+# lpfc_fcp_io_sched_per_core: Associate Work Queues with cores instead of CPUs
+# (for lpfc_fcp_io_sched = 1).
+*/
+LPFC_ATTR_R(fcp_io_sched_per_core, 0, 0, 1, "Associate Work Queues with cores "
+		"instead of CPUs (for lpfc_fcp_io_sched = 1)");
+
+/*
 # lpfc_fcp2_no_tgt_reset: Determine bus reset behavior
 # range is [0,1]. Default value is 0.
 # For [0], bus reset issues target reset to ALL devices
@@ -4808,6 +4815,7 @@ struct device_attribute *lpfc_hba_attrs[] = {
 	&dev_attr_lpfc_scan_down,
 	&dev_attr_lpfc_link_speed,
 	&dev_attr_lpfc_fcp_io_sched,
+	&dev_attr_lpfc_fcp_io_sched_per_core,
 	&dev_attr_lpfc_fcp2_no_tgt_reset,
 	&dev_attr_lpfc_cr_delay,
 	&dev_attr_lpfc_cr_count,
@@ -5812,6 +5820,7 @@ void
 lpfc_get_cfgparam(struct lpfc_hba *phba)
 {
 	lpfc_fcp_io_sched_init(phba, lpfc_fcp_io_sched);
+	lpfc_fcp_io_sched_per_core_init(phba, lpfc_fcp_io_sched_per_core);
 	lpfc_fcp2_no_tgt_reset_init(phba, lpfc_fcp2_no_tgt_reset);
 	lpfc_cr_delay_init(phba, lpfc_cr_delay);
 	lpfc_cr_count_init(phba, lpfc_cr_count);
