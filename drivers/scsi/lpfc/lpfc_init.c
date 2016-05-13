@@ -34,6 +34,8 @@
 #include <linux/firmware.h>
 #include <linux/miscdevice.h>
 #include <linux/percpu.h>
+#include <linux/kernel.h>
+#include <linux/topology.h>
 
 #include <scsi/scsi.h>
 #include <scsi/scsi_device.h>
@@ -8702,7 +8704,7 @@ lpfc_sli4_set_affinity(struct lpfc_hba *phba, int vectors)
 		phba->sli4_hba.num_present_cpu));
 
 	max_phys_id = 0;
-	min_phys_id = 0xff;
+	min_phys_id = INT_MAX;
 	phys_id = 0;
 	num_io_channel = 0;
 	first_cpu = LPFC_VECTOR_MAP_EMPTY;
@@ -8714,6 +8716,9 @@ lpfc_sli4_set_affinity(struct lpfc_hba *phba, int vectors)
 		cpuinfo = &cpu_data(cpu);
 		cpup->phys_id = cpuinfo->phys_proc_id;
 		cpup->core_id = cpuinfo->cpu_core_id;
+#elif defined(CONFIG_PPC64) && defined(CONFIG_SMP)
+		cpup->phys_id = topology_physical_package_id(cpu);
+		cpup->core_id = topology_core_id(cpu);
 #else
 		/* No distinction between CPUs for other platforms */
 		cpup->phys_id = 0;
@@ -8721,8 +8726,8 @@ lpfc_sli4_set_affinity(struct lpfc_hba *phba, int vectors)
 #endif
 
 		lpfc_printf_log(phba, KERN_INFO, LOG_INIT,
-				"3328 CPU physid %d coreid %d\n",
-				cpup->phys_id, cpup->core_id);
+				"3328 CPU %d physid %d coreid %d\n",
+				cpu, cpup->phys_id, cpup->core_id);
 
 		if (cpup->phys_id > max_phys_id)
 			max_phys_id = cpup->phys_id;
