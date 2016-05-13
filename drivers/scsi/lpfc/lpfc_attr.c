@@ -4528,7 +4528,7 @@ LPFC_ATTR_RW(fcp_io_sched, 0, 0, 1, "Determine scheduling algorithm for "
 # lpfc_fcp_io_sched_per_core: Associate Work Queues with cores instead of CPUs
 # (for lpfc_fcp_io_sched = 1).
 */
-LPFC_ATTR_R(fcp_io_sched_per_core, 0, 0, 1, "Associate Work Queues with cores "
+LPFC_ATTR_R(fcp_io_sched_per_core, 1, 0, 1, "Associate Work Queues with cores "
 		"instead of CPUs (for lpfc_fcp_io_sched = 1)");
 
 /*
