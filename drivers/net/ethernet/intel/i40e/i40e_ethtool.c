@@ -264,6 +264,14 @@ static int i40e_get_settings(struct net_device *netdev,
 			ecmd->supported = SUPPORTED_10000baseKR_Full;
 			ecmd->advertising = ADVERTISED_10000baseKR_Full;
 			break;
+		case I40E_DEV_ID_10G_BASE_T4:
+			ecmd->supported = SUPPORTED_10000baseT_Full |
+					SUPPORTED_1000baseT_Full |
+					SUPPORTED_100baseT_Full;
+			ecmd->advertising = ADVERTISED_10000baseT_Full |
+					ADVERTISED_1000baseT_Full |
+					ADVERTISED_100baseT_Full;
+			break;
 		default:
 			/* all the rest are 10G/1G */
 			ecmd->supported = SUPPORTED_10000baseT_Full |
