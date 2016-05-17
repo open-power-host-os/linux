@@ -836,7 +836,8 @@ struct kvm_ppc_smmu_info {
 #define KVM_CAP_SPAPR_TCE_64 125
 #define KVM_CAP_ARM_PMU_V3 126
 #define KVM_CAP_VCPU_ATTRIBUTES 127
-#define KVM_CAP_SPAPR_TCE_VFIO 128
+#define KVM_CAP_MAX_VCPU_ID 128
+#define KVM_CAP_SPAPR_TCE_VFIO 129
 
 #ifdef KVM_CAP_IRQ_ROUTING
 
