@@ -51,6 +51,7 @@
 #include <asm/switch_to.h>
 #include <asm/smp.h>
 #include <asm/dbell.h>
+#include <asm/pnv-pci.h>
 #include <linux/gfp.h>
 #include <linux/vmalloc.h>
 #include <linux/highmem.h>
@@ -3332,13 +3333,11 @@ void kvmppc_free_pimap(struct kvm *kvm)
 	kfree(kvm->arch.pimap);
 }
 
-static struct kvmppc_passthru_irqmap *kvmppc_alloc_pimap(struct irq_desc *desc)
+static struct kvmppc_passthru_irqmap *kvmppc_alloc_pimap(void)
 {
 	struct kvmppc_passthru_irqmap *pimap;
 
 	pimap = kzalloc(sizeof(struct kvmppc_passthru_irqmap), GFP_KERNEL);
-	if (pimap != NULL)
-		pimap->irq_chip = irq_data_get_irq_chip(&desc->irq_data);
 
 	return pimap;
 }
@@ -3474,7 +3473,7 @@ static int kvmppc_set_passthru_irq(struct kvm *kvm, int host_irq, int guest_gsi)
 
 	if (kvm->arch.pimap == NULL) {
 		/* First call, allocate structure to hold IRQ map */
-		pimap = kvmppc_alloc_pimap(desc);
+		pimap = kvmppc_alloc_pimap();
 		if (pimap == NULL) {
 			mutex_unlock(&kvm->lock);
 			return -ENOMEM;
@@ -3483,9 +3482,11 @@ static int kvmppc_set_passthru_irq(struct kvm *kvm, int host_irq, int guest_gsi)
 		pimap = kvm->arch.pimap;
 
 	/*
-	 * For now, we support only a single IRQ chip
+	 * For now, we only support interrupts for which the EOI operation
+	 * is an OPAL call followed by a write to XIRR, since that's
+	 * what our real-mode EOI code does.
 	 */
-	if (irq_data_get_irq_chip(&desc->irq_data) != pimap->irq_chip) {
+	if (!is_pnv_opal_msi(desc)) {
 		pr_warn("kvmppc_set_passthru_irq: Could not assign IRQ map for (%d,%d)\n",
 			host_irq, guest_gsi);
 		mutex_unlock(&kvm->lock);
