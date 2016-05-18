@@ -418,7 +418,6 @@ struct kvmppc_irq_map {
 struct kvmppc_passthru_irqmap {
 	int n_cached;
 	int n_mapped;
-	struct irq_chip *irq_chip;
 	struct kvmppc_irq_map cached[KVMPPC_PIRQ_CACHED];
 	struct kvmppc_irq_map mapped[KVMPPC_PIRQ_MAPPED];
 };

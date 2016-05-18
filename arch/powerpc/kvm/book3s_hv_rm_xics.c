@@ -885,7 +885,7 @@ long kvmppc_deliver_irq_passthru(struct kvm_vcpu *vcpu,
 	icp_rm_deliver_irq(xics, icp, irq);
 
 	/* EOI the interrupt */
-	icp_eoi(pimap->irq_chip, irq_map->r_hwirq, xirr);
+	icp_eoi(irq_desc_get_chip(irq_map->desc), irq_map->r_hwirq, xirr);
 
 	if (check_too_hard(xics, icp) == H_TOO_HARD)
 		return 2;

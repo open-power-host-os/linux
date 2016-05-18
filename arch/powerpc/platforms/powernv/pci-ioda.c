@@ -2499,6 +2499,18 @@ static void set_msi_irq_chip(struct pnv_phb *phb, unsigned int virq)
 	irq_set_chip(virq, &phb->ioda.irq_chip);
 }
 
+/*
+ * Returns true iff desc is an interrupt that we could call
+ * pnv_opal_pci_msi_eoi for.
+ */
+bool is_pnv_opal_msi(struct irq_desc *desc)
+{
+	struct irq_chip *chip = irq_desc_get_chip(desc);
+
+	return chip->irq_eoi == pnv_ioda2_msi_eoi;
+}
+EXPORT_SYMBOL_GPL(is_pnv_opal_msi);
+
 #ifdef CONFIG_CXL_BASE
 
 struct device_node *pnv_pci_get_phb_node(struct pci_dev *dev)
