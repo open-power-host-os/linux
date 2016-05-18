@@ -3430,7 +3430,8 @@ static void __init pnv_pci_init_ioda_phb(struct device_node *np,
 	phb->ioda.io_pci_base = 0; /* XXX calculate this ? */
 
 	/* Allocate aux data & arrays. We don't have IO ports on PHB3 */
-	size = _ALIGN_UP(phb->ioda.total_pe_num / 8, sizeof(unsigned long));
+	size = _ALIGN_UP(max_t(unsigned, phb->ioda.total_pe_num, 8) / 8,
+			sizeof(unsigned long));
 	m32map_off = size;
 	size += phb->ioda.total_pe_num * sizeof(phb->ioda.m32_segmap[0]);
 	if (phb->type == PNV_PHB_IODA1) {
