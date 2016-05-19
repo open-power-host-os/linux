@@ -305,7 +305,7 @@ struct kvmppc_vcore {
 	u8 vcore_state;
 	u8 in_guest;
 	struct kvmppc_vcore *master_vcore;
-	struct list_head runnable_threads;
+	struct kvm_vcpu *runnable_threads[MAX_SMT_THREADS];
 	struct list_head preempt_list;
 	spinlock_t lock;
 	wait_queue_head_t wq;
@@ -699,7 +699,6 @@ struct kvm_vcpu_arch {
 	long pgfault_index;
 	unsigned long pgfault_hpte[2];
 
-	struct list_head run_list;
 	struct task_struct *run_task;
 	struct kvm_run *kvm_run;
 
