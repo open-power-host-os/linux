@@ -320,6 +320,7 @@ struct kvmppc_vcore {
 	ulong pcr;
 	ulong dpdes;		/* doorbell state (POWER8) */
 	ulong conferring_threads;
+	unsigned int halt_poll_ns;
 };
 
 #define VCORE_ENTRY_MAP(vc)	((vc)->entry_exit_map & 0xff)
@@ -341,6 +342,7 @@ struct kvmppc_vcore {
 #define VCORE_SLEEPING	3
 #define VCORE_RUNNING	4
 #define VCORE_EXITING	5
+#define VCORE_POLLING	6
 
 /*
  * Struct used to manage memory for a virtual processor area

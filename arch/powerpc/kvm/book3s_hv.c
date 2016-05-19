@@ -102,6 +102,24 @@ module_param_cb(h_ipi_redirect, &module_param_ops, &h_ipi_redirect,
 MODULE_PARM_DESC(h_ipi_redirect, "Redirect H_IPI wakeup to a free host core");
 #endif
 
+/* Maximum halt poll interval defaults to KVM_HALT_POLL_NS_DEFAULT */
+static unsigned int halt_poll_max_ns = KVM_HALT_POLL_NS_DEFAULT;
+module_param(halt_poll_max_ns, uint, S_IRUGO | S_IWUSR);
+MODULE_PARM_DESC(halt_poll_max_ns, "Maximum halt poll time in ns");
+
+/* Factor by which the vcore halt poll interval is grown, default is to double
+ */
+static unsigned int halt_poll_ns_grow = 2;
+module_param(halt_poll_ns_grow, int, S_IRUGO);
+MODULE_PARM_DESC(halt_poll_ns_grow, "Factor halt poll time is grown by");
+
+/* Factor by which the vcore halt poll interval is shrunk, default is to reset
+ */
+static unsigned int halt_poll_ns_shrink;
+module_param(halt_poll_ns_shrink, int, S_IRUGO);
+MODULE_PARM_DESC(halt_poll_ns_shrink, "Factor halt poll time is shrunk by");
+
+
 static void kvmppc_end_cede(struct kvm_vcpu *vcpu);
 static int kvmppc_hv_setup_htab_rma(struct kvm_vcpu *vcpu);
 
@@ -1838,7 +1856,7 @@ static void kvmppc_remove_runnable(struct kvmppc_vcore *vc,
 	vcpu->arch.state = KVMPPC_VCPU_BUSY_IN_HOST;
 	spin_unlock_irq(&vcpu->arch.tbacct_lock);
 	--vc->n_runnable;
-	vc->runnable_threads[vcpu->arch.ptid] = NULL;
+	WRITE_ONCE(vc->runnable_threads[vcpu->arch.ptid], NULL);
 }
 
 static int kvmppc_grab_hwthread(int cpu)
@@ -2640,33 +2658,83 @@ static void kvmppc_wait_for_exec(struct kvmppc_vcore *vc,
 	finish_wait(&vcpu->arch.cpu_run, &wait);
 }
 
+static void grow_halt_poll_ns(struct kvmppc_vcore *vc)
+{
+	/* 10us base */
+	if (vc->halt_poll_ns == 0 && halt_poll_ns_grow)
+		vc->halt_poll_ns = 10000;
+	else
+		vc->halt_poll_ns *= halt_poll_ns_grow;
+
+	if (vc->halt_poll_ns > halt_poll_max_ns)
+		vc->halt_poll_ns = halt_poll_max_ns;
+}
+
+static void shrink_halt_poll_ns(struct kvmppc_vcore *vc)
+{
+	if (halt_poll_ns_shrink == 0)
+		vc->halt_poll_ns = 0;
+	else
+		vc->halt_poll_ns /= halt_poll_ns_shrink;
+}
+
+/* Check to see if any of the runnable vcpus on the vcore have pending
+ * exceptions or are no longer ceded
+ */
+static int kvmppc_vcore_check_block(struct kvmppc_vcore *vc)
+{
+	struct kvm_vcpu *vcpu;
+	int i;
+
+	for_each_runnable_thread(i, vcpu, vc) {
+		if (vcpu->arch.pending_exceptions || !vcpu->arch.ceded)
+			return 1;
+	}
+
+	return 0;
+}
+
 /*
  * All the vcpus in this vcore are idle, so wait for a decrementer
  * or external interrupt to one of the vcpus.  vc->lock is held.
  */
 static void kvmppc_vcore_blocked(struct kvmppc_vcore *vc)
 {
-	struct kvm_vcpu *vcpu;
-	int do_sleep = 1, i;
-
+	int do_sleep = 1;
+	ktime_t cur, start;
+	u64 block_ns;
 	DEFINE_WAIT(wait);
+
+	/* Poll for pending exceptions and ceded state */
+	cur = start = ktime_get();
+	if (vc->halt_poll_ns) {
+		ktime_t stop = ktime_add_ns(start, vc->halt_poll_ns);
+
+		vc->vcore_state = VCORE_POLLING;
+		spin_unlock(&vc->lock);
+
+		do {
+			if (kvmppc_vcore_check_block(vc)) {
+				do_sleep = 0;
+				break;
+			}
+			cur = ktime_get();
+		} while (ktime_before(cur, stop));
+
+		spin_lock(&vc->lock);
+		vc->vcore_state = VCORE_INACTIVE;
+
+		if (!do_sleep)
+			goto out;
+	}
 
 	prepare_to_wait(&vc->wq, &wait, TASK_INTERRUPTIBLE);
 
-	/*
-	 * Check one last time for pending exceptions and ceded state after
-	 * we put ourselves on the wait queue
-	 */
-	for_each_runnable_thread(i, vcpu, vc) {
-		if (vcpu->arch.pending_exceptions || !vcpu->arch.ceded) {
-			do_sleep = 0;
-			break;
-		}
-	}
-
-	if (!do_sleep) {
+	/* Check one last time for pending exceptions and ceded state */
+	if (kvmppc_vcore_check_block(vc)) {
 		finish_wait(&vc->wq, &wait);
-		return;
+		do_sleep = 0;
+		goto out;
 	}
 
 	vc->vcore_state = VCORE_SLEEPING;
@@ -2677,6 +2745,26 @@ static void kvmppc_vcore_blocked(struct kvmppc_vcore *vc)
 	spin_lock(&vc->lock);
 	vc->vcore_state = VCORE_INACTIVE;
 	trace_kvmppc_vcore_blocked(vc, 1);
+
+	cur = ktime_get();
+
+out:
+	block_ns = ktime_to_ns(cur) - ktime_to_ns(start);
+
+	if (halt_poll_max_ns) {
+		if (block_ns <= vc->halt_poll_ns)
+			;
+		/* We slept and blocked for longer than the max halt time */
+		else if (vc->halt_poll_ns && block_ns > halt_poll_max_ns)
+			shrink_halt_poll_ns(vc);
+		/* We slept and our poll time is too small */
+		else if (vc->halt_poll_ns < halt_poll_max_ns &&
+				block_ns < halt_poll_max_ns)
+			grow_halt_poll_ns(vc);
+	} else
+		vc->halt_poll_ns = 0;
+
+	trace_kvmppc_vcore_wakeup(do_sleep, block_ns);
 }
 
 static int kvmppc_run_vcpu(struct kvm_run *kvm_run, struct kvm_vcpu *vcpu)
@@ -2703,7 +2791,7 @@ static int kvmppc_run_vcpu(struct kvm_run *kvm_run, struct kvm_vcpu *vcpu)
 	vcpu->arch.stolen_logged = vcore_stolen_time(vc, mftb());
 	vcpu->arch.state = KVMPPC_VCPU_RUNNABLE;
 	vcpu->arch.busy_preempt = TB_NIL;
-	vc->runnable_threads[vcpu->arch.ptid] = vcpu;
+	WRITE_ONCE(vc->runnable_threads[vcpu->arch.ptid], vcpu);
 	++vc->n_runnable;
 
 	/*
