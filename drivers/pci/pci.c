@@ -4717,8 +4717,13 @@ void pci_reassigndev_resource_alignment(struct pci_dev *dev)
 	resource_size_t align, size;
 	u16 command;
 
-	/* We should never try to reassign VF's alignment */
-	if (dev->is_virtfn)
+	/*
+	 * We should never try to reassign VF's alignment. The sizes
+	 * and alignments of bridge windows depend on those of downstream
+	 * devices' BARs, the enforced alignments on bridge windows are
+	 * meaningless.
+	 */
+	if (pci_is_bridge(dev) || dev->is_virtfn)
 		return;
 
 	/* check if specified PCI is target device to reassign */
