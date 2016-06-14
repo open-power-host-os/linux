@@ -4613,13 +4613,14 @@ static resource_size_t pci_specified_resource_alignment(struct pci_dev *dev,
 #endif
 	spin_lock(&resource_alignment_lock);
 	p = resource_alignment_param;
+	if (pci_has_flag(PCI_PROBE_ONLY)) {
+		if (*p)
+			printk_once(KERN_INFO "PCI: Ignore resource_alignment parameter: %s with PCI_PROBE_ONLY set\n",
+						p);
+		spin_unlock(&resource_alignment_lock);
+		return 0;
+	}
 	while (*p) {
-		if (pci_has_flag(PCI_PROBE_ONLY)) {
-			printk(KERN_ERR "PCI: Ignore resource_alignment parameter: %s with PCI_PROBE_ONLY set\n",
-					p);
-			*p = 0;
-			break;
-		}
 		count = 0;
 		if (sscanf(p, "%d%n", &align_order, &count) == 1 &&
 							p[count] == '@') {
@@ -4748,6 +4749,11 @@ void pci_reassigndev_resource_alignment(struct pci_dev *dev)
 		r = &dev->resource[i];
 		if (!(r->flags & IORESOURCE_MEM))
 			continue;
+		if (r->flags & IORESOURCE_PCI_FIXED) {
+			dev_info(&dev->dev, "No alignment for fixed BAR%d: %pR\n",
+				i, r);
+			continue;
+		}
 		size = resource_size(r);
 		if (resize) {
 			if (size < align) {
