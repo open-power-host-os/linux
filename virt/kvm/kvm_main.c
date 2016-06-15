@@ -3440,9 +3440,29 @@ static int vcpu_stat_get(void *_offset, u64 *val)
 
 DEFINE_SIMPLE_ATTRIBUTE(vcpu_stat_fops, vcpu_stat_get, NULL, "%llu\n");
 
+static int vcpu_stat_u64_get(void *_offset, u64 *val)
+{
+	unsigned offset = (long)_offset;
+	struct kvm *kvm;
+	struct kvm_vcpu *vcpu;
+	int i;
+
+	*val = 0;
+	spin_lock(&kvm_lock);
+	list_for_each_entry(kvm, &vm_list, vm_list)
+		kvm_for_each_vcpu(i, vcpu, kvm)
+			*val += *(u64 *)((void *)vcpu + offset);
+
+	spin_unlock(&kvm_lock);
+	return 0;
+}
+
+DEFINE_SIMPLE_ATTRIBUTE(vcpu_stat_u64_fops, vcpu_stat_u64_get, NULL, "%llu\n");
+
 static const struct file_operations *stat_fops[] = {
-	[KVM_STAT_VCPU] = &vcpu_stat_fops,
-	[KVM_STAT_VM]   = &vm_stat_fops,
+	[KVM_STAT_VCPU]		= &vcpu_stat_fops,
+	[KVM_STAT_VCPU_U64]	= &vcpu_stat_u64_fops,
+	[KVM_STAT_VM]		= &vm_stat_fops,
 };
 
 static int kvm_init_debug(void)
