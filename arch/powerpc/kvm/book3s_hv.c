@@ -2710,6 +2710,7 @@ static void kvmppc_vcore_blocked(struct kvmppc_vcore *vc)
 	cur = start = ktime_get();
 	if (vc->halt_poll_ns) {
 		ktime_t stop = ktime_add_ns(start, vc->halt_poll_ns);
+		++vc->runner->stat.halt_attempted_poll;
 
 		vc->vcore_state = VCORE_POLLING;
 		spin_unlock(&vc->lock);
@@ -2725,8 +2726,10 @@ static void kvmppc_vcore_blocked(struct kvmppc_vcore *vc)
 		spin_lock(&vc->lock);
 		vc->vcore_state = VCORE_INACTIVE;
 
-		if (!do_sleep)
+		if (!do_sleep) {
+			++vc->runner->stat.halt_successful_poll;
 			goto out;
+		}
 	}
 
 	prepare_to_wait(&vc->wq, &wait, TASK_INTERRUPTIBLE);
@@ -2735,6 +2738,9 @@ static void kvmppc_vcore_blocked(struct kvmppc_vcore *vc)
 	if (kvmppc_vcore_check_block(vc)) {
 		finish_wait(&vc->wq, &wait);
 		do_sleep = 0;
+		/* If we polled, count this as a successful poll */
+		if (vc->halt_poll_ns)
+			++vc->runner->stat.halt_successful_poll;
 		goto out;
 	}
 
@@ -2746,11 +2752,17 @@ static void kvmppc_vcore_blocked(struct kvmppc_vcore *vc)
 	spin_lock(&vc->lock);
 	vc->vcore_state = VCORE_INACTIVE;
 	trace_kvmppc_vcore_blocked(vc, 1);
+	++vc->runner->stat.halt_successful_wait;
 
 	cur = ktime_get();
 
 out:
 	block_ns = ktime_to_ns(cur) - ktime_to_ns(start);
+
+	if (do_sleep)
+		vc->runner->stat.halt_wait_time += block_ns;
+	else if (vc->halt_poll_ns)
+		vc->runner->stat.halt_poll_time += block_ns;
 
 	if (halt_poll_max_ns) {
 		if (block_ns <= vc->halt_poll_ns)
