@@ -429,6 +429,7 @@ struct sk_buff *tipc_node_get_links(const void *req_tlv_area, int req_tlv_space)
 				continue;
 			link_info.dest = htonl(n_ptr->addr);
 			link_info.up = htonl(tipc_link_is_up(n_ptr->links[i]));
+			memset(link_info.str, 0, TIPC_MAX_LINK_NAME);
 			strcpy(link_info.str, n_ptr->links[i]->name);
 			tipc_cfg_append_tlv(buf, TIPC_TLV_LINK_INFO,
 					    &link_info, sizeof(link_info));
