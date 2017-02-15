@@ -558,6 +558,7 @@ END_FTR_SECTION_IFSET(CPU_FTR_ARCH_207S)
 #define STACK_SLOT_TID		(112-16)
 #define STACK_SLOT_PSSCR	(112-24)
 #define STACK_SLOT_PID		(112-32)
+#define STACK_SLOT_HFSCR	(112-40)
 
 .global kvmppc_hv_entry
 kvmppc_hv_entry:
@@ -768,9 +769,11 @@ BEGIN_FTR_SECTION
 	mfspr	r5, SPRN_TIDR
 	mfspr	r6, SPRN_PSSCR
 	mfspr	r7, SPRN_PID
+	mfspr	r8, SPRN_HFSCR
 	std	r5, STACK_SLOT_TID(r1)
 	std	r6, STACK_SLOT_PSSCR(r1)
 	std	r7, STACK_SLOT_PID(r1)
+	std	r8, STACK_SLOT_HFSCR(r1)
 END_FTR_SECTION_IFSET(CPU_FTR_ARCH_300)
 
 BEGIN_FTR_SECTION
@@ -914,8 +917,10 @@ FTR_SECTION_ELSE
 	ld	r5, VCPU_TID(r4)
 	ld	r6, VCPU_PSSCR(r4)
 	oris	r6, r6, PSSCR_EC@h	/* This makes stop trap to HV */
+	ld	r7, VCPU_HFSCR(r4)
 	mtspr	SPRN_TIDR, r5
 	mtspr	SPRN_PSSCR, r6
+	mtspr	SPRN_HFSCR, r7
 ALT_FTR_SECTION_END_IFCLR(CPU_FTR_ARCH_300)
 8:
 
@@ -1288,6 +1293,13 @@ END_FTR_SECTION_IFSET(CPU_FTR_HAS_PPR)
 	beq	4f
 	b	guest_exit_cont
 3:
+	/* If it's a hypervisor facility unavailable interrupt, save HFSCR */
+	cmpwi	r12, BOOK3S_INTERRUPT_H_FAC_UNAVAIL
+	bne	14f
+	mfspr	r3, SPRN_HFSCR
+	std	r3, VCPU_HFSCR(r9)
+	b	guest_exit_cont
+14:
 	/* External interrupt ? */
 	cmpwi	r12, BOOK3S_INTERRUPT_EXTERNAL
 	bne+	guest_exit_cont
@@ -1531,6 +1543,9 @@ FTR_SECTION_ELSE
 	rldicl	r6, r6, 4, 50		/* r6 &= PSSCR_GUEST_VIS */
 	rotldi	r6, r6, 60
 	std	r6, VCPU_PSSCR(r9)
+	/* Restore host HFSCR value */
+	ld	r7, STACK_SLOT_HFSCR(r1)
+	mtspr	SPRN_HFSCR, r7
 ALT_FTR_SECTION_END_IFCLR(CPU_FTR_ARCH_300)
 	/*
 	 * Restore various registers to 0, where non-zero values
