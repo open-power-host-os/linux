@@ -67,6 +67,7 @@
 #include <asm/livepatch.h>
 #include <asm/opal.h>
 #include <asm/cputhreads.h>
+#include <asm/plpar_wrappers.h>
 
 #ifdef DEBUG
 #define DBG(fmt...) udbg_printf(fmt)
@@ -309,6 +310,13 @@ void __init early_setup(unsigned long dt_ptr)
 	/* Apply all the dynamic patching */
 	apply_feature_fixups();
 	setup_feature_keys();
+
+	/*
+	 * On shared processor LPARs we need to do this before the MMU is
+	 * turned on or we may lose the initial SLB entry on P9 DD1.x
+	 */
+	if (firmware_has_feature(FW_FEATURE_SPLPAR))
+		vpa_init(boot_cpuid);
 
 	/* Initialize the hash table or TLB handling */
 	early_init_mmu();
