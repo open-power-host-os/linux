@@ -35,6 +35,7 @@
 #include <asm/page.h>
 #include <asm/cacheflush.h>
 #include <asm/hvcall.h>
+#include <asm/mce.h>
 
 #define KVM_MAX_VCPUS		NR_CPUS
 #define KVM_MAX_VCORES		NR_CPUS
@@ -52,8 +53,8 @@
 #define KVM_IRQCHIP_NUM_PINS     256
 
 /* PPC-specific vcpu->requests bit members */
-#define KVM_REQ_WATCHDOG           8
-#define KVM_REQ_EPR_EXIT           9
+#define KVM_REQ_WATCHDOG	KVM_ARCH_REQ(0)
+#define KVM_REQ_EPR_EXIT	KVM_ARCH_REQ(1)
 
 #include <linux/mmu_notifier.h>
 
@@ -287,6 +288,7 @@ struct kvm_arch {
 	cpumask_t need_tlb_flush;
 	cpumask_t cpu_in_guest;
 	u8 radix;
+	u8 fwnmi_enabled;
 	pgd_t *pgtable;
 	u64 process_table;
 	struct dentry *debugfs_dir;
@@ -726,6 +728,7 @@ struct kvm_vcpu_arch {
 	int prev_cpu;
 	bool timer_running;
 	wait_queue_head_t cpu_run;
+	struct machine_check_event mce_evt; /* Valid if trap == 0x200 */
 
 	struct kvm_vcpu_arch_shared *shared;
 #if defined(CONFIG_PPC_BOOK3S_64) && defined(CONFIG_KVM_BOOK3S_PR_POSSIBLE)

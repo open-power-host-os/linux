@@ -53,6 +53,11 @@
 #include <asm/xen/hypervisor.h>
 #include <asm/vdso.h>
 #include <asm/intel_rdt.h>
+#include <asm/unistd.h>
+#ifdef CONFIG_IA32_EMULATION
+/* Not included via unistd.h */
+#include <asm/unistd_32_ia32.h>
+#endif
 
 __visible DEFINE_PER_CPU(unsigned long, rsp_scratch);
 
@@ -99,7 +104,7 @@ void __show_regs(struct pt_regs *regs, int all)
 
 	cr0 = read_cr0();
 	cr2 = read_cr2();
-	cr3 = read_cr3();
+	cr3 = __read_cr3();
 	cr4 = __read_cr4();
 
 	printk(KERN_DEFAULT "FS:  %016lx(%04x) GS:%016lx(%04x) knlGS:%016lx\n",
@@ -137,7 +142,7 @@ void release_thread(struct task_struct *dead_task)
 			pr_warn("WARNING: dead process %s still has LDT? <%p/%d>\n",
 				dead_task->comm,
 				dead_task->mm->context.ldt->entries,
-				dead_task->mm->context.ldt->size);
+				dead_task->mm->context.ldt->nr_entries);
 			BUG();
 		}
 #endif
@@ -441,7 +446,7 @@ __switch_to(struct task_struct *prev_p, struct task_struct *next_p)
 		     task_thread_info(prev_p)->flags & _TIF_WORK_CTXSW_PREV))
 		__switch_to_xtra(prev_p, next_p, tss);
 
-#ifdef CONFIG_XEN
+#ifdef CONFIG_XEN_PV
 	/*
 	 * On Xen PV, IOPL bits in pt_regs->flags have no effect, and
 	 * current_pt_regs()->flags may not match the current task's
@@ -494,6 +499,8 @@ void set_personality_64bit(void)
 	clear_thread_flag(TIF_IA32);
 	clear_thread_flag(TIF_ADDR32);
 	clear_thread_flag(TIF_X32);
+	/* Pretend that this comes from a 64bit execve */
+	task_pt_regs(current)->orig_ax = __NR_execve;
 
 	/* Ensure the corresponding mm is not marked. */
 	if (current->mm)
@@ -506,32 +513,50 @@ void set_personality_64bit(void)
 	current->personality &= ~READ_IMPLIES_EXEC;
 }
 
+static void __set_personality_x32(void)
+{
+#ifdef CONFIG_X86_X32
+	clear_thread_flag(TIF_IA32);
+	set_thread_flag(TIF_X32);
+	if (current->mm)
+		current->mm->context.ia32_compat = TIF_X32;
+	current->personality &= ~READ_IMPLIES_EXEC;
+	/*
+	 * in_compat_syscall() uses the presence of the x32 syscall bit
+	 * flag to determine compat status.  The x86 mmap() code relies on
+	 * the syscall bitness so set x32 syscall bit right here to make
+	 * in_compat_syscall() work during exec().
+	 *
+	 * Pretend to come from a x32 execve.
+	 */
+	task_pt_regs(current)->orig_ax = __NR_x32_execve | __X32_SYSCALL_BIT;
+	current->thread.status &= ~TS_COMPAT;
+#endif
+}
+
+static void __set_personality_ia32(void)
+{
+#ifdef CONFIG_IA32_EMULATION
+	set_thread_flag(TIF_IA32);
+	clear_thread_flag(TIF_X32);
+	if (current->mm)
+		current->mm->context.ia32_compat = TIF_IA32;
+	current->personality |= force_personality32;
+	/* Prepare the first "return" to user space */
+	task_pt_regs(current)->orig_ax = __NR_ia32_execve;
+	current->thread.status |= TS_COMPAT;
+#endif
+}
+
 void set_personality_ia32(bool x32)
 {
-	/* inherit personality from parent */
-
 	/* Make sure to be in 32bit mode */
 	set_thread_flag(TIF_ADDR32);
 
-	/* Mark the associated mm as containing 32-bit tasks. */
-	if (x32) {
-		clear_thread_flag(TIF_IA32);
-		set_thread_flag(TIF_X32);
-		if (current->mm)
-			current->mm->context.ia32_compat = TIF_X32;
-		current->personality &= ~READ_IMPLIES_EXEC;
-		/* in_compat_syscall() uses the presence of the x32
-		   syscall bit flag to determine compat status */
-		current->thread.status &= ~TS_COMPAT;
-	} else {
-		set_thread_flag(TIF_IA32);
-		clear_thread_flag(TIF_X32);
-		if (current->mm)
-			current->mm->context.ia32_compat = TIF_IA32;
-		current->personality |= force_personality32;
-		/* Prepare the first "return" to user space */
-		current->thread.status |= TS_COMPAT;
-	}
+	if (x32)
+		__set_personality_x32();
+	else
+		__set_personality_ia32();
 }
 EXPORT_SYMBOL_GPL(set_personality_ia32);
 

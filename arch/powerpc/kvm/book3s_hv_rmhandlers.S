@@ -44,6 +44,18 @@ END_FTR_SECTION_IFCLR(CPU_FTR_ARCH_300)
 #define NAPPING_CEDE	1
 #define NAPPING_NOVCPU	2
 
+/* Stack frame offsets for kvmppc_hv_entry */
+#define SFS			160
+#define STACK_SLOT_TRAP		(SFS-4)
+#define STACK_SLOT_TID		(SFS-16)
+#define STACK_SLOT_PSSCR	(SFS-24)
+#define STACK_SLOT_PID		(SFS-32)
+#define STACK_SLOT_IAMR		(SFS-40)
+#define STACK_SLOT_CIABR	(SFS-48)
+#define STACK_SLOT_DAWR		(SFS-56)
+#define STACK_SLOT_DAWRX	(SFS-64)
+#define STACK_SLOT_HFSCR	(SFS-72)
+
 /*
  * Call kvmppc_hv_entry in real mode.
  * Must be called with interrupts hard-disabled.
@@ -57,6 +69,7 @@ _GLOBAL_TOC(kvmppc_hv_entry_trampoline)
 	std	r0, PPC_LR_STKOFF(r1)
 	stdu	r1, -112(r1)
 	mfmsr	r10
+	std	r10, HSTATE_HOST_MSR(r13)
 	LOAD_REG_ADDR(r5, kvmppc_call_hv_entry)
 	li	r0,MSR_RI
 	andc	r0,r10,r0
@@ -141,19 +154,20 @@ END_FTR_SECTION_IFSET(CPU_FTR_ARCH_207S)
 	stb	r0, HSTATE_HWTHREAD_REQ(r13)
 
 	/*
-	 * For external and machine check interrupts, we need
-	 * to call the Linux handler to process the interrupt.
-	 * We do that by jumping to absolute address 0x500 for
-	 * external interrupts, or the machine_check_fwnmi label
-	 * for machine checks (since firmware might have patched
-	 * the vector area at 0x200).  The [h]rfid at the end of the
-	 * handler will return to the book3s_hv_interrupts.S code.
-	 * For other interrupts we do the rfid to get back
-	 * to the book3s_hv_interrupts.S code here.
+	 * For external interrupts we need to call the Linux
+	 * handler to process the interrupt. We do that by jumping
+	 * to absolute address 0x500 for external interrupts.
+	 * The [h]rfid at the end of the handler will return to
+	 * the book3s_hv_interrupts.S code. For other interrupts
+	 * we do the rfid to get back to the book3s_hv_interrupts.S
+	 * code here.
 	 */
 	ld	r8, 112+PPC_LR_STKOFF(r1)
 	addi	r1, r1, 112
 	ld	r7, HSTATE_HOST_MSR(r13)
+
+	/* Return the trap number on this thread as the return value */
+	mr	r3, r12
 
 	/*
 	 * If we came back from the guest via a relocation-on interrupt,
@@ -164,58 +178,19 @@ END_FTR_SECTION_IFSET(CPU_FTR_ARCH_207S)
 	andi.	r0, r0, MSR_IR		/* in real mode? */
 	bne	.Lvirt_return
 
-	cmpwi	cr1, r12, BOOK3S_INTERRUPT_MACHINE_CHECK
-	cmpwi	r12, BOOK3S_INTERRUPT_EXTERNAL
-	beq	11f
-	cmpwi	r12, BOOK3S_INTERRUPT_H_DOORBELL
-	beq 	15f	/* Invoke the H_DOORBELL handler */
-	cmpwi	cr2, r12, BOOK3S_INTERRUPT_HMI
-	beq	cr2, 14f			/* HMI check */
-
-	/* RFI into the highmem handler, or branch to interrupt handler */
+	/* RFI into the highmem handler */
 	mfmsr	r6
 	li	r0, MSR_RI
 	andc	r6, r6, r0
 	mtmsrd	r6, 1			/* Clear RI in MSR */
 	mtsrr0	r8
 	mtsrr1	r7
-	beq	cr1, 13f		/* machine check */
 	RFI
 
-	/* On POWER7, we have external interrupts set to use HSRR0/1 */
-11:	mtspr	SPRN_HSRR0, r8
-	mtspr	SPRN_HSRR1, r7
-	ba	0x500
-
-13:	b	machine_check_fwnmi
-
-14:	mtspr	SPRN_HSRR0, r8
-	mtspr	SPRN_HSRR1, r7
-	b	hmi_exception_after_realmode
-
-15:	mtspr SPRN_HSRR0, r8
-	mtspr SPRN_HSRR1, r7
-	ba    0xe80
-
-	/* Virtual-mode return - can't get here for HMI or machine check */
+	/* Virtual-mode return */
 .Lvirt_return:
-	cmpwi	r12, BOOK3S_INTERRUPT_EXTERNAL
-	beq	16f
-	cmpwi	r12, BOOK3S_INTERRUPT_H_DOORBELL
-	beq	17f
-	andi.	r0, r7, MSR_EE		/* were interrupts hard-enabled? */
-	beq	18f
-	mtmsrd	r7, 1			/* if so then re-enable them */
-18:	mtlr	r8
+	mtlr	r8
 	blr
-
-16:	mtspr	SPRN_HSRR0, r8		/* jump to reloc-on external vector */
-	mtspr	SPRN_HSRR1, r7
-	b	exc_virt_0x4500_hardware_interrupt
-
-17:	mtspr	SPRN_HSRR0, r8
-	mtspr	SPRN_HSRR1, r7
-	b	exc_virt_0x4e80_h_doorbell
 
 kvmppc_primary_no_guest:
 	/* We handle this much like a ceded vcpu */
@@ -328,24 +303,30 @@ kvm_novcpu_exit:
 	bl	kvmhv_accumulate_time
 #endif
 13:	mr	r3, r12
-	stw	r12, 112-4(r1)
+	stw	r12, STACK_SLOT_TRAP(r1)
 	bl	kvmhv_commence_exit
 	nop
-	lwz	r12, 112-4(r1)
+	lwz	r12, STACK_SLOT_TRAP(r1)
 	b	kvmhv_switch_to_host
 
 /*
  * We come in here when wakened from nap mode.
  * Relocation is off and most register values are lost.
  * r13 points to the PACA.
+ * r3 contains the SRR1 wakeup value, SRR1 is trashed.
  */
 	.globl	kvm_start_guest
 kvm_start_guest:
-
 	/* Set runlatch bit the minute you wake up from nap */
 	mfspr	r0, SPRN_CTRLF
 	ori 	r0, r0, 1
 	mtspr	SPRN_CTRLT, r0
+
+	/*
+	 * Could avoid this and pass it through in r3. For now,
+	 * code expects it to be in SRR1.
+	 */
+	mtspr	SPRN_SRR1,r3
 
 	ld	r2,PACATOC(r13)
 
@@ -465,13 +446,15 @@ kvm_no_guest:
 /*
  * We jump to pnv_wakeup_loss, which will return to the caller
  * of power7_nap in the powernv cpu offline loop.  The value we
- * put in r3 becomes the return value for power7_nap.
+ * put in r3 becomes the return value for power7_nap. pnv_wakeup_loss
+ * requires SRR1 in r12.
  */
 	li	r3, LPCR_PECE0
 	mfspr	r4, SPRN_LPCR
 	rlwimi	r4, r3, 0, LPCR_PECE0 | LPCR_PECE1
 	mtspr	SPRN_LPCR, r4
 	li	r3, 0
+	mfspr	r12,SPRN_SRR1
 	b	pnv_wakeup_loss
 
 53:	HMT_LOW
@@ -554,12 +537,6 @@ END_FTR_SECTION_IFSET(CPU_FTR_ARCH_207S)
  *                                                                            *
  *****************************************************************************/
 
-/* Stack frame offsets */
-#define STACK_SLOT_TID		(112-16)
-#define STACK_SLOT_PSSCR	(112-24)
-#define STACK_SLOT_PID		(112-32)
-#define STACK_SLOT_HFSCR	(112-40)
-
 .global kvmppc_hv_entry
 kvmppc_hv_entry:
 
@@ -575,7 +552,7 @@ kvmppc_hv_entry:
 	 */
 	mflr	r0
 	std	r0, PPC_LR_STKOFF(r1)
-	stdu	r1, -112(r1)
+	stdu	r1, -SFS(r1)
 
 	/* Save R1 in the PACA */
 	std	r1, HSTATE_HOST_R1(r13)
@@ -769,12 +746,22 @@ BEGIN_FTR_SECTION
 	mfspr	r5, SPRN_TIDR
 	mfspr	r6, SPRN_PSSCR
 	mfspr	r7, SPRN_PID
-	mfspr	r8, SPRN_HFSCR
+	mfspr	r8, SPRN_IAMR
 	std	r5, STACK_SLOT_TID(r1)
 	std	r6, STACK_SLOT_PSSCR(r1)
 	std	r7, STACK_SLOT_PID(r1)
-	std	r8, STACK_SLOT_HFSCR(r1)
+	std	r8, STACK_SLOT_IAMR(r1)
+	mfspr	r5, SPRN_HFSCR
+	std	r5, STACK_SLOT_HFSCR(r1)
 END_FTR_SECTION_IFSET(CPU_FTR_ARCH_300)
+BEGIN_FTR_SECTION
+	mfspr	r5, SPRN_CIABR
+	mfspr	r6, SPRN_DAWR
+	mfspr	r7, SPRN_DAWRX
+	std	r5, STACK_SLOT_CIABR(r1)
+	std	r6, STACK_SLOT_DAWR(r1)
+	std	r7, STACK_SLOT_DAWRX(r1)
+END_FTR_SECTION_IFSET(CPU_FTR_ARCH_207S)
 
 BEGIN_FTR_SECTION
 	/* Set partition DABR */
@@ -1254,6 +1241,15 @@ END_FTR_SECTION_IFSET(CPU_FTR_HAS_PPR)
 
 	stw	r12,VCPU_TRAP(r9)
 
+	/*
+	 * Now that we have saved away SRR0/1 and HSRR0/1,
+	 * interrupts are recoverable in principle, so set MSR_RI.
+	 * This becomes important for relocation-on interrupts from
+	 * the guest, which we can get in radix mode on POWER9.
+	 */
+	li	r0, MSR_RI
+	mtmsrd	r0, 1
+
 #ifdef CONFIG_KVM_BOOK3S_HV_EXIT_TIMING
 	addi	r3, r9, VCPU_TB_RMINTR
 	mr	r4, r9
@@ -1457,12 +1453,14 @@ mc_cont:
 	ori	r6,r6,1
 	mtspr	SPRN_CTRLT,r6
 4:
-	/* Read the guest SLB and save it away */
+	/* Check if we are running hash or radix and store it in cr2 */
 	ld	r5, VCPU_KVM(r9)
 	lbz	r0, KVM_RADIX(r5)
-	cmpwi	r0, 0
+	cmpwi	cr2,r0,0
+
+	/* Read the guest SLB and save it away */
 	li	r5, 0
-	bne	3f			/* for radix, save 0 entries */
+	bne	cr2, 3f			/* for radix, save 0 entries */
 	lwz	r0,VCPU_SLB_NR(r9)	/* number of entries in SLB */
 	mtctr	r0
 	li	r6,0
@@ -1569,11 +1567,10 @@ ALT_FTR_SECTION_END_IFCLR(CPU_FTR_ARCH_300)
 	 * set by the guest could disrupt the host.
 	 */
 	li	r0, 0
-	mtspr	SPRN_IAMR, r0
-	mtspr	SPRN_CIABR, r0
-	mtspr	SPRN_DAWRX, r0
+	mtspr	SPRN_PSPB, r0
 	mtspr	SPRN_WORT, r0
 BEGIN_FTR_SECTION
+	mtspr	SPRN_IAMR, r0
 	mtspr	SPRN_TCSCR, r0
 	/* Set MMCRS to 1<<31 to freeze and disable the SPMC counters */
 	li	r0, 1
@@ -1589,6 +1586,7 @@ END_FTR_SECTION_IFCLR(CPU_FTR_ARCH_300)
 	std	r6,VCPU_UAMOR(r9)
 	li	r6,0
 	mtspr	SPRN_AMR,r6
+	mtspr	SPRN_UAMOR, r6
 
 	/* Switch DSCR back to host value */
 	mfspr	r8, SPRN_DSCR
@@ -1726,33 +1724,76 @@ BEGIN_FTR_SECTION_NESTED(96)
 END_FTR_SECTION_NESTED(CPU_FTR_ARCH_300, 0, 96)
 END_FTR_SECTION_IFSET(CPU_FTR_ARCH_207S)
 22:
-	/* Clear out SLB */
-BEGIN_FTR_SECTION
-	li	r5,31
-	li	r6,0
-	mtctr	r5
-1:	slbmte	r6,r5
-	subi	r5,r5,1
-	bdnz	1b
-END_FTR_SECTION_IFSET(CPU_FTR_POWER9_DD1)
-	li	r5,0
-	slbmte	r5,r5
-	slbia
-	ptesync
 
 	/* Restore host values of some registers */
+BEGIN_FTR_SECTION
+	ld	r5, STACK_SLOT_CIABR(r1)
+	ld	r6, STACK_SLOT_DAWR(r1)
+	ld	r7, STACK_SLOT_DAWRX(r1)
+	mtspr	SPRN_CIABR, r5
+	mtspr	SPRN_DAWR, r6
+	mtspr	SPRN_DAWRX, r7
+END_FTR_SECTION_IFSET(CPU_FTR_ARCH_207S)
 BEGIN_FTR_SECTION
 	ld	r5, STACK_SLOT_TID(r1)
 	ld	r6, STACK_SLOT_PSSCR(r1)
 	ld	r7, STACK_SLOT_PID(r1)
+	ld	r8, STACK_SLOT_IAMR(r1)
 	mtspr	SPRN_TIDR, r5
 	mtspr	SPRN_PSSCR, r6
 	mtspr	SPRN_PID, r7
+	mtspr	SPRN_IAMR, r8
 END_FTR_SECTION_IFSET(CPU_FTR_ARCH_300)
+
+#ifdef CONFIG_PPC_RADIX_MMU
+	/*
+	 * Are we running hash or radix ?
+	 */
+	beq	cr2,3f
+
+	/* Radix: Handle the case where the guest used an illegal PID */
+	LOAD_REG_ADDR(r4, mmu_base_pid)
+	lwz	r3, VCPU_GUEST_PID(r9)
+	lwz	r5, 0(r4)
+	cmpw	cr0,r3,r5
+	blt	2f
+
+	/*
+	 * Illegal PID, the HW might have prefetched and cached in the TLB
+	 * some translations for the  LPID 0 / guest PID combination which
+	 * Linux doesn't know about, so we need to flush that PID out of
+	 * the TLB. First we need to set LPIDR to 0 so tlbiel applies to
+	 * the right context.
+	*/
+	li	r0,0
+	mtspr	SPRN_LPID,r0
+	isync
+
+	/* Then do a congruence class local flush */
+	ld	r6,VCPU_KVM(r9)
+	lwz	r0,KVM_TLB_SETS(r6)
+	mtctr	r0
+	li	r7,0x400		/* IS field = 0b01 */
+	ptesync
+	sldi	r0,r3,32		/* RS has PID */
+1:	PPC_TLBIEL(7,0,2,1,1)		/* RIC=2, PRS=1, R=1 */
+	addi	r7,r7,0x1000
+	bdnz	1b
+	ptesync
+
+2:	/* Flush the ERAT on radix P9 DD1 guest exit */
 BEGIN_FTR_SECTION
 	PPC_INVALIDATE_ERAT
 END_FTR_SECTION_IFSET(CPU_FTR_POWER9_DD1)
+	b	4f
+#endif /* CONFIG_PPC_RADIX_MMU */
 
+	/* Hash: clear out SLB */
+3:	li	r5,0
+	slbmte	r5,r5
+	slbia
+	ptesync
+4:
 	/*
 	 * POWER7/POWER8 guest -> host partition switch code.
 	 * We don't have to lock against tlbies but we do
@@ -1891,8 +1932,8 @@ END_MMU_FTR_SECTION_IFSET(MMU_FTR_TYPE_RADIX)
 	li	r0, KVM_GUEST_MODE_NONE
 	stb	r0, HSTATE_IN_GUEST(r13)
 
-	ld	r0, 112+PPC_LR_STKOFF(r1)
-	addi	r1, r1, 112
+	ld	r0, SFS+PPC_LR_STKOFF(r1)
+	addi	r1, r1, SFS
 	mtlr	r0
 	blr
 
@@ -2632,22 +2673,32 @@ machine_check_realmode:
 	ld	r9, HSTATE_KVM_VCPU(r13)
 	li	r12, BOOK3S_INTERRUPT_MACHINE_CHECK
 	/*
-	 * Deliver unhandled/fatal (e.g. UE) MCE errors to guest through
-	 * machine check interrupt (set HSRR0 to 0x200). And for handled
-	 * errors (no-fatal), just go back to guest execution with current
-	 * HSRR0 instead of exiting guest. This new approach will inject
-	 * machine check to guest for fatal error causing guest to crash.
+	 * For the guest that is FWNMI capable, deliver all the MCE errors
+	 * (handled/unhandled) by exiting the guest with KVM_EXIT_NMI exit
+	 * reason. This new approach injects machine check errors in guest
+	 * address space to guest with additional information in the form
+	 * of RTAS event, thus enabling guest kernel to suitably handle
+	 * such errors.
 	 *
-	 * The old code used to return to host for unhandled errors which
-	 * was causing guest to hang with soft lockups inside guest and
-	 * makes it difficult to recover guest instance.
-	 *
+	 * For the guest that is not FWNMI capable (old QEMU) fallback
+	 * to old behaviour for backward compatibility:
+	 * Deliver unhandled/fatal (e.g. UE) MCE errors to guest either
+	 * through machine check interrupt (set HSRR0 to 0x200).
+	 * For handled errors (no-fatal), just go back to guest execution
+	 * with current HSRR0.
 	 * if we receive machine check with MSR(RI=0) then deliver it to
 	 * guest as machine check causing guest to crash.
 	 */
 	ld	r11, VCPU_MSR(r9)
 	rldicl.	r0, r11, 64-MSR_HV_LG, 63 /* check if it happened in HV mode */
 	bne	mc_cont			/* if so, exit to host */
+	/* Check if guest is capable of handling NMI exit */
+	ld	r10, VCPU_KVM(r9)
+	lbz	r10, KVM_FWNMI(r10)
+	cmpdi	r10, 1			/* FWNMI capable? */
+	beq	mc_cont			/* if so, exit with KVM_EXIT_NMI. */
+
+	/* if not, fall through for backward compatibility. */
 	andi.	r10, r11, MSR_RI	/* check for unrecoverable exception */
 	beq	1f			/* Deliver a machine check to guest */
 	ld	r10, VCPU_PC(r9)

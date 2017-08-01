@@ -185,6 +185,7 @@ static void __xive_native_disable_queue(u32 vp_id, struct xive_q *q, u8 prio)
 	/* Disable the queue in HW */
 	for (;;) {
 		rc = opal_xive_set_queue_info(vp_id, prio, 0, 0, 0);
+		if (rc != OPAL_BUSY)
 			break;
 		msleep(1);
 	}
@@ -632,8 +633,8 @@ u32 xive_native_alloc_vp_block(u32 max_vcpus)
 	if (max_vcpus > (1 << order))
 		order++;
 
-	pr_info("VP block alloc, for max VCPUs %d use order %d\n",
-		max_vcpus, order);
+	pr_debug("VP block alloc, for max VCPUs %d use order %d\n",
+		 max_vcpus, order);
 
 	for (;;) {
 		rc = opal_xive_alloc_vp_block(order);

@@ -297,7 +297,7 @@ void xive_do_source_eoi(u32 hw_irq, struct xive_irq_data *xd)
 {
 	/* If the XIVE supports the new "store EOI facility, use it */
 	if (xd->flags & XIVE_IRQ_FLAG_STORE_EOI)
-		out_be64(xd->eoi_mmio, 0);
+		out_be64(xd->eoi_mmio + XIVE_ESB_STORE_EOI, 0);
 	else if (hw_irq && xd->flags & XIVE_IRQ_FLAG_EOI_FW) {
 		/*
 		 * The FW told us to call it. This happens for some
@@ -964,15 +964,15 @@ static void xive_irq_free_data(unsigned int virq)
 
 #ifdef CONFIG_SMP
 
-static void xive_cause_ipi(int cpu, unsigned long msg)
+static void xive_cause_ipi(int cpu)
 {
 	struct xive_cpu *xc;
 	struct xive_irq_data *xd;
 
 	xc = per_cpu(xive_cpu, cpu);
 
-	DBG_VERBOSE("IPI msg#%ld CPU %d -> %d (HW IRQ 0x%x)\n",
-		    msg, smp_processor_id(), cpu, xc->hw_ipi);
+	DBG_VERBOSE("IPI CPU %d -> %d (HW IRQ 0x%x)\n",
+		    smp_processor_id(), cpu, xc->hw_ipi);
 
 	xd = &xc->ipi_data;
 	if (WARN_ON(!xd->trig_mmio))
@@ -1417,7 +1417,7 @@ bool xive_core_init(const struct xive_ops *ops, void __iomem *area, u32 offset,
 	/* Get ready for interrupts */
 	xive_setup_cpu();
 
-	pr_info("Interrupt handling intialized with %s backend\n",
+	pr_info("Interrupt handling initialized with %s backend\n",
 		xive_ops->name);
 	pr_info("Using priority %d for all interrupts\n", max_prio);
 

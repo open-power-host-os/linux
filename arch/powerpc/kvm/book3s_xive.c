@@ -24,6 +24,7 @@
 #include <asm/xive.h>
 #include <asm/xive-regs.h>
 #include <asm/debug.h>
+#include <asm/debugfs.h>
 #include <asm/time.h>
 #include <asm/opal.h>
 

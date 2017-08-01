@@ -172,6 +172,11 @@ void __attribute__((weak)) kvm_arch_irq_routing_update(struct kvm *kvm)
 {
 }
 
+bool __weak kvm_arch_can_set_irq_routing(struct kvm *kvm)
+{
+	return true;
+}
+
 int kvm_set_irq_routing(struct kvm *kvm,
 			const struct kvm_irq_routing_entry *ue,
 			unsigned nr,
@@ -225,7 +230,7 @@ int kvm_set_irq_routing(struct kvm *kvm,
 	}
 
 	mutex_lock(&kvm->irq_lock);
-	old = kvm->irq_routing;
+	old = rcu_dereference_protected(kvm->irq_routing, 1);
 	rcu_assign_pointer(kvm->irq_routing, new);
 	kvm_irq_routing_update(kvm);
 	kvm_arch_irq_routing_update(kvm);

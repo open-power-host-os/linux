@@ -119,7 +119,8 @@ void __init kvm_cma_reserve(void)
 			 (unsigned long)selected_size / SZ_1M);
 		align_size = HPT_ALIGN_PAGES << PAGE_SHIFT;
 		cma_declare_contiguous(0, selected_size, 0, align_size,
-			KVM_CMA_CHUNK_ORDER - PAGE_SHIFT, false, &kvm_cma);
+			KVM_CMA_CHUNK_ORDER - PAGE_SHIFT, false, "kvm_cma",
+			&kvm_cma);
 	}
 }
 
@@ -306,7 +307,7 @@ void kvmhv_commence_exit(int trap)
 		return;
 
 	for (i = 0; i < MAX_SUBCORES; ++i) {
-		vc = sip->master_vcs[i];
+		vc = sip->vc[i];
 		if (!vc)
 			break;
 		do {
