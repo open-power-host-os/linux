@@ -130,7 +130,7 @@ BEGIN_FTR_SECTION
 	subi	r10,r10,1
 	bdnz	1b
 END_FTR_SECTION_IFSET(CPU_FTR_POWER9_DD1)
-	li	r0, r0
+	li	r0, 0
 	slbmte	r0, r0
 	slbia
 

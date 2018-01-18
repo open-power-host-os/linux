@@ -32,8 +32,6 @@
 #define PCIBIOS_DEFAULT_ALIGNMENT	(machine_is(powernv) ? PAGE_SIZE : 0)
 #endif
 
-struct pci_dev;
-
 /* Values for the `which' argument to sys_pciconfig_iobase syscall.  */
 #define IOBASE_BRIDGE_NUMBER	0
 #define IOBASE_MEMORY		1
