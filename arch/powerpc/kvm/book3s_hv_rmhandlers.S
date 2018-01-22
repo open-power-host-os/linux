@@ -1002,15 +1002,6 @@ ALT_FTR_SECTION_END_IFCLR(CPU_FTR_ARCH_300)
 	lbz	r0, KVM_RADIX(r6)
 	cmpwi	r0, 0
 	bne	9f
-	/* Clear out SLB if hash */
-BEGIN_FTR_SECTION
-	li	r7,31
-	li	r6,0
-	mtctr	r7
-1:	slbmte	r6,r7
-	subi	r7,r7,1
-	bdnz	1b
-END_FTR_SECTION_IFSET(CPU_FTR_POWER9_DD1)
 	li	r6, 0
 	slbmte	r6, r6
 	slbia

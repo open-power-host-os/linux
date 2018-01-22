@@ -394,12 +394,6 @@ static int __init early_init_dt_scan_cpus(unsigned long node,
 		check_cpu_pa_features(node);
 	}
 
-	/* Needs to be applied universally on P9 hardware even in P8 mode */
-	if (mfspr(SPRN_PVR) == (PVR_POWER9 << 16 | 0x100)) {
-		printk(KERN_WARNING "Applying P9 DD1 CPU feature workaround\n");
-		cur_cpu_spec->cpu_features |= CPU_FTR_POWER9_DD1;
-	}
-
 	identical_pvr_fixup(node);
 	init_mmu_slb_size(node);
 

@@ -522,9 +522,7 @@ static void __init pSeries_setup_arch(void)
 	pSeries_nvram_init();
 
 	if (firmware_has_feature(FW_FEATURE_LPAR)) {
-		/* If SPLPAR, we already did this in early_setup() */
-		if (!firmware_has_feature(FW_FEATURE_SPLPAR))
-			vpa_init(boot_cpuid);
+		vpa_init(boot_cpuid);
 		ppc_md.power_save = pseries_lpar_idle;
 		ppc_md.enable_pmcs = pseries_lpar_enable_pmcs;
 	} else {
