@@ -16,7 +16,7 @@
 #include <linux/delay.h>
 #include <linux/percpu.h>
 #include <linux/cpumask.h>
-#include <asm/uaccess.h>
+#include <linux/uaccess.h>
 #include <asm/kvm_book3s.h>
 #include <asm/kvm_ppc.h>
 #include <asm/hvcall.h>
@@ -188,7 +188,7 @@ static int xive_provision_queue(struct kvm_vcpu *vcpu, u8 prio)
 	if (!qpage) {
 		pr_err("Failed to allocate queue %d for VCPU %d\n",
 		       prio, xc->server_num);
-		return -ENOMEM;;
+		return -ENOMEM;
 	}
 	memset(qpage, 0, 1 << xive->q_order);
 
