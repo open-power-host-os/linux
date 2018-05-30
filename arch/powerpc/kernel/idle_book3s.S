@@ -325,12 +325,6 @@ enter_winkle:
  * r3 - PSSCR value corresponding to the requested stop state.
  */
 power_enter_stop:
-#ifdef CONFIG_KVM_BOOK3S_HV_POSSIBLE
-	/* Tell KVM we're entering idle */
-	li	r4,KVM_HWTHREAD_IN_IDLE
-	/* DO THIS IN REAL MODE!  See comment above. */
-	stb	r4,HSTATE_HWTHREAD_STATE(r13)
-#endif
 /*
  * Check if we are executing the lite variant with ESL=EC=0
  */
@@ -428,22 +422,39 @@ ALT_FTR_SECTION_END_NESTED_IFSET(CPU_FTR_ARCH_207S, 66);		\
 /*
  * Entered with MSR[EE]=0 and no soft-masked interrupts pending.
  * r3 contains desired PSSCR register value.
+ *
+ * Offline (CPU unplug) case also must notify KVM that the CPU is
+ * idle.
  */
+_GLOBAL(power9_offline_stop)
+#ifdef CONFIG_KVM_BOOK3S_HV_POSSIBLE
+	/*
+	 * Tell KVM we're entering idle.
+	 * This does not have to be done in real mode because the P9 MMU
+	 * is independent per-thread. Some steppings share radix/hash mode
+	 * between threads, but in that case KVM has a barrier sync in real
+	 * mode before and after switching between radix and hash.
+	 */
+	li	r4,KVM_HWTHREAD_IN_IDLE
+	stb	r4,HSTATE_HWTHREAD_STATE(r13)
+#endif
+	/* fall through */
+
 _GLOBAL(power9_idle_stop)
-BEGIN_FTR_SECTION
-	lwz	r5, PACA_DONT_STOP(r13)
-	cmpwi	r5, 0
-	bne	1f
 	std	r3, PACA_REQ_PSSCR(r13)
+#ifdef CONFIG_KVM_BOOK3S_HV_POSSIBLE
+BEGIN_FTR_SECTION
 	sync
 	lwz	r5, PACA_DONT_STOP(r13)
 	cmpwi	r5, 0
 	bne	1f
 END_FTR_SECTION_IFSET(CPU_FTR_P9_TM_XER_SO_BUG)
+#endif
 	mtspr 	SPRN_PSSCR,r3
 	LOAD_REG_ADDR(r4,power_enter_stop)
 	b	pnv_powersave_common
 	/* No return */
+#ifdef CONFIG_KVM_BOOK3S_HV_POSSIBLE
 1:
 	/*
 	 * We get here when TM / thread reconfiguration bug workaround
@@ -453,6 +464,7 @@ END_FTR_SECTION_IFSET(CPU_FTR_P9_TM_XER_SO_BUG)
 	li	r3, 0
 	std	r3, PACA_REQ_PSSCR(r13)
 	blr		/* return 0 for wakeup cause / SRR1 value */
+#endif
 
 /*
  * On waking up from stop 0,1,2 with ESL=1 on POWER9 DD1,
@@ -539,11 +551,14 @@ ALT_FTR_SECTION_END_IFSET(CPU_FTR_ARCH_300)
 	mr	r3,r12
 
 #ifdef CONFIG_KVM_BOOK3S_HV_POSSIBLE
+	lbz	r0,HSTATE_HWTHREAD_STATE(r13)
+	cmpwi	r0,KVM_HWTHREAD_IN_KERNEL
+	beq	0f
 	li	r0,KVM_HWTHREAD_IN_KERNEL
 	stb	r0,HSTATE_HWTHREAD_STATE(r13)
 	/* Order setting hwthread_state vs. testing hwthread_req */
 	sync
-	lbz	r0,HSTATE_HWTHREAD_REQ(r13)
+0:	lbz	r0,HSTATE_HWTHREAD_REQ(r13)
 	cmpwi	r0,0
 	beq	1f
 	b	kvm_start_guest
@@ -855,6 +870,8 @@ BEGIN_FTR_SECTION
 	mtspr	SPRN_PTCR,r4
 	ld	r4,_RPR(r1)
 	mtspr	SPRN_RPR,r4
+	ld	r4,_AMOR(r1)
+	mtspr	SPRN_AMOR,r4
 END_FTR_SECTION_IFSET(CPU_FTR_ARCH_300)
 
 	ld	r4,_TSCR(r1)
